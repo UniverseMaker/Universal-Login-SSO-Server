@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>이메일 인증 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+    <nav><a class="btn btn-ghost btn-sm" id="nav-login" href="login.html">로그인</a></nav>
+  </header>
+
+  <main class="container narrow">
+
+    <section class="card auth-card" id="state-card">
+      <div class="card-head">
+        <h1 id="state-title">이메일 인증</h1>
+      </div>
+      <div class="card-body" id="state-body"></div>
+      <div class="card-foot" id="state-foot" hidden></div>
+    </section>
+
+    <!-- 인증 메일 재발송 (토큰이 없거나 만료된 경우) -->
+    <section class="card auth-card" id="resend-card" hidden>
+      <div class="card-head">
+        <h2>인증 메일 다시 받기</h2>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted">
+          가입할 때 사용한 이메일 주소를 입력하면 인증 링크를 다시 보내 드립니다.
+        </p>
+        <form class="form" id="resend-form" novalidate>
+          <div class="field">
+            <label for="resend-email">이메일<span class="req" aria-hidden="true">*</span></label>
+            <input type="email" id="resend-email" name="email" autocomplete="email"
+                   autocapitalize="off" spellcheck="false" required maxlength="190">
+            <span class="field-error"></span>
+          </div>
+          <p class="text-xs text-muted" id="resend-note" role="status" aria-live="polite" hidden></p>
+          <button type="submit" class="btn btn-primary" id="resend-btn">인증 메일 재발송</button>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * verify.html — 이메일 인증 (leader_decisions D-9)
+ *
+ * 메일 본문 링크: {APP_URL}/public/verify.html?token=...
+ * 진입 즉시 POST /api/auth/email/verify 를 호출한다.
+ *   응답 data: verified, email, account_level, auto_login
+ *   실패 TOKEN_INVALID(400) — 없음/만료/이미 사용됨을 구분하지 않는다
+ * 재발송: POST /api/auth/email/resend  {email} → {sent, message, expires_in}
+ *
+ * ⚠ 두 엔드포인트는 D-9 로 추가된 신설 경로다. 실제 파일명이
+ *   api/auth/email_verify.php / api/auth/email_resend.php 이고
+ *   api.js 의 ULOGIN_PATH_ALIASES 에 별칭이 없으므로 실제 파일명 경로로 호출한다.
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  /* D-17 로 api.js 의 ULOGIN_PATH_ALIASES 에 아래 두 논리 경로 별칭이 추가되었다.
+     ('/api/auth/email/verify' → api/auth/email_verify.php, resend 도 동일) */
+  var VERIFY_PATH = '/api/auth/email/verify';
+  var RESEND_PATH = '/api/auth/email/resend';
+
+  var SSO_KEEP = ['service_id', 'redirect_uri', 'state', 'code_challenge'];
+  var qs = new URLSearchParams(location.search);
+  var token = (qs.get('token') || '').trim();
+
+  function withSso(target) {
+    var next = new URLSearchParams();
+    SSO_KEEP.forEach(function (k) {
+      if (qs.has(k) && qs.get(k) !== '') { next.set(k, qs.get(k)); }
+    });
+    var q = next.toString();
+    return q ? target + '?' + q : target;
+  }
+
+  /* 감사 M-4 잔여분 — 주소창에서 token 을 즉시 지운다.
+     token 은 그 자체로 계정을 탈취할 수 있는 자격증명이다. URL 에 남으면
+     브라우저 히스토리·북마크·화면 공유·확장 프로그램에 그대로 노출된다.
+     (Referrer-Policy 는 외부 전송만 막을 뿐 로컬에 남는 것은 못 막는다.)
+     token 은 위에서 이미 변수로 읽었으므로 지워도 동작에 영향이 없다.
+     SSO 파라미터는 로그인 화면으로 이어져야 하므로 보존한다. */
+  if (token && window.history && history.replaceState) {
+    try {
+      var keep = new URLSearchParams();
+      SSO_KEEP.forEach(function (k) {
+        if (qs.has(k) && qs.get(k) !== '') { keep.set(k, qs.get(k)); }
+      });
+      var kq = keep.toString();
+      history.replaceState(null, '', location.pathname + (kq ? '?' + kq : '') + location.hash);
+    } catch (e) { /* 구형 브라우저 — 지우지 못해도 진행한다 */ }
+  }
+
+  var loginHref = withSso('login.html');
+  $('#nav-login').setAttribute('href', loginHref);
+
+  var stateTitle = $('#state-title');
+  var stateBody = $('#state-body');
+  var stateFoot = $('#state-foot');
+  var cardResend = $('#resend-card');
+  var formResend = $('#resend-form');
+  var inEmail = $('#resend-email');
+  var btnResend = $('#resend-btn');
+  var resendNote = $('#resend-note');
+
+  /* ---- 쿨다운 (자체 구현) -------------------------------------------- */
+  var coolTimer = null;
+  function startCooldown(seconds) {
+    var left = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (coolTimer) { clearInterval(coolTimer); coolTimer = null; }
+    if (!left) { btnResend.disabled = false; resendNote.hidden = true; return; }
+    btnResend.disabled = true;
+    resendNote.hidden = false;
+    var tick = function () {
+      if (left <= 0) {
+        clearInterval(coolTimer); coolTimer = null;
+        btnResend.disabled = false;
+        resendNote.textContent = '다시 시도할 수 있습니다.';
+        return;
+      }
+      resendNote.textContent = '다시 보낼 수 있을 때까지 ' + fmtDuration(left) + ' 남았습니다.';
+      left -= 1;
+    };
+    tick();
+    coolTimer = setInterval(tick, 1000);
+  }
+
+  /* ---- 상태 렌더 ------------------------------------------------------ */
+  function setState(title, nodes, footNodes) {
+    stateTitle.textContent = title;
+    clear(stateBody);
+    mount(stateBody, nodes);
+    clear(stateFoot);
+    if (footNodes) {
+      mount(stateFoot, footNodes);
+      stateFoot.hidden = false;
+    } else {
+      stateFoot.hidden = true;
+    }
+  }
+
+  function showResend(prefillEmail) {
+    cardResend.hidden = false;
+    if (prefillEmail && !inEmail.value) { inEmail.value = String(prefillEmail); }
+  }
+
+  /* ---- 인증 성공 ------------------------------------------------------ */
+  function showVerified(data) {
+    var nodes = [];
+    var verified = !!(data && data.verified);
+
+    nodes.push(alertNode(
+      verified ? '이메일 인증이 완료되었습니다.' : '인증 처리가 완료되었습니다.',
+      verified ? 'success' : 'info'));
+
+    if (data && data.email) {
+      nodes.push(el('p', { class: 'text-sm text-muted' }, [
+        text('인증된 이메일: '), el('span', { class: 'mono', text: String(data.email) })
+      ]));
+    }
+    if (data && data.account_level) {
+      /* 계정등급은 배지로. 3축 중 계정등급 하나만 반환되므로 badge() 를 직접 쓴다.
+         배지 자체에 '계정' 축 라벨이 붙으므로 별도 라벨 텍스트는 두지 않는다. */
+      nodes.push(el('p', { class: 'text-sm text-muted' }, '인증 결과가 반영된 계정 등급입니다.'));
+      nodes.push(el('div', { class: 'badge-row' }, badge('account_level', data.account_level)));
+    }
+
+    var foot = [];
+    if (data && data.auto_login) {
+      nodes.push(el('p', { class: 'text-sm text-muted' }, '로그인된 상태로 이어서 이용할 수 있습니다.'));
+      foot.push(el('a', { class: 'btn btn-primary', href: 'mypage.html' }, '마이페이지로 이동'));
+    } else {
+      nodes.push(el('p', { class: 'text-sm text-muted' }, '이제 이 계정으로 로그인할 수 있습니다.'));
+      foot.push(el('a', { class: 'btn btn-primary', href: loginHref }, '로그인하기'));
+    }
+
+    setState('인증 완료', nodes, foot);
+    cardResend.hidden = true;
+  }
+
+  /* ---- 인증 실패 ------------------------------------------------------ */
+  function showInvalid(message) {
+    setState('인증 링크를 사용할 수 없습니다', [
+      alertNode(message, 'danger'),
+      el('p', { class: 'text-sm text-muted' },
+        '인증 링크는 한 번만 쓸 수 있고 발급 후 24시간이 지나면 만료됩니다. ' +
+        '아래에서 새 인증 메일을 받아 주세요.')
+    ], null);
+    showResend(null);
+  }
+
+  /* ---- 재발송 -------------------------------------------------------- */
+  formResend.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (btnResend.disabled) { return; }
+    clearFormErrors(formResend);
+    startCooldown(0);   // 끝난 쿨다운 안내문을 지운다
+
+    var email = inEmail.value.trim();
+    if (!email || email.indexOf('@') === -1) {
+      formErrors(formResend, { code: 'VALIDATION_FAILED', message: '이메일 주소를 입력해 주세요.', field: 'email' });
+      return;
+    }
+
+    setBusy(btnResend, true);
+    apiPost(RESEND_PATH, { email: email })
+      .then(function (data) {
+        setBusy(btnResend, false);
+        /* 계정 존재 여부와 무관하게 항상 성공으로 응답한다(열거 방지). */
+        formBanner(formResend, (data && data.message) || '인증 메일을 보냈습니다.', 'success');
+        if (data && data.expires_in) {
+          resendNote.hidden = false;
+          resendNote.textContent = '링크는 ' + fmtDuration(data.expires_in) + ' 동안 유효합니다.';
+        }
+      })
+      .catch(function (err) {
+        setBusy(btnResend, false);
+        if (err.code === 'RATE_LIMITED') {
+          formBanner(formResend, errorMessage(err), 'danger');
+          startCooldown(err.data && err.data.retry_after);
+          return;
+        }
+        formErrors(formResend, err);
+      });
+  });
+
+  /* ---- 시작: 진입 즉시 인증 ------------------------------------------ */
+  if (!token) {
+    setState('인증 링크가 필요합니다', [
+      alertNode('주소에 token 값이 없습니다. 인증 메일에 포함된 링크로 열어 주세요.', 'warn')
+    ], null);
+    showResend(null);
+    return;
+  }
+
+  setState('이메일 인증', [loadingNode('인증을 처리하는 중…')], null);
+
+  apiPost(VERIFY_PATH, { token: token })
+    .then(function (data) {
+      showVerified(data);
+    })
+    .catch(function (err) {
+      if (err.code === 'TOKEN_INVALID') {
+        showInvalid(errorMessage(err));
+        return;
+      }
+      if (err.code === 'RATE_LIMITED') {
+        setState('잠시 후 다시 시도해 주세요', [alertNode(errorMessage(err), 'danger')], [
+          el('button', {
+            class: 'btn btn-secondary', type: 'button',
+            on: { click: function () { location.reload(); } }
+          }, '다시 시도')
+        ]);
+        return;
+      }
+      setState('인증을 처리할 수 없습니다', [
+        alertNode(errorMessage(err), 'danger')
+      ], [
+        el('button', {
+          class: 'btn btn-secondary', type: 'button',
+          on: { click: function () { location.reload(); } }
+        }, '다시 시도'),
+        el('a', { class: 'btn btn-ghost', href: loginHref }, '로그인으로')
+      ]);
+      showResend(null);
+    });
+})();
+</script>
+</body>
+</html>

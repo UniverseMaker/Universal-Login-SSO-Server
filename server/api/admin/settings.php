@@ -1,0 +1,212 @@
+<?php
+declare(strict_types=1);
+/**
+ * 전역 설정 조회 / 부분 수정 — /api/admin/settings.php
+ * 담당 계약: §8-22(GET) · §8-23(PUT)
+ * 최소 역할: admin
+ *
+ * 응답 최상위 키
+ *   GET : items, total, map
+ *   PUT : updated, unchanged, map, admin_log_id
+ *
+ * svalue 는 vtype 대로 캐스팅해 내보낸다(DB 는 문자열이지만 응답에서는 타입이 맞아야 한다).
+ * 정의되지 않은 skey 는 NOT_FOUND — 오타로 만든 키가 조용히 쌓이면 어느 값이 실제로
+ * 읽히는지 알 수 없게 된다.
+ */
+require_once __DIR__ . '/../../core/bootstrap.php';
+
+only_method('GET', 'PUT');
+
+if (!function_exists('admin_log_write')) {
+    function admin_log_write(int $adminId, string $action, string $targetType, ?string $targetId,
+                             ?array $before = null, ?array $after = null, ?string $memo = null): ?int
+    {
+        log_admin($adminId, $action, $targetType, $targetId, $before, $after, $memo);
+        $id = (int) db()->lastInsertId();
+        if ($id <= 0) {
+            return null;
+        }
+        $chk = db_val('SELECT id FROM ' . T_ADMIN_LOGS . ' WHERE id = ? AND admin_id = ? AND action = ?',
+            [$id, $adminId, substr($action, 0, 60)]);
+        return $chk === null ? null : (int) $chk;
+    }
+}
+
+/**
+ * 관리 가능한 설정 키 정의.
+ *   [vtype, label, 폴백 상수명, min, max]  — min/max 는 int 전용
+ *
+ * 앞의 11개는 계약 §8-22 의 목록이며 **순서까지 그대로**다.
+ * 리더 판정 D-40 으로 `auth_code_ttl` 을 12번째로 **맨 뒤에 추가**했다 — 중간에 끼우면
+ * 기존 11개의 `items` 인덱스가 밀려 관리자 화면의 표 순서가 바뀐다.
+ */
+$DEFS = [
+    'allow_register'       => ['bool',   '신규 가입 허용',              'ALLOW_REGISTER',       null, null],
+    'require_email_verify' => ['bool',   '가입 시 이메일 인증 필수',     'REQUIRE_EMAIL_VERIFY', null, null],
+    'signup_bonus_points'  => ['int',    '가입 보너스 포인트',           'SIGNUP_BONUS_POINTS',  0,    1000000],
+    'login_fail_threshold' => ['int',    '락아웃 임계 실패 횟수',        'LOCKOUT_THRESHOLD',    1,    100],
+    'login_lock_minutes'   => ['int',    '락아웃 지속 시간(분)',         'LOCKOUT_MINUTES',      1,    1440],
+    'password_min_length'  => ['int',    '비밀번호 최소 길이',           'PASSWORD_MIN_LENGTH',  8,    64],
+    'session_ttl_default'  => ['int',    '기본 access 토큰 수명(초)',    'SESSION_TTL',          60,   604800],
+    'refresh_ttl_default'  => ['int',    '기본 refresh 토큰 수명(초)',   'REFRESH_TTL',          300,  31536000],
+    'maintenance_mode'     => ['bool',   '점검 모드',                   'MAINTENANCE_MODE',     null, null],
+    'mail_driver'          => ['string', '메일 발송 방식 (mail|log)',    'MAIL_DRIVER',          null, null],
+    'site_name'            => ['string', '사이트 표시명',                'SITE_NAME',            null, null],
+    // D-40: core 가 setting_get('auth_code_ttl') 로 읽는데 여기 정의가 없어 조회·변경이 불가능했다.
+    // 폴백 상수는 api/sso/authorize.php:113 이 쓰는 것과 동일한 AUTH_CODE_TTL(config.sample.php:102 = 60).
+    // 상한 600초: SSO code 는 1회용 단기 자격증명이다. 수명이 길어지면 탈취된 code 의
+    // 유효 창이 그만큼 넓어진다(RFC 6749 §4.1.2 권고 = 10분 이내).
+    // 하한 30초: 로그인 → 리다이렉트 → exchange 왕복이 끝나야 한다. 더 낮추면 느린 회선에서
+    // 정상 로그인이 SSO_CODE_EXPIRED 로 실패한다. authorize.php:114 도 0 이하를 무효로 본다.
+    'auth_code_ttl'        => ['int',    'SSO code 수명(초)',            'AUTH_CODE_TTL',        30,   600],
+];
+
+/** DB 의 현재 행. settings_all() 은 정적 캐시라 PUT 직후 값이 낡는다 — 직접 읽는다. */
+function admin_settings_rows(array $keys): array
+{
+    if ($keys === []) {
+        return [];
+    }
+    $ph   = implode(',', array_fill(0, count($keys), '?'));
+    $out  = [];
+    foreach (db_all('SELECT skey, svalue, vtype, label, updated_at FROM ' . T_SETTINGS
+        . ' WHERE skey IN (' . $ph . ')', $keys) as $r) {
+        $out[(string) $r['skey']] = $r;
+    }
+    return $out;
+}
+
+/**
+ * vtype 대로 캐스팅. DB 행이 없으면 config.php 상수 폴백.
+ * @return mixed
+ */
+function admin_setting_value(string $key, array $def, array $rows)
+{
+    $vtype = $def[0];
+    if (isset($rows[$key]) && $rows[$key]['svalue'] !== null) {
+        $raw = (string) $rows[$key]['svalue'];
+        if ($vtype === 'int') {
+            return (int) $raw;
+        }
+        if ($vtype === 'bool') {
+            return ($raw === '1' || $raw === 'true' || $raw === 'on');
+        }
+        return $raw;
+    }
+    $const = $def[2];
+    if ($const !== null && defined($const)) {
+        $v = constant($const);
+        if ($vtype === 'int') {
+            return (int) $v;
+        }
+        if ($vtype === 'bool') {
+            return (bool) $v;
+        }
+        return (string) $v;
+    }
+    return $vtype === 'int' ? 0 : ($vtype === 'bool' ? false : '');
+}
+
+$ctx = require_auth();
+require_global_role($ctx, 'admin');
+
+$method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+$keys   = array_keys($DEFS);
+
+// -----------------------------------------------------------------
+// GET — 계약 §8-22
+// -----------------------------------------------------------------
+if ($method === 'GET') {
+    $rows  = admin_settings_rows($keys);
+    $items = [];
+    $map   = [];
+    foreach ($DEFS as $k => $def) {
+        $val     = admin_setting_value($k, $def, $rows);
+        $map[$k] = $val;
+        $items[] = [
+            'skey'       => $k,
+            'svalue'     => $val,
+            'vtype'      => $def[0],
+            'label'      => isset($rows[$k]) && $rows[$k]['label'] !== null ? (string) $rows[$k]['label'] : $def[1],
+            'updated_at' => isset($rows[$k]) ? iso($rows[$k]['updated_at']) : null,
+        ];
+    }
+    json_out(['items' => $items, 'total' => count($items), 'map' => $map]);
+}
+
+// -----------------------------------------------------------------
+// PUT — 계약 §8-23 (부분 업데이트)
+// -----------------------------------------------------------------
+require_csrf();
+
+$body = body_json();
+if (!array_key_exists('settings', $body) || !is_array($body['settings'])) {
+    v_fail('settings', 'settings 객체가 필요합니다.');
+}
+$reason = v_string($body, 'reason', 0, 255, false);
+$input  = $body['settings'];
+
+$rows      = admin_settings_rows($keys);
+$updated   = [];
+$unchanged = [];
+$before    = [];
+$after     = [];
+
+foreach ($input as $k => $v) {
+    $key = (string) $k;
+    if (!isset($DEFS[$key])) {
+        // 임의의 키를 새로 만들 수 없다
+        throw new AppError('NOT_FOUND', 404, [
+            'field'   => $key,
+            'message' => '정의되지 않은 설정 키입니다: ' . $key,
+        ]);
+    }
+    $def   = $DEFS[$key];
+    $vtype = $def[0];
+    $cur   = admin_setting_value($key, $def, $rows);
+
+    if ($vtype === 'int') {
+        $new = (int) v_int($input, $key, $def[3], $def[4], true);
+        if ($key === 'signup_bonus_points' && $new < 0) {
+            v_fail($key, $key . ' 는 0 이상의 정수여야 합니다.');
+        }
+    } elseif ($vtype === 'bool') {
+        $new = (bool) v_bool($input, $key, true);
+    } elseif ($key === 'mail_driver') {
+        $new = (string) v_enum($input, $key, ['mail', 'log'], true);
+    } else {
+        $new = (string) v_string($input, $key, 1, 100, true);
+    }
+
+    if ($cur === $new) {
+        $unchanged[] = $key;
+        continue;
+    }
+    setting_set($key, $new, $vtype, $def[1]);
+    $updated[]      = $key;
+    $before[$key]   = $cur;
+    $after[$key]    = $new;
+}
+
+$logId = null;
+if ($updated !== []) {
+    $logId = admin_log_write(
+        (int) $ctx['user']['id'], 'setting.update', 'setting',
+        implode(',', array_slice($updated, 0, 5)),
+        $before, $after, $reason
+    );
+}
+
+// 갱신 후 값으로 map 을 다시 만든다
+$rows = admin_settings_rows($keys);
+$map  = [];
+foreach ($DEFS as $k => $def) {
+    $map[$k] = admin_setting_value($k, $def, $rows);
+}
+
+json_out([
+    'updated'      => $updated,
+    'unchanged'    => $unchanged,
+    'map'          => $map,
+    'admin_log_id' => $logId,
+]);

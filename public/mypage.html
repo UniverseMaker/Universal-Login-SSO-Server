@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>마이페이지 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+    <span class="who" id="who"></span>
+    <nav class="row">
+      <a class="btn btn-ghost btn-sm" id="nav-admin" href="admin.html" hidden>관리자 콘솔</a>
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-logout">로그아웃</button>
+    </nav>
+  </header>
+
+  <main class="container">
+
+    <!-- 부팅: GET /api/me -->
+    <div id="boot" role="status" aria-live="polite"></div>
+
+    <div id="app" hidden>
+
+      <!-- ================= 상단 헤더 (탭 위, 항상 표시) ================= -->
+      <section class="card" id="summary">
+        <div class="card-body">
+          <div class="page-head">
+            <div class="grow">
+              <h1 id="sum-title">마이페이지</h1>
+              <div class="sub" id="sum-ident"></div>
+            </div>
+            <div id="sum-points"></div>
+          </div>
+          <div id="sum-badges"></div>
+        </div>
+      </section>
+
+      <!-- ================= 탭 ================= -->
+      <div id="tabbar" class="tabs"></div>
+
+      <!-- ---------------- 정보 ---------------- -->
+      <section class="tab-panel" data-tab-panel="info" hidden>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>계정 정보</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-info-reload">새로 고침</button>
+          </div>
+          <div class="card-body" id="info-readonly"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>정보 수정</h2></div>
+          <div class="card-body">
+            <p class="text-sm text-muted">
+              등급·역할·결제등급·포인트·상태·아이디·이메일은 이 폼으로 바꿀 수 없습니다.
+              이메일은 <strong>보안</strong> 탭에서 변경합니다.
+            </p>
+            <form class="form" id="form-info" novalidate>
+              <div class="grid-2">
+                <div class="field">
+                  <label for="in-name">이름</label>
+                  <input type="text" id="in-name" name="name" autocomplete="name" maxlength="80">
+                  <span class="field-error"></span>
+                  <span class="hint">비우면 삭제됩니다. 80자 이내</span>
+                </div>
+                <div class="field">
+                  <label for="in-nickname">닉네임</label>
+                  <input type="text" id="in-nickname" name="nickname" autocomplete="nickname" maxlength="50">
+                  <span class="field-error"></span>
+                  <span class="hint">비우면 삭제됩니다. 50자 이내</span>
+                </div>
+                <div class="field">
+                  <label for="in-phone">연락처</label>
+                  <input type="tel" id="in-phone" name="phone" autocomplete="tel" maxlength="30">
+                  <span class="field-error"></span>
+                  <span class="hint">숫자 · + - ( ) 공백 · 마침표만. 4~30자</span>
+                </div>
+                <div class="field">
+                  <label for="in-avatar">프로필 이미지 주소</label>
+                  <input type="url" id="in-avatar" name="avatar_url" inputmode="url" maxlength="255"
+                         placeholder="https://…">
+                  <span class="field-error"></span>
+                  <span class="hint">http 또는 https 주소만 저장됩니다. 255자 이내</span>
+                </div>
+                <div class="field">
+                  <label for="in-timezone">타임존</label>
+                  <input type="text" id="in-timezone" name="timezone" list="tz-list"
+                         autocapitalize="off" spellcheck="false" maxlength="40">
+                  <datalist id="tz-list">
+                    <option value="Asia/Seoul"></option>
+                    <option value="UTC"></option>
+                    <option value="Asia/Tokyo"></option>
+                    <option value="Asia/Shanghai"></option>
+                    <option value="Asia/Singapore"></option>
+                    <option value="Europe/London"></option>
+                    <option value="Europe/Berlin"></option>
+                    <option value="America/New_York"></option>
+                    <option value="America/Los_Angeles"></option>
+                  </datalist>
+                  <span class="field-error"></span>
+                  <span class="hint">비우면 Asia/Seoul 로 되돌아갑니다</span>
+                </div>
+                <div class="field">
+                  <label for="in-locale">언어</label>
+                  <input type="text" id="in-locale" name="locale"
+                         autocapitalize="off" spellcheck="false" maxlength="10">
+                  <span class="field-error"></span>
+                  <span class="hint">예: ko-KR · en-US. 비우면 ko-KR</span>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="check">
+                  <input type="checkbox" id="in-marketing" name="marketing_agreed">
+                  <span>마케팅 정보 수신에 동의합니다 (선택)</span>
+                </label>
+                <span class="field-error"></span>
+              </div>
+
+              <div class="row end">
+                <button type="button" class="btn btn-secondary" id="btn-info-reset">되돌리기</button>
+                <button type="submit" class="btn btn-primary" id="btn-info-save">저장</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ---------------- 보안 ---------------- -->
+      <section class="tab-panel" data-tab-panel="security" hidden>
+
+        <div class="card">
+          <div class="card-head"><h2>비밀번호 변경</h2></div>
+          <div class="card-body">
+            <p class="text-sm text-muted">
+              변경하면 <strong>지금 쓰고 있는 기기를 제외한</strong> 다른 모든 기기가 로그아웃됩니다.
+            </p>
+            <form class="form" id="form-password" novalidate>
+              <div class="field">
+                <label for="in-cur-pw">현재 비밀번호<span class="req" aria-hidden="true">*</span></label>
+                <input type="password" id="in-cur-pw" name="current_password"
+                       autocomplete="current-password" required maxlength="200">
+                <span class="field-error"></span>
+              </div>
+              <div class="field">
+                <label for="in-new-pw">새 비밀번호<span class="req" aria-hidden="true">*</span></label>
+                <input type="password" id="in-new-pw" name="password"
+                       autocomplete="new-password" required maxlength="200">
+                <span class="field-error"></span>
+              </div>
+              <div class="field">
+                <label for="in-new-pw2">새 비밀번호 확인<span class="req" aria-hidden="true">*</span></label>
+                <input type="password" id="in-new-pw2" name="password_confirm"
+                       autocomplete="new-password" required maxlength="200">
+                <span class="field-error"></span>
+              </div>
+              <div class="row end">
+                <button type="submit" class="btn btn-primary" id="btn-pw-save">비밀번호 변경</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>이메일 변경</h2></div>
+          <div class="card-body">
+            <div id="email-current"></div>
+            <form class="form" id="form-email" novalidate>
+              <div class="field">
+                <label for="in-email-new">새 이메일<span class="req" aria-hidden="true">*</span></label>
+                <input type="email" id="in-email-new" name="email" autocomplete="email"
+                       autocapitalize="off" spellcheck="false" required maxlength="190">
+                <span class="field-error"></span>
+              </div>
+              <div class="field">
+                <label for="in-email-pw">비밀번호<span class="req" aria-hidden="true">*</span></label>
+                <input type="password" id="in-email-pw" name="password"
+                       autocomplete="current-password" required maxlength="200">
+                <span class="field-error"></span>
+                <span class="hint">계정 회수 경로를 바꾸는 작업이므로 비밀번호를 다시 확인합니다</span>
+              </div>
+              <div class="row end">
+                <button type="submit" class="btn btn-primary" id="btn-email-save">이메일 변경</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>2단계 인증</h2></div>
+          <div class="card-body">
+            <label class="check disabled">
+              <input type="checkbox" id="in-2fa" disabled aria-describedby="tfa-note">
+              <span>2단계 인증 사용 <span class="badge" aria-hidden="true">준비 중</span></span>
+            </label>
+            <p class="text-sm text-muted" id="tfa-note">
+              이 기능은 아직 제공되지 않습니다. 현재 값은 항상 “사용하지 않음”입니다.
+            </p>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ---------------- 포인트 ---------------- -->
+      <section class="tab-panel" data-tab-panel="points" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>포인트</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-points-reload">새로 고침</button>
+          </div>
+          <div class="card-body">
+            <div id="points-stats"></div>
+            <div id="points-list"></div>
+            <div id="points-pager"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- 세션 ---------------- -->
+      <section class="tab-panel" data-tab-panel="sessions" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>로그인된 기기</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-sessions-reload">새로 고침</button>
+          </div>
+          <div class="card-body">
+            <p class="text-sm text-muted">
+              지금 유효한 세션만 표시됩니다. 낯선 기기가 있으면 종료한 뒤 비밀번호를 변경해 주세요.
+            </p>
+            <div id="sessions-list"></div>
+            <div id="sessions-pager"></div>
+          </div>
+          <div class="card-foot">
+            <button type="button" class="btn btn-danger" id="btn-logout-all">
+              모든 기기에서 로그아웃 (현재 기기 포함)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- 로그인 이력 (D-37) ---------------- -->
+      <section class="tab-panel" data-tab-panel="loginlogs" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>로그인 이력</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-lg-reload">새로 고침</button>
+          </div>
+          <div class="card-body">
+            <p class="text-sm text-muted">
+              내 계정의 로그인 · 로그아웃 기록입니다. 모르는 기기나 IP 가 있으면
+              <strong>세션</strong> 탭에서 해당 기기를 종료하고 비밀번호를 변경해 주세요.
+            </p>
+            <form class="toolbar" id="form-loginlogs" novalidate>
+              <div class="field">
+                <label for="lg-result">결과</label>
+                <select id="lg-result" name="result">
+                  <option value="">전체</option>
+                  <option value="success">성공</option>
+                  <option value="fail_credential">실패 · 비밀번호 불일치</option>
+                  <option value="fail_locked">실패 · 계정 잠김</option>
+                  <option value="fail_status">실패 · 계정 상태</option>
+                  <option value="fail_ratelimit">실패 · 시도 횟수 초과</option>
+                  <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
+                  <option value="logout">로그아웃</option>
+                </select>
+                <span class="field-error"></span>
+              </div>
+              <div class="field">
+                <label for="lg-from">시작일 (UTC)</label>
+                <input type="date" id="lg-from" name="from">
+                <span class="field-error"></span>
+              </div>
+              <div class="field">
+                <label for="lg-to">종료일 (UTC)</label>
+                <input type="date" id="lg-to" name="to">
+                <span class="field-error"></span>
+              </div>
+              <div class="row">
+                <button type="submit" class="btn btn-primary">조회</button>
+                <button type="button" class="btn btn-ghost" id="btn-lg-reset">초기화</button>
+              </div>
+            </form>
+            <div id="lg-list"></div>
+            <div id="lg-pager"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- 서비스 ---------------- -->
+      <section class="tab-panel" data-tab-panel="services" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>가입한 서비스</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-services-reload">새로 고침</button>
+          </div>
+          <div class="card-body">
+            <p class="text-sm text-muted">
+              서비스별로 등급이 다르게 적용될 수 있습니다. 아래 등급이 그 서비스에서 실제로 적용되는 값입니다.
+            </p>
+            <div id="services-list"></div>
+            <div id="services-pager"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------- 탈퇴 ---------------- -->
+      <section class="tab-panel" data-tab-panel="withdraw" hidden>
+        <div class="card">
+          <div class="card-head"><h2>회원 탈퇴</h2></div>
+          <div class="card-body">
+            <div id="withdraw-notice"></div>
+            <form class="form" id="form-withdraw" novalidate>
+              <div class="field">
+                <label for="in-wd-preset">탈퇴 사유</label>
+                <select id="in-wd-preset" name="reason_preset">
+                  <option value="">선택하지 않음</option>
+                  <option value="서비스를 더 이상 이용하지 않음">서비스를 더 이상 이용하지 않음</option>
+                  <option value="사용이 불편함">사용이 불편함</option>
+                  <option value="개인정보가 걱정됨">개인정보가 걱정됨</option>
+                  <option value="다른 서비스를 이용하게 됨">다른 서비스를 이용하게 됨</option>
+                  <option value="__other__">직접 입력</option>
+                </select>
+                <span class="field-error"></span>
+              </div>
+              <div class="field">
+                <label for="in-wd-reason">사유 (선택)</label>
+                <input type="text" id="in-wd-reason" name="reason" maxlength="255">
+                <span class="field-error"></span>
+                <span class="hint">255자 이내. 비워 두어도 탈퇴할 수 있습니다</span>
+              </div>
+              <div class="field">
+                <label for="in-wd-pw">비밀번호<span class="req" aria-hidden="true">*</span></label>
+                <input type="password" id="in-wd-pw" name="password"
+                       autocomplete="current-password" required maxlength="200">
+                <span class="field-error"></span>
+              </div>
+              <div class="row end">
+                <button type="submit" class="btn btn-danger" id="btn-withdraw">탈퇴 진행</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /#app -->
+
+  </main>
+
+  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * mypage.html — 마이페이지 (탭: 정보 / 보안 / 포인트 / 세션 / 로그인 이력 / 서비스 / 탈퇴)
+ *
+ * 구속 문서
+ *   _workspace/01b_leader_decisions_round1.md  ← 수정 라운드 1
+ *     D-36 관리자 콘솔 링크 노출 기준을 role_rank >= 10 (manager) 으로 낮춘다
+ *     D-37 로그인 이력 탭 추가 (GET /api/me/login-logs · 계약 §6-7)
+ *   _workspace/01_leader_decisions.md   ← 최우선
+ *     D-0  경로는 논리 경로 + API_EXT. 동적 세그먼트 금지 → 쿼리 파라미터
+ *     D-2  2FA 는 "준비 중" 비활성 표시
+ *     D-4  서비스별 포인트 미노출 (items[].service_points 는 응답에 없다)
+ *     D-11 session.auth_type 으로 분기하지 않는다
+ *     D-18 me/withdraw 요청에 confirm 필수 (= 자신의 username)
+ *   _workspace/03_frontend_report.md    ← api.js / ui.js 공개 함수만 사용
+ *   _workspace/02b_backend_sso_me_report.md + server/api/me/*.php 실제 코드
+ *
+ * 규칙
+ *   - fetch 직접 호출 금지. api / apiGet / apiPost / apiPut / apiDelete 만 쓴다
+ *   - innerHTML 금지. 모든 서버 데이터는 el() / text() / textContent 로만 그린다
+ *   - 세션 만료 이동은 api.js 안에 있다. 여기서 login.html 로 다시 보내지 않는다
+ *   - 데이터 로드는 tabs() 의 isFirstLoad === true 일 때만 (03_frontend_report 주의 6)
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  /* ======================================================================
+   * 0. 상태
+   * ==================================================================== */
+  var state = {
+    user: null,        // GET /api/me → data.user   (계약 §3-1)
+    session: null,     // GET /api/me → data.session(계약 §3-4)
+    ctl: null,         // tabs() 컨트롤러
+    pointsPage: 1,
+    sessionsPage: 1,
+    servicesPage: 1,
+    loginLogsPage: 1
+  };
+
+  var PER_PAGE = 20;
+
+  /* ======================================================================
+   * 1. 자체 구현 유틸 — ui.js 에 없는 것만 여기 둔다
+   * ==================================================================== */
+
+  /** 긴 문자열(user_agent 등) 표시용 축약. 값은 그대로 textContent 로 들어간다. */
+  function truncate(s, n) {
+    var v = (s === null || s === undefined) ? '' : String(s);
+    return v.length > n ? v.slice(0, n) + '…' : v;
+  }
+
+  /** 값이 비었으면 '-' 로. */
+  function dash(v) {
+    return (v === null || v === undefined || v === '') ? '-' : String(v);
+  }
+
+  /** 예/아니오 표시. */
+  function yn(v) { return v ? '예' : '아니오'; }
+
+  /**
+   * 키-값 표. rows = [[라벨, 값(문자열 또는 Node)], ...]  null 항목은 건너뛴다.
+   * ui.js 의 tableNode() 는 thead 기반이라 상세 표에는 맞지 않아 별도로 만든다.
+   */
+  function kvTable(rows) {
+    var tbody = el('tbody');
+    rows.forEach(function (r) {
+      if (!r) { return; }
+      tbody.appendChild(el('tr', null, [
+        el('th', { scope: 'row' }, String(r[0])),
+        el('td', null, r[1] === null || r[1] === undefined ? '-' : r[1])
+      ]));
+    });
+    return el('div', { class: 'table-wrap' }, el('table', { class: 'kv' }, tbody));
+  }
+
+  /** 작은 회색 보조문구 노드. */
+  function sub(textValue) {
+    return el('div', { class: 'text-xs text-muted' }, String(textValue));
+  }
+
+  /**
+   * 서비스/가입 상태 라벨. ui.js 의 LABELS.status 는 users.status 값 집합이라
+   * 'disabled' / 'blocked' 를 모른다. 그대로 badge() 에 넣으면 영문이 노출된다.
+   */
+  var SERVICE_STATUS = { active: '정상', disabled: '중지' };
+  var MEMBERSHIP_STATUS = { active: '이용 중', blocked: '차단됨' };
+
+  /**
+   * 계약 §3-1 의 role 랭크. 관리자 콘솔 링크 노출 판정에만 쓴다.
+   * server/core/perm.php:12-14 의 값과 동일하다.
+   */
+  var ROLE_RANK = { user: 0, manager: 10, admin: 20, superadmin: 30 };
+
+  /**
+   * D-37 — 로그인 이력 result 라벨.
+   * 값 집합은 server/api/me/login_logs.php:22-23 의 v_enum 화이트리스트 6개와 동일하다
+   * (schema 의 login_logs.result 열거값). `ui.js` 의 LABELS 에는 이 맵이 없어 화면 로컬로 둔다 —
+   * 그대로 badge() 에 넣으면 영문이 노출된다.
+   */
+  var LOGIN_RESULT = {
+    success: '성공',
+    fail_credential: '실패 · 비밀번호 불일치',
+    fail_locked: '실패 · 계정 잠김',
+    fail_status: '실패 · 계정 상태',
+    /* D-46 — D-31(차단 회원 로그인 거부) 전용 값. `fail_status`(계정 자체가 정지/휴면/탈퇴)와
+       원인이 다르다. 계정은 정상이고 **그 서비스만** 막힌 경우이므로 문구를 분리한다. */
+    fail_service_blocked: '실패 · 서비스 이용 제한',
+    fail_ratelimit: '실패 · 시도 횟수 초과',
+    logout: '로그아웃'
+  };
+
+  /** 성공/실패/로그아웃을 색으로도 구분한다(텍스트 라벨과 병행 — 색만으로 구분하지 않는다). */
+  function loginResultClass(result) {
+    if (result === 'success') { return 'text-success'; }
+    if (String(result).indexOf('fail') === 0) { return 'text-danger'; }
+    return 'text-muted';
+  }
+
+  /** 로딩 표시를 컨테이너에 그린다. */
+  function showLoading(node, message) {
+    clear(node);
+    mount(node, loadingNode(message));
+  }
+
+  /** 에러를 컨테이너에 그린다. 세션 만료는 api.js 가 이동시키므로 여기서는 문구만. */
+  function showError(node, err, title) {
+    clear(node);
+    mount(node, alertNode(errorMessage(err), 'danger', title || null));
+  }
+
+  /* ======================================================================
+   * 2. 상단 헤더 (탭 위, 항상 표시)
+   * ==================================================================== */
+  function renderHeader() {
+    var u = state.user;
+    if (!u) { return; }
+
+    /* --- 사이트 헤더의 압축 표시 (640px 이하에서는 CSS 가 숨긴다) --- */
+    var who = $('#who');
+    clear(who);
+    mount(who, [
+      el('span', { class: 'mono', text: dash(u.username) })
+    ]);
+
+    /* --- 관리자 콘솔 링크: role_rank >= 10 (manager) ---
+       D-36 / Q-9: 서버는 stats · users 목록 · logs?type=login 을 manager 에게 허용한다
+       (server/api/admin/stats.php:19 · users.php:23 · logs.php:57 → require_role($ctx,'manager')).
+       예전 기준 20(admin)은 manager 역할을 UI 에서 사문화시켰다.
+       admin.html 도 진입 기준을 10 으로 낮췄으므로 이 링크는 manager 에게도 유효하다. */
+    var navAdmin = $('#nav-admin');
+    navAdmin.hidden = !(Number(u.role_rank) >= ROLE_RANK.manager);
+
+    /* --- 제목 = 닉네임(없으면 이름, 없으면 아이디) --- */
+    $('#sum-title').textContent = dash(u.nickname || u.name || u.username);
+
+    /* --- 아이디 / 이메일 --- */
+    var ident = $('#sum-ident');
+    clear(ident);
+    mount(ident, [
+      el('span', null, [text('아이디 '), el('span', { class: 'mono', text: dash(u.username) })]),
+      el('span', { class: 'text-muted' }, ' · '),
+      el('span', null, [text('이메일 '), el('span', { class: 'mono', text: dash(u.email) })]),
+      u.email_verified
+        ? null
+        : el('span', { class: 'badge', title: '이메일 인증이 완료되지 않았습니다.' }, ' 이메일 미인증')
+    ]);
+
+    /* --- 포인트 잔액 --- */
+    var pts = $('#sum-points');
+    clear(pts);
+    mount(pts, statNode('포인트', fmtNum(u.points), null, 'primary'));
+
+    /* --- 3축 등급 배지 3개 (하나로 합치지 않는다) + 상태 --- */
+    var badges = $('#sum-badges');
+    clear(badges);
+    /* userBadges() 가 계정=파랑 / 역할=보라 / 결제=초록 3개를 각각 만들고,
+       billing_active === false 면 결제 배지에 '만료됨' 을 붙인다. */
+    mount(badges, userBadges(u));
+    if (u.status && u.status !== 'active') {
+      mount(badges, el('span', { class: 'badge-row' }, badge('status', u.status)));
+    }
+  }
+
+  /* ======================================================================
+   * 3. 로그아웃
+   * ==================================================================== */
+
+  /**
+   * POST /api/auth/logout  { all_devices }
+   *   응답: revoked_count, all_devices
+   * all_devices:true 는 **현재 세션까지** 회수하고 쿠키를 지운다(실제 코드 확인).
+   * 따라서 어느 쪽이든 성공하면 login.html 로 이동한다.
+   */
+  function doLogout(allDevices) {
+    return apiPost('/api/auth/logout', { all_devices: !!allDevices })
+      .then(function () {
+        clearToken();
+        clearCsrf();
+        navigate('login.html', true);
+        return true;
+      })
+      .catch(function (err) {
+        /* 이미 만료된 세션이면 401 이 온다 — 로그아웃 성공과 같게 처리한다.
+           api.js 가 login.html 로 이동시키므로 여기서 다시 이동하지 않는다. */
+        if (err.code === 'AUTH_REQUIRED' || err.code === 'AUTH_SESSION_EXPIRED') { return true; }
+        throw err;
+      });
+  }
+
+  $('#btn-logout').addEventListener('click', function () {
+    var btn = this;
+    setBusy(btn, true);
+    doLogout(false).catch(function (err) {
+      setBusy(btn, false);
+      toast(errorMessage(err), 'danger');
+    });
+  });
+
+  /* ======================================================================
+   * 4. 탭 — 정보
+   *     GET /api/me  → { user, session }
+   *     PUT /api/me  → { user, updated_fields }
+   * ==================================================================== */
+
+  var formInfo = $('#form-info');
+
+  /** 서버 user 값을 수정 폼에 채운다. */
+  function fillInfoForm() {
+    var u = state.user || {};
+    $('#in-name').value = u.name === null || u.name === undefined ? '' : String(u.name);
+    $('#in-nickname').value = u.nickname === null || u.nickname === undefined ? '' : String(u.nickname);
+    $('#in-phone').value = u.phone === null || u.phone === undefined ? '' : String(u.phone);
+    $('#in-avatar').value = u.avatar_url === null || u.avatar_url === undefined ? '' : String(u.avatar_url);
+    $('#in-timezone').value = u.timezone === null || u.timezone === undefined ? '' : String(u.timezone);
+    $('#in-locale').value = u.locale === null || u.locale === undefined ? '' : String(u.locale);
+    $('#in-marketing').checked = !!u.marketing_agreed;
+    clearFormErrors(formInfo);
+  }
+
+  /** 읽기 전용 정보 표. 수정 불가 필드는 전부 여기서만 보여준다. */
+  function renderInfoReadonly() {
+    var u = state.user || {};
+    var s = state.session || {};
+    var box = $('#info-readonly');
+    clear(box);
+
+    var emailCell = el('span', null, [
+      el('span', { class: 'mono', text: dash(u.email) }),
+      u.email_verified
+        ? el('span', { class: 'text-success text-sm' }, ' (인증됨)')
+        : el('span', { class: 'text-warn text-sm' }, ' (미인증)')
+    ]);
+
+    var gradeCell = userBadges(u);
+
+    var billingCell = el('span', null, [
+      text(u.billing_active ? '유효' : '만료 또는 없음'),
+      el('br'),
+      sub('시작 ' + fmtDate(u.billing_started_at) + ' · 만료 ' + fmtDate(u.billing_expires_at))
+    ]);
+
+    mount(box, kvTable([
+      ['식별자(UUID)', el('span', { class: 'mono' }, dash(u.uuid))],
+      ['아이디', el('span', { class: 'mono' }, dash(u.username))],
+      ['이메일', emailCell],
+      ['상태', badge('status', u.status)],
+      ['등급 (계정 / 역할 / 결제)', gradeCell],
+      ['결제 기간', billingCell],
+      ['포인트 잔액', fmtNum(u.points)],
+      ['누적 적립 / 사용', fmtNum(u.total_points_earned) + ' / ' + fmtNum(u.total_points_spent)],
+      ['2단계 인증', yn(u.two_factor_enabled) + ' (준비 중)'],
+      ['가입일', fmtDate(u.created_at)],
+      ['최근 수정', fmtDate(u.updated_at)],
+      ['최근 로그인', fmtDate(u.last_login_at)],
+      ['로그인 횟수', fmtNum(u.login_count)],
+      ['서비스 컨텍스트', u.service_id
+        ? el('span', null, [
+            el('span', { class: 'mono', text: String(u.service_id) }),
+            el('br'),
+            sub('가입 ' + fmtDate(u.service_joined_at))
+          ])
+        : '-'],
+      ['현재 세션 만료', fmtDate(s.expires_at)]
+    ]));
+  }
+
+  /** 정보 탭 첫 진입 — 부팅 때 받은 user 를 그대로 쓴다(중복 요청 없음). */
+  function loadInfo() {
+    renderInfoReadonly();
+    fillInfoForm();
+  }
+
+  /** GET /api/me 재조회. */
+  function reloadMe() {
+    var btn = $('#btn-info-reload');
+    setBusy(btn, true);
+    return apiGet('/api/me')
+      .then(function (d) {
+        setBusy(btn, false);
+        state.user = d.user;
+        state.session = d.session;
+        renderHeader();
+        loadInfo();
+        toast('최신 정보를 불러왔습니다.', 'success');
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        toast(errorMessage(err), 'danger');
+      });
+  }
+
+  $('#btn-info-reload').addEventListener('click', reloadMe);
+  $('#btn-info-reset').addEventListener('click', fillInfoForm);
+
+  formInfo.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('#btn-info-save');
+    clearFormErrors(formInfo);
+
+    /* PUT /api/me 화이트리스트 (server/api/me/index.php 의 $ALLOWED 확인).
+       meta 도 서버는 받지만 이 화면은 편집 UI 를 제공하지 않으므로 보내지 않는다.
+       빈 문자열을 보내면 서버가 NULL 로 지운다(키를 빼면 손대지 않는다). */
+    var body = {
+      name: $('#in-name').value.trim(),
+      nickname: $('#in-nickname').value.trim(),
+      phone: $('#in-phone').value.trim(),
+      avatar_url: $('#in-avatar').value.trim(),
+      timezone: $('#in-timezone').value.trim(),
+      locale: $('#in-locale').value.trim(),
+      marketing_agreed: $('#in-marketing').checked
+    };
+
+    setBusy(btn, true);
+    apiPut('/api/me', body)
+      .then(function (d) {
+        setBusy(btn, false);
+        state.user = d.user;                       // 응답의 user 를 그대로 반영
+        var changed = (d.updated_fields || []);    // 실제로 바뀐 필드만 온다
+        renderHeader();
+        renderInfoReadonly();
+        fillInfoForm();
+        if (!changed.length) {
+          toast('변경된 내용이 없습니다.', 'info');
+          return;
+        }
+        toast('저장했습니다. (' + changed.join(', ') + ')', 'success');
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        formErrors(formInfo, err);
+      });
+  });
+
+  /* ======================================================================
+   * 5. 탭 — 보안
+   *     PUT /api/me/password → { changed, revoked_count, password_changed_at }
+   *     PUT /api/me/email    → { email, email_verified, verification_sent, expires_in }
+   * ==================================================================== */
+
+  var formPassword = $('#form-password');
+  var formEmail = $('#form-email');
+
+  function renderEmailCurrent() {
+    var u = state.user || {};
+    var box = $('#email-current');
+    clear(box);
+    mount(box, [
+      el('p', { class: 'text-sm' }, [
+        text('현재 이메일: '),
+        el('span', { class: 'mono', text: dash(u.email) }),
+        u.email_verified
+          ? el('span', { class: 'text-success' }, ' (인증됨)')
+          : el('span', { class: 'text-warn' }, ' (미인증)')
+      ]),
+      el('p', { class: 'text-sm text-muted' },
+        '변경하면 인증 상태가 해제됩니다. 설치본 설정에 따라 새 주소로 인증 메일이 발송됩니다.')
+    ]);
+  }
+
+  function loadSecurity() {
+    renderEmailCurrent();
+    $('#in-2fa').checked = false;   // D-2: 항상 false. 조작할 수 없다.
+  }
+
+  formPassword.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('#btn-pw-save');
+    clearFormErrors(formPassword);
+
+    var cur = $('#in-cur-pw').value;
+    var pw = $('#in-new-pw').value;
+    var pw2 = $('#in-new-pw2').value;
+
+    if (!cur) {
+      formErrors(formPassword, { code: 'VALIDATION_FAILED', message: '현재 비밀번호를 입력해 주세요.', field: 'current_password' });
+      return;
+    }
+    if (!pw) {
+      formErrors(formPassword, { code: 'VALIDATION_FAILED', message: '새 비밀번호를 입력해 주세요.', field: 'password' });
+      return;
+    }
+    if (pw !== pw2) {
+      formErrors(formPassword, { code: 'VALIDATION_FAILED', message: '비밀번호가 일치하지 않습니다.', field: 'password_confirm' });
+      return;
+    }
+
+    setBusy(btn, true);
+    apiPut('/api/me/password', {
+      current_password: cur,
+      password: pw,
+      password_confirm: pw2
+    })
+      .then(function (d) {
+        setBusy(btn, false);
+        formPassword.reset();
+        var n = Number(d && d.revoked_count) || 0;
+        var msg = n > 0
+          ? '비밀번호를 변경했습니다. 다른 기기 ' + fmtNum(n) + '곳에서 로그아웃되었습니다.'
+          : '비밀번호를 변경했습니다. 로그아웃된 다른 기기는 없습니다.';
+        formBanner(formPassword, msg + ' (변경 시각 ' + fmtDate(d && d.password_changed_at) + ')', 'success');
+        toast('비밀번호를 변경했습니다.', 'success');
+        /* 현재 세션은 유지된다(02b §5-6). 다만 session.issued_at 과 세션 목록이
+           바뀌므로 캐시를 버리고 다음 진입 때 다시 읽게 한다. */
+        if (state.ctl) { state.ctl.invalidate('sessions'); }
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        formErrors(formPassword, err);
+      });
+  });
+
+  formEmail.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('#btn-email-save');
+    clearFormErrors(formEmail);
+
+    var email = $('#in-email-new').value.trim();
+    var pw = $('#in-email-pw').value;
+
+    if (!email || email.indexOf('@') === -1) {
+      formErrors(formEmail, { code: 'VALIDATION_FAILED', message: '이메일 주소를 입력해 주세요.', field: 'email' });
+      return;
+    }
+    if (!pw) {
+      formErrors(formEmail, { code: 'VALIDATION_FAILED', message: '비밀번호를 입력해 주세요.', field: 'password' });
+      return;
+    }
+
+    setBusy(btn, true);
+    apiPut('/api/me/email', { password: pw, email: email })
+      .then(function (d) {
+        setBusy(btn, false);
+        formEmail.reset();
+        /* 서버가 정규화(소문자)한 값을 그대로 반영한다. */
+        if (state.user) {
+          state.user.email = d.email;
+          state.user.email_verified = !!d.email_verified;
+        }
+        renderHeader();
+        renderEmailCurrent();
+        if (state.ctl) { state.ctl.invalidate('info'); }
+
+        var msg = '이메일을 ' + d.email + ' 로 변경했습니다.';
+        msg += d.email_verified ? ' 인증 상태가 유지됩니다.' : ' 인증 상태가 해제되었습니다.';
+        if (d.verification_sent) {
+          msg += ' 새 주소로 인증 메일을 보냈습니다.';
+          if (d.expires_in) { msg += ' 링크는 ' + fmtDuration(d.expires_in) + ' 동안 유효합니다.'; }
+        } else {
+          msg += ' (이 설치본은 이메일 인증을 요구하지 않아 인증 메일을 보내지 않습니다.)';
+        }
+        formBanner(formEmail, msg, 'success');
+        toast('이메일을 변경했습니다.', 'success');
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        formErrors(formEmail, err);
+      });
+  });
+
+  /* ======================================================================
+   * 6. 탭 — 포인트
+   *     GET /api/me/points?page=&per_page=
+   *       → { points, total_points_earned, total_points_spent,
+   *           items[{id,delta,balance_after,reason,service_id,ref_type,ref_id,memo,created_at}],
+   *           total, page, per_page }
+   * ==================================================================== */
+
+  function renderPointsStats(d) {
+    var box = $('#points-stats');
+    clear(box);
+    mount(box, el('div', { class: 'stat-grid' }, [
+      statNode('현재 잔액', fmtNum(d.points), null, 'primary'),
+      statNode('누적 적립', fmtNum(d.total_points_earned), null, 'success'),
+      statNode('누적 사용', fmtNum(d.total_points_spent), null, 'warn')
+    ]));
+  }
+
+  function renderPointsList(d) {
+    var box = $('#points-list');
+    clear(box);
+
+    var items = d.items || [];
+    if (!items.length) {
+      mount(box, emptyNode('포인트 내역이 없습니다.', '포인트를 적립하거나 사용하면 여기에 기록됩니다.'));
+      return;
+    }
+
+    var t = tableNode([
+      '일시',
+      { label: '변동', className: 'num' },
+      { label: '이후 잔액', className: 'num' },
+      '사유',
+      '서비스',
+      '메모'
+    ]);
+
+    items.forEach(function (it) {
+      var delta = Number(it.delta) || 0;
+      var deltaCell = el('td', { class: ['num', delta < 0 ? 'text-danger' : 'text-success'] },
+        (delta > 0 ? '+' : '') + fmtNum(delta));
+
+      var reasonCell = el('td', null, [
+        el('span', { class: 'mono', text: dash(it.reason) }),
+        (it.ref_type || it.ref_id)
+          ? sub(dash(it.ref_type) + ' · ' + dash(it.ref_id))
+          : null
+      ]);
+
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'nowrap' }, fmtDate(it.created_at)),
+        deltaCell,
+        el('td', { class: 'num' }, fmtNum(it.balance_after)),
+        reasonCell,
+        el('td', null, it.service_id ? el('span', { class: 'mono', text: String(it.service_id) }) : '-'),
+        el('td', null, dash(it.memo))
+      ]));
+    });
+
+    mount(box, t.wrap);
+  }
+
+  function loadPoints(page) {
+    state.pointsPage = page || 1;
+    var list = $('#points-list');
+    showLoading(list, '포인트 내역을 불러오는 중…');
+    clear($('#points-pager'));
+
+    return apiGet('/api/me/points', { page: state.pointsPage, per_page: PER_PAGE })
+      .then(function (d) {
+        renderPointsStats(d);
+        renderPointsList(d);
+        /* 목록 응답 { total, page, per_page } 를 그대로 넘긴다. */
+        pager($('#points-pager'), d, function (next) { loadPoints(next); });
+        /* 잔액은 이 응답이 가장 최신이다. 상단 헤더도 맞춘다. */
+        if (state.user) {
+          state.user.points = d.points;
+          state.user.total_points_earned = d.total_points_earned;
+          state.user.total_points_spent = d.total_points_spent;
+          renderHeader();
+        }
+      })
+      .catch(function (err) {
+        clear($('#points-stats'));
+        showError(list, err, '포인트 정보를 불러올 수 없습니다');
+      });
+  }
+
+  $('#btn-points-reload').addEventListener('click', function () { loadPoints(state.pointsPage); });
+
+  /* ======================================================================
+   * 7. 탭 — 세션
+   *     GET    /api/me/sessions?page=&per_page=
+   *       → { items[{session_id,auth_type,service_id,issued_at,expires_at,
+   *                  refresh_expires_at,last_seen_at,device_label,ip,user_agent,is_current}],
+   *           total, page, per_page }
+   *     DELETE /api/me/sessions?session_id=  → { revoked, session_id, was_current }
+   *     POST   /api/auth/logout {all_devices:true} → { revoked_count, all_devices }
+   *
+   *  auth_type 으로 분기하지 않는다 (D-11). 화면에 표시도 하지 않는다.
+   * ==================================================================== */
+
+  function terminateSession(item) {
+    return modal({
+      title: '이 기기 로그아웃',
+      danger: true,
+      confirmText: '세션 종료',
+      body: function (b) {
+        mount(b, [
+          el('p', null, '선택한 기기의 세션을 즉시 종료합니다.'),
+          kvTable([
+            ['기기', dash(item.device_label)],
+            ['IP', el('span', { class: 'mono' }, dash(item.ip))],
+            ['최근 활동', fmtDate(item.last_seen_at)]
+          ])
+        ]);
+      },
+      onConfirm: function () {
+        /* D-0: 경로 세그먼트가 아니라 쿼리 파라미터다. */
+        return apiDelete('/api/me/sessions', { session_id: item.session_id });
+      }
+    }).then(function (result) {
+      if (!result) { return; }
+      if (result.was_current) {
+        /* 서버가 쿠키까지 지웠다(02b §5-7). 프론트도 로그아웃 처리한다. */
+        clearToken();
+        clearCsrf();
+        toast('현재 기기의 세션을 종료했습니다.', 'success');
+        navigate('login.html', true);
+        return;
+      }
+      toast('세션을 종료했습니다.', 'success');
+      loadSessions(state.sessionsPage);
+    });
+  }
+
+  function renderSessionsList(d) {
+    var box = $('#sessions-list');
+    clear(box);
+
+    var items = d.items || [];
+    if (!items.length) {
+      mount(box, emptyNode('표시할 세션이 없습니다.'));
+      return;
+    }
+
+    var t = tableNode(['기기', '서비스', 'IP', '최근 활동', '만료', { label: '', className: 'actions' }]);
+
+    items.forEach(function (it) {
+      var deviceCell = el('td', null, [
+        el('div', null, [
+          text(dash(it.device_label)),
+          it.is_current ? el('span', { class: 'badge' }, ' 현재 기기') : null
+        ]),
+        it.user_agent ? sub(truncate(it.user_agent, 70)) : null
+      ]);
+
+      /* 현재 기기에는 종료 버튼을 두지 않는다(스킬 규약). 로그아웃은 헤더 버튼으로. */
+      var actionCell = el('td', { class: 'actions' },
+        it.is_current
+          ? el('span', { class: 'text-xs text-muted' }, '헤더의 로그아웃 사용')
+          : el('button', {
+              type: 'button',
+              class: 'btn btn-danger btn-sm',
+              on: { click: function () { terminateSession(it); } }
+            }, '종료')
+      );
+
+      t.tbody.appendChild(el('tr', null, [
+        deviceCell,
+        el('td', null, it.service_id ? el('span', { class: 'mono', text: String(it.service_id) }) : '-'),
+        el('td', null, el('span', { class: 'mono' }, dash(it.ip))),
+        el('td', { class: 'nowrap' }, fmtDate(it.last_seen_at)),
+        el('td', { class: 'nowrap' }, [
+          text(fmtDate(it.expires_at)),
+          it.refresh_expires_at ? sub('갱신 만료 ' + fmtDate(it.refresh_expires_at)) : null
+        ]),
+        actionCell
+      ]));
+    });
+
+    mount(box, t.wrap);
+  }
+
+  function loadSessions(page) {
+    state.sessionsPage = page || 1;
+    var list = $('#sessions-list');
+    showLoading(list, '로그인된 기기를 불러오는 중…');
+    clear($('#sessions-pager'));
+
+    return apiGet('/api/me/sessions', { page: state.sessionsPage, per_page: PER_PAGE })
+      .then(function (d) {
+        renderSessionsList(d);
+        pager($('#sessions-pager'), d, function (next) { loadSessions(next); });
+      })
+      .catch(function (err) {
+        showError(list, err, '세션 목록을 불러올 수 없습니다');
+      });
+  }
+
+  $('#btn-sessions-reload').addEventListener('click', function () { loadSessions(state.sessionsPage); });
+
+  $('#btn-logout-all').addEventListener('click', function () {
+    modal({
+      title: '모든 기기에서 로그아웃',
+      danger: true,
+      confirmText: '전체 로그아웃',
+      body: function (b) {
+        mount(b, [
+          el('p', null, '모든 세션을 종료합니다.'),
+          alertNode('지금 사용 중인 이 기기도 함께 로그아웃되어 다시 로그인해야 합니다.', 'warn')
+        ]);
+      },
+      onConfirm: function () { return doLogout(true); }
+    }).catch(function (err) {
+      toast(errorMessage(err), 'danger');
+    });
+  });
+
+  /* ======================================================================
+   * 7-B. 탭 — 로그인 이력  (D-37 / Q-7 · 계약 §6-7)
+   *     GET /api/me/login-logs?result=&from=&to=&page=&per_page=
+   *       → { items[{id,result,service_id,ip,user_agent,created_at}],
+   *           total, page, per_page }
+   *
+   *  응답 필드는 server/api/me/login_logs.php:64-81 을 직접 읽어 확인했다.
+   *  - 최상위 키 4개: items / total / per_page / page
+   *  - items[] 는 정확히 6키. **username_input 은 없다**(같은 파일 9-10행 주석:
+   *    본인 로그에서는 의미가 없고 오타로 입력한 타인의 아이디가 노출될 수 있다)
+   *  - `result` 는 6개 열거값(위 LOGIN_RESULT 맵과 1:1)
+   *  - `from`/`to` 는 서버가 `YYYY-MM-DD` 만 받고 checkdate 까지 본다(:26-36).
+   *    `to` 는 그 날짜를 **포함**한다(:51-53)
+   *
+   *  user_agent 는 클라이언트가 보낸 헤더 그대로다 — 조작 가능한 값이므로
+   *  el()/text() 로만 그린다(innerHTML 금지).
+   * ==================================================================== */
+
+  var formLoginLogs = $('#form-loginlogs');
+
+  function renderLoginLogsList(d) {
+    var box = $('#lg-list');
+    clear(box);
+
+    var items = d.items || [];
+    if (!items.length) {
+      mount(box, emptyNode('로그인 기록이 없습니다.',
+        '조건을 바꿔 보거나 기간 필터를 비워 보세요.'));
+      return;
+    }
+
+    var t = tableNode(['시각', '결과', 'IP', 'User-Agent', '서비스']);
+
+    items.forEach(function (it) {
+      /* 라벨 + 색 병행. 맵에 없는 값이면 원문을 그대로 보여준다(감추지 않는다). */
+      var resultCell = el('td', { class: ['nowrap', loginResultClass(it.result)] },
+        LOGIN_RESULT[it.result] || dash(it.result));
+
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'nowrap' }, fmtDate(it.created_at)),
+        resultCell,
+        el('td', null, el('span', { class: 'mono' }, dash(it.ip))),
+        el('td', { title: dash(it.user_agent) }, dash(truncate(it.user_agent, 70))),
+        el('td', null, it.service_id
+          ? el('span', { class: 'mono', text: String(it.service_id) })
+          : el('span', { class: 'text-muted' }, '로그인 서버'))
+      ]));
+    });
+
+    mount(box, t.wrap);
+  }
+
+  function loadLoginLogs(page) {
+    state.loginLogsPage = page || 1;
+    var list = $('#lg-list');
+    showLoading(list, '로그인 이력을 불러오는 중…');
+    clear($('#lg-pager'));
+    clearFormErrors(formLoginLogs);
+
+    /* 빈 문자열은 api.js 의 buildQuery() 가 알아서 뺀다. */
+    return apiGet('/api/me/login-logs', {
+      result: $('#lg-result').value,
+      from: $('#lg-from').value,
+      to: $('#lg-to').value,
+      page: state.loginLogsPage,
+      per_page: PER_PAGE
+    })
+      .then(function (d) {
+        renderLoginLogsList(d);
+        pager($('#lg-pager'), d, function (next) { loadLoginLogs(next); });
+      })
+      .catch(function (err) {
+        /* from/to/result 형식 오류는 VALIDATION_FAILED + field 로 온다 → 해당 입력 옆에 표시.
+           field 가 없을 때는 배너가 두 번 뜨지 않게 목록 영역에만 보여준다
+           (toolbar 는 flex 행이라 form-alert 를 넣으면 레이아웃이 흐트러진다). */
+        if (err && err.field) { formErrors(formLoginLogs, err); }
+        showError(list, err, '로그인 이력을 불러올 수 없습니다');
+      });
+  }
+
+  formLoginLogs.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    loadLoginLogs(1);
+  });
+
+  $('#btn-lg-reload').addEventListener('click', function () { loadLoginLogs(state.loginLogsPage); });
+
+  $('#btn-lg-reset').addEventListener('click', function () {
+    $('#lg-result').value = '';
+    $('#lg-from').value = '';
+    $('#lg-to').value = '';
+    loadLoginLogs(1);
+  });
+
+  /* ======================================================================
+   * 8. 탭 — 서비스
+   *     GET /api/me/services?page=&per_page=
+   *       → { items[{service_id,service_name,description,status,membership_status,
+   *                  account_level,account_level_rank,role,role_rank,
+   *                  billing_tier,billing_tier_rank,billing_expires_at,billing_active,
+   *                  joined_at,last_used_at}],
+   *           total, page, per_page }
+   *
+   *  service_points 는 응답에 없다 (D-4). 서비스별 포인트를 표시하지 않는다.
+   * ==================================================================== */
+
+  function renderServicesList(d) {
+    var box = $('#services-list');
+    clear(box);
+
+    var items = d.items || [];
+    if (!items.length) {
+      mount(box, emptyNode('가입한 서비스가 없습니다.', '연동된 앱에서 로그인하면 이 목록에 나타납니다.'));
+      return;
+    }
+
+    var t = tableNode(['서비스', '상태', '이 서비스에서의 등급', '결제 만료', '가입일', '최근 사용']);
+
+    items.forEach(function (it) {
+      var nameCell = el('td', null, [
+        el('div', null, dash(it.service_name || it.service_id)),
+        el('div', null, el('span', { class: 'mono text-xs', text: dash(it.service_id) })),
+        it.description ? sub(truncate(it.description, 60)) : null
+      ]);
+
+      var svcStatus = it.status === null || it.status === undefined
+        ? '삭제된 서비스'
+        : (SERVICE_STATUS[it.status] || String(it.status));
+      var memStatus = MEMBERSHIP_STATUS[it.membership_status] || dash(it.membership_status);
+
+      var statusCell = el('td', { class: 'nowrap' }, [
+        el('div', null, svcStatus),
+        sub('내 가입 상태: ' + memStatus)
+      ]);
+
+      /* 3축 배지. items[] 가 account_level / role / billing_tier / billing_active 를
+         user 와 같은 키로 담고 있어 userBadges() 를 그대로 쓸 수 있다. */
+      var gradeCell = el('td', null, userBadges(it));
+
+      t.tbody.appendChild(el('tr', null, [
+        nameCell,
+        statusCell,
+        gradeCell,
+        el('td', { class: 'nowrap' }, fmtDate(it.billing_expires_at)),
+        el('td', { class: 'nowrap' }, fmtDate(it.joined_at)),
+        el('td', { class: 'nowrap' }, fmtDate(it.last_used_at))
+      ]));
+    });
+
+    mount(box, t.wrap);
+  }
+
+  function loadServices(page) {
+    state.servicesPage = page || 1;
+    var list = $('#services-list');
+    showLoading(list, '가입한 서비스를 불러오는 중…');
+    clear($('#services-pager'));
+
+    return apiGet('/api/me/services', { page: state.servicesPage, per_page: PER_PAGE })
+      .then(function (d) {
+        renderServicesList(d);
+        pager($('#services-pager'), d, function (next) { loadServices(next); });
+      })
+      .catch(function (err) {
+        showError(list, err, '서비스 목록을 불러올 수 없습니다');
+      });
+  }
+
+  $('#btn-services-reload').addEventListener('click', function () { loadServices(state.servicesPage); });
+
+  /* ======================================================================
+   * 9. 탭 — 탈퇴
+   *     POST /api/me/withdraw { password, reason, confirm }
+   *       → { withdrawn, withdrawn_at, revoked_count, message }
+   *
+   *  confirm 은 필수이고 **자신의 username** 과 정확히 일치해야 한다
+   *  (D-18 / server/api/me/withdraw.php: 입력값을 소문자로 정규화해 비교).
+   * ==================================================================== */
+
+  var formWithdraw = $('#form-withdraw');
+
+  function loadWithdraw() {
+    var u = state.user || {};
+    var box = $('#withdraw-notice');
+    clear(box);
+    mount(box, [
+      alertNode('탈퇴하면 되돌릴 수 없습니다. 모든 세션이 종료되고 서비스 이용이 중단됩니다.',
+        'danger', '되돌릴 수 없는 작업입니다'),
+      el('ul', { class: 'list-plain text-sm text-muted' }, [
+        el('li', null, '개인정보(이름·닉네임·연락처·프로필 이미지)는 삭제됩니다.'),
+        el('li', null, '아이디와 이메일은 재가입을 위해 치환되며, 같은 아이디로 다시 가입할 수 있습니다.'),
+        el('li', null, '포인트·로그 이력은 감사 목적으로 보존됩니다.'),
+        el('li', null, '가입한 서비스 이용은 즉시 차단됩니다.')
+      ]),
+      el('p', { class: 'text-sm' }, [
+        text('마지막 단계에서 아이디 '),
+        el('span', { class: 'mono', text: dash(u.username) }),
+        text(' 를 그대로 입력해야 진행됩니다.')
+      ])
+    ]);
+  }
+
+  /* 사유 선택 → 자유 입력란 채우기 */
+  $('#in-wd-preset').addEventListener('change', function () {
+    var v = this.value;
+    var input = $('#in-wd-reason');
+    if (v === '__other__') {
+      input.value = '';
+      try { input.focus(); } catch (e) { /* noop */ }
+      return;
+    }
+    input.value = v;
+  });
+
+  formWithdraw.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    clearFormErrors(formWithdraw);
+
+    var u = state.user || {};
+    var pw = $('#in-wd-pw').value;
+    var reason = $('#in-wd-reason').value.trim();
+
+    if (!pw) {
+      formErrors(formWithdraw, { code: 'VALIDATION_FAILED', message: '비밀번호를 입력해 주세요.', field: 'password' });
+      return;
+    }
+    if (!u.username) {
+      formBanner(formWithdraw, '계정 정보를 확인할 수 없습니다. 새로 고침 후 다시 시도해 주세요.', 'danger');
+      return;
+    }
+
+    /* 2단계: 아이디 타이핑 확인. confirmPhrase 와 정확히 같은 값만 확인 버튼을 켠다. */
+    modal({
+      title: '회원 탈퇴',
+      danger: true,
+      confirmText: '탈퇴하기',
+      confirmPhrase: u.username,
+      confirmPhraseLabel: '되돌릴 수 없습니다. 계속하려면 아이디를 입력하세요: ',
+      body: function (b) {
+        mount(b, [
+          el('p', null, '모든 세션이 종료되고 서비스 이용이 중단됩니다.'),
+          reason ? kvTable([['탈퇴 사유', reason]]) : null
+        ]);
+      },
+      onConfirm: function () {
+        var body = { password: pw, confirm: u.username };   // D-18: confirm 필수
+        if (reason) { body.reason = reason; }
+        return apiPost('/api/me/withdraw', body).catch(function (err) {
+          /* 비밀번호 오류는 1단계 폼 필드에도 표시해 둔다. 모달에는 메시지가 뜬다. */
+          if (err.field) { formErrors(formWithdraw, err); }
+          throw err;
+        });
+      }
+    }).then(function (result) {
+      if (!result) { return; }
+      clearToken();
+      clearCsrf();
+      formWithdraw.reset();
+      return alertModal('탈퇴 완료',
+        (result.message || '탈퇴가 완료되었습니다.') +
+        ' (처리 시각 ' + fmtDate(result.withdrawn_at) + ')'
+      ).then(function () {
+        navigate('index.html', true);
+      });
+    });
+  });
+
+  /* ======================================================================
+   * 10. 탭 초기화 — 로드는 isFirstLoad === true 일 때만
+   * ==================================================================== */
+  var TABS = [
+    { key: 'info', label: '정보' },
+    { key: 'security', label: '보안' },
+    { key: 'points', label: '포인트' },
+    { key: 'sessions', label: '세션' },
+    { key: 'loginlogs', label: '로그인 이력' },
+    { key: 'services', label: '서비스' },
+    { key: 'withdraw', label: '탈퇴' }
+  ];
+
+  function onTab(key, panel, isFirstLoad) {
+    if (!isFirstLoad) { return; }      // 재진입 시 재요청하지 않는다
+    if (key === 'info') { loadInfo(); return; }
+    if (key === 'security') { loadSecurity(); return; }
+    if (key === 'points') { loadPoints(1); return; }
+    if (key === 'sessions') { loadSessions(1); return; }
+    if (key === 'loginlogs') { loadLoginLogs(1); return; }
+    if (key === 'services') { loadServices(1); return; }
+    if (key === 'withdraw') { loadWithdraw(); return; }
+  }
+
+  /* ======================================================================
+   * 11. 부팅 — GET /api/me
+   * ==================================================================== */
+  function boot() {
+    var host = $('#boot');
+    showLoading(host, '내 정보를 불러오는 중…');
+
+    apiGet('/api/me')
+      .then(function (d) {
+        state.user = d.user;
+        state.session = d.session;
+
+        clear(host);
+        host.hidden = true;
+        $('#app').hidden = false;
+
+        renderHeader();
+        state.ctl = tabs($('#tabbar'), TABS, onTab);
+      })
+      .catch(function (err) {
+        /* AUTH_REQUIRED / AUTH_SESSION_EXPIRED 는 api.js 가 login.html 로 보낸다.
+           여기서는 문구만 남긴다(이중 이동 금지). */
+        clear(host);
+        mount(host, [
+          alertNode(errorMessage(err), 'danger', '마이페이지를 열 수 없습니다'),
+          el('div', { class: 'row' }, [
+            el('button', {
+              type: 'button', class: 'btn btn-secondary',
+              on: { click: function () { location.reload(); } }
+            }, '다시 시도'),
+            el('a', { class: 'btn btn-ghost', href: 'login.html' }, '로그인 화면으로')
+          ])
+        ]);
+      });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------
+# ulogin server/storage/.htaccess
+#
+# 이 디렉토리에는 log 메일 드라이버가 남긴 메일 본문이 쌓인다.
+# 그 안에는 **비밀번호 재설정 링크**와 **관리자가 발급한 임시 비밀번호**가
+# 평문으로 들어 있다. 웹에서 한 건이라도 읽히면 곧바로 계정 탈취다.
+#
+# 이 파일은 방어의 전부가 아니다 (리더 판정 D-34 / 감사 H-5).
+# nginx 나 `AllowOverride None` 환경에서는 이 파일이 아예 읽히지 않는다.
+# 함께 걸려 있는 방어:
+#   - storage/index.html, storage/mail/index.html  (디렉토리 목록 차단)
+#   - 메일 파일 확장자 .php + 첫 줄 `<?php exit; ?>`  (정적 서빙·실행 양쪽 대응)
+#   - 파일명에 8바이트 난수                          (추측 불가)
+#   - 파일 권한 0600 / 디렉토리 0700
+#   - INSTALL.md 의 배포 후 확인 절차 + nginx deny 스니펫
+#
+# 배포 직후 브라우저로 아래 두 곳을 열어 403/404 인지 반드시 확인한다.
+#   {설치루트}/server/storage/
+#   {설치루트}/server/storage/mail/
+# ---------------------------------------------------------------------
+
+# 1) 전면 차단 — Apache 2.4 (mod_authz_core) / 2.2 이하 양쪽 문법
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order deny,allow
+  Deny from all
+</IfModule>
+
+# 2) 위의 Require 가 무시되거나 상위 설정에 덮여도 파일 단위로 한 번 더 막는다
+<FilesMatch ".*">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# 3) 디렉토리 목록·CGI 실행 차단. index.html 을 먼저 준다
+Options -Indexes -ExecCGI
+DirectoryIndex index.html
+
+# 4) PHP 엔진 차단 — 메일 파일은 .php 확장자다. 실행 자체를 막는다.
+#    mod_php 가 없는 환경(PHP-FPM/CGI)에서 php_flag 는 500 을 내므로 IfModule 로 감싼다.
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php5.c>
+  php_flag engine off
+</IfModule>
+
+# 5) 핸들러가 남아 있는 경우의 최후 방어 — .php 를 실행 대상에서 뺀다
+<IfModule mod_mime.c>
+  RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .phps
+  RemoveType .php .phtml .php3 .php4 .php5 .php7 .phps
+</IfModule>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>비밀번호 찾기 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+    <nav><a class="btn btn-ghost btn-sm" id="nav-login" href="login.html">로그인</a></nav>
+  </header>
+
+  <main class="container narrow">
+
+    <section class="card auth-card" id="forgot-card">
+      <div class="card-head">
+        <h1>비밀번호 찾기</h1>
+      </div>
+
+      <div class="card-body">
+        <p class="text-sm text-muted">
+          가입할 때 사용한 이메일 주소를 입력하면 비밀번호 재설정 링크를 보내 드립니다.
+        </p>
+
+        <form class="form" id="forgot-form" novalidate>
+          <div class="field">
+            <label for="email">이메일<span class="req" aria-hidden="true">*</span></label>
+            <input type="email" id="email" name="email" autocomplete="email"
+                   autocapitalize="off" spellcheck="false" required maxlength="190">
+            <span class="field-error"></span>
+          </div>
+
+          <p class="text-xs text-muted" id="cooldown-note" role="status" aria-live="polite" hidden></p>
+
+          <button type="submit" class="btn btn-primary btn-block" id="submit-btn">재설정 링크 받기</button>
+        </form>
+      </div>
+
+      <div class="card-foot">
+        <a class="btn btn-ghost btn-sm" id="link-login" href="login.html">로그인으로 돌아가기</a>
+        <a class="btn btn-ghost btn-sm" id="link-register" href="register.html">회원가입</a>
+      </div>
+    </section>
+
+    <!-- 발송 완료 — 계정 존재 여부와 무관하게 항상 같은 화면이다 -->
+    <section class="card auth-card" id="sent-card" hidden>
+      <div class="card-head">
+        <h1>메일을 보냈습니다</h1>
+      </div>
+      <div class="card-body" id="sent-body"></div>
+      <div class="card-foot" id="sent-foot"></div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * forgot.html — 비밀번호 찾기
+ *
+ * POST /api/auth/password/forgot  (실제 파일: api/auth/password_forgot.php,
+ *   api.js 의 ULOGIN_PATH_ALIASES 가 논리 경로를 자동 치환한다)
+ *
+ * 계정 존재 여부와 무관하게 **항상 같은 성공 화면**을 보여준다.
+ * 다르게 보이면 그 차이가 계정 열거(enumeration) 수단이 된다.
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  var SSO_KEEP = ['service_id', 'redirect_uri', 'state', 'code_challenge'];
+  var qs = new URLSearchParams(location.search);
+
+  function withSso(target) {
+    var next = new URLSearchParams();
+    SSO_KEEP.forEach(function (k) {
+      if (qs.has(k) && qs.get(k) !== '') { next.set(k, qs.get(k)); }
+    });
+    var q = next.toString();
+    return q ? target + '?' + q : target;
+  }
+
+  var cardForm = $('#forgot-card');
+  var cardSent = $('#sent-card');
+  var sentBody = $('#sent-body');
+  var sentFoot = $('#sent-foot');
+  var form = $('#forgot-form');
+  var inEmail = $('#email');
+  var btn = $('#submit-btn');
+  var coolNote = $('#cooldown-note');
+
+  /* SSO 파라미터 유지 — 빼면 사용자가 로그인 서버에 갇힌다. */
+  var loginHref = withSso('login.html');
+  $('#link-login').setAttribute('href', loginHref);
+  $('#nav-login').setAttribute('href', loginHref);
+  $('#link-register').setAttribute('href', withSso('register.html'));
+
+  /* ---- 쿨다운 (자체 구현) -------------------------------------------- */
+  var coolTimer = null;
+  function startCooldown(seconds) {
+    var left = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (coolTimer) { clearInterval(coolTimer); coolTimer = null; }
+    if (!left) { btn.disabled = false; coolNote.hidden = true; return; }
+    btn.disabled = true;
+    coolNote.hidden = false;
+    var tick = function () {
+      if (left <= 0) {
+        clearInterval(coolTimer); coolTimer = null;
+        btn.disabled = false;
+        coolNote.textContent = '다시 시도할 수 있습니다.';
+        return;
+      }
+      coolNote.textContent = '다시 요청까지 ' + fmtDuration(left) + ' 남았습니다.';
+      left -= 1;
+    };
+    tick();
+    coolTimer = setInterval(tick, 1000);
+  }
+
+  /* ---- 발송 완료 화면 ------------------------------------------------- */
+  function showSent(data) {
+    clear(sentBody);
+    clear(sentFoot);
+
+    var msg = (data && data.message) ||
+      '입력하신 이메일로 재설정 링크를 보냈습니다. 메일이 오지 않으면 주소를 확인해 주세요.';
+    sentBody.appendChild(alertNode(msg, 'success'));
+
+    if (data && data.expires_in) {
+      sentBody.appendChild(el('p', { class: 'text-sm text-muted' },
+        '재설정 링크는 ' + fmtDuration(data.expires_in) + ' 동안만 유효합니다.'));
+    }
+    sentBody.appendChild(el('p', { class: 'text-sm text-muted' },
+      '보안을 위해 해당 이메일로 가입된 계정이 있는지 여부는 알려 드리지 않습니다. ' +
+      '메일이 오지 않으면 가입에 사용한 다른 주소를 확인해 주세요.'));
+
+    sentFoot.appendChild(el('a', { class: 'btn btn-primary', href: loginHref }, '로그인으로 돌아가기'));
+    sentFoot.appendChild(el('button', {
+      class: 'btn btn-ghost', type: 'button',
+      on: { click: function () { cardSent.hidden = true; cardForm.hidden = false; } }
+    }, '다른 주소로 다시 받기'));
+
+    cardForm.hidden = true;
+    cardSent.hidden = false;
+  }
+
+  /* ---- 제출 ---------------------------------------------------------- */
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (btn.disabled) { return; }
+    clearFormErrors(form);
+    startCooldown(0);   // 끝난 쿨다운 안내문을 지운다
+
+    var email = inEmail.value.trim();
+    if (!email || email.indexOf('@') === -1) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: '이메일 주소를 입력해 주세요.', field: 'email' });
+      return;
+    }
+
+    setBusy(btn, true);
+    apiPost('/api/auth/password/forgot', { email: email })
+      .then(function (data) {
+        setBusy(btn, false);
+        showSent(data);
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        if (err.code === 'RATE_LIMITED') {
+          formBanner(form, errorMessage(err), 'danger');
+          startCooldown(err.data && err.data.retry_after);
+          return;
+        }
+        /* VALIDATION_FAILED(이메일 형식)만 필드 오류로 나온다.
+           계정 유무로는 절대 실패하지 않는다(백엔드 리포트 1-3). */
+        formErrors(form, err);
+      });
+  });
+})();
+</script>
+</body>
+</html>

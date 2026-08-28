@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>비밀번호 재설정 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="container narrow">
+
+    <!-- 토큰이 없거나 무효할 때 -->
+    <section class="card auth-card" id="bad-card" hidden>
+      <div class="card-head">
+        <h1 id="bad-title">링크를 사용할 수 없습니다</h1>
+      </div>
+      <div class="card-body" id="bad-body"></div>
+      <div class="card-foot" id="bad-foot"></div>
+    </section>
+
+    <!-- 재설정 폼 -->
+    <section class="card auth-card" id="reset-card" hidden>
+      <div class="card-head">
+        <h1>새 비밀번호 설정</h1>
+      </div>
+
+      <div class="card-body">
+        <p class="text-sm text-muted">
+          새 비밀번호를 입력해 주세요. 변경하면 기존에 로그인되어 있던 모든 기기의 세션이 종료됩니다.
+        </p>
+
+        <form class="form" id="reset-form" novalidate>
+          <div class="field">
+            <label for="password">새 비밀번호<span class="req" aria-hidden="true">*</span></label>
+            <input type="password" id="password" name="password" autocomplete="new-password" required>
+            <span class="field-error"></span>
+            <span class="hint">8자 이상. 영문·숫자·특수문자 중 2종류 이상을 섞어 주세요.</span>
+            <div class="strength" id="pw-strength" data-level="0">
+              <div class="strength-bar"><i></i></div>
+              <div class="strength-text" id="pw-strength-text" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="password-confirm">새 비밀번호 확인<span class="req" aria-hidden="true">*</span></label>
+            <input type="password" id="password-confirm" name="password_confirm" autocomplete="new-password" required>
+            <span class="field-error"></span>
+            <span class="hint" id="pw-match" role="status" aria-live="polite"></span>
+          </div>
+
+          <p class="text-xs text-muted" id="cooldown-note" role="status" aria-live="polite" hidden></p>
+
+          <button type="submit" class="btn btn-primary btn-block" id="submit-btn">비밀번호 변경</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- 완료 -->
+    <section class="card auth-card" id="done-card" hidden>
+      <div class="card-head">
+        <h1>비밀번호가 변경되었습니다</h1>
+      </div>
+      <div class="card-body" id="done-body"></div>
+      <div class="card-foot" id="done-foot"></div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * reset.html — 비밀번호 재설정 (메일 링크의 ?token= 을 받는다)
+ *
+ * POST /api/auth/password/reset  (실제 파일: api/auth/password_reset.php,
+ *   api.js 의 ULOGIN_PATH_ALIASES 가 논리 경로를 자동 치환한다)
+ *   응답 data: reset, revoked_count
+ *
+ * TOKEN_INVALID 은 없음·만료·이미 사용됨을 구분하지 않는다(오라클 방지).
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  var SSO_KEEP = ['service_id', 'redirect_uri', 'state', 'code_challenge'];
+  var qs = new URLSearchParams(location.search);
+  var token = (qs.get('token') || '').trim();
+
+  function withSso(target) {
+    var next = new URLSearchParams();
+    SSO_KEEP.forEach(function (k) {
+      if (qs.has(k) && qs.get(k) !== '') { next.set(k, qs.get(k)); }
+    });
+    var q = next.toString();
+    return q ? target + '?' + q : target;
+  }
+
+
+  /* 감사 M-4 잔여분 — 주소창에서 token 을 즉시 지운다.
+     token 은 그 자체로 계정을 탈취할 수 있는 자격증명이다. URL 에 남으면
+     브라우저 히스토리·북마크·화면 공유·확장 프로그램에 그대로 노출된다.
+     (Referrer-Policy 는 외부 전송만 막을 뿐 로컬에 남는 것은 못 막는다.)
+     token 은 위에서 이미 변수로 읽었으므로 지워도 동작에 영향이 없다.
+     SSO 파라미터는 로그인 화면으로 이어져야 하므로 보존한다. */
+  if (token && window.history && history.replaceState) {
+    try {
+      var keep = new URLSearchParams();
+      SSO_KEEP.forEach(function (k) {
+        if (qs.has(k) && qs.get(k) !== '') { keep.set(k, qs.get(k)); }
+      });
+      var kq = keep.toString();
+      history.replaceState(null, '', location.pathname + (kq ? '?' + kq : '') + location.hash);
+    } catch (e) { /* 구형 브라우저 — 지우지 못해도 진행한다 */ }
+  }
+
+  var loginHref = withSso('login.html');
+  var forgotHref = withSso('forgot.html');
+
+  var cardBad = $('#bad-card');
+  var badTitle = $('#bad-title');
+  var badBody = $('#bad-body');
+  var badFoot = $('#bad-foot');
+
+  var cardReset = $('#reset-card');
+  var cardDone = $('#done-card');
+  var doneBody = $('#done-body');
+  var doneFoot = $('#done-foot');
+
+  var form = $('#reset-form');
+  var inPw = $('#password');
+  var inPw2 = $('#password-confirm');
+  var btn = $('#submit-btn');
+  var coolNote = $('#cooldown-note');
+  var strength = $('#pw-strength');
+  var strengthText = $('#pw-strength-text');
+  var matchNote = $('#pw-match');
+
+  /* ---- 쿨다운 (자체 구현) -------------------------------------------- */
+  var coolTimer = null;
+  function startCooldown(seconds) {
+    var left = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (coolTimer) { clearInterval(coolTimer); coolTimer = null; }
+    if (!left) { btn.disabled = false; coolNote.hidden = true; return; }
+    btn.disabled = true;
+    coolNote.hidden = false;
+    var tick = function () {
+      if (left <= 0) {
+        clearInterval(coolTimer); coolTimer = null;
+        btn.disabled = false;
+        coolNote.textContent = '다시 시도할 수 있습니다.';
+        return;
+      }
+      coolNote.textContent = '다시 시도까지 ' + fmtDuration(left) + ' 남았습니다.';
+      left -= 1;
+    };
+    tick();
+    coolTimer = setInterval(tick, 1000);
+  }
+
+  /* ---- 비밀번호 강도 (클라이언트 계산) -------------------------------- */
+  function pwClasses(pw) {
+    var n = 0;
+    if (/[A-Za-z]/.test(pw)) { n += 1; }
+    if (/[0-9]/.test(pw)) { n += 1; }
+    if (/[^A-Za-z0-9]/.test(pw)) { n += 1; }
+    return n;
+  }
+  function pwLevel(pw) {
+    if (!pw) { return 0; }
+    var kinds = pwClasses(pw);
+    var len = pw.length;
+    if (len < 8 || kinds < 2) { return 1; }
+    if (len >= 12 && kinds >= 3) { return 4; }
+    if (len >= 10 || kinds >= 3) { return 3; }
+    return 2;
+  }
+  var LEVEL_TEXT = {
+    0: '',
+    1: '사용할 수 없습니다 — 8자 이상, 영문·숫자·특수문자 중 2종류 이상이 필요합니다.',
+    2: '보통 — 길이를 늘리거나 문자 종류를 추가하면 더 안전합니다.',
+    3: '양호',
+    4: '강함'
+  };
+  function renderStrength() {
+    var lv = pwLevel(inPw.value);
+    strength.setAttribute('data-level', String(lv));
+    strengthText.textContent = LEVEL_TEXT[lv] || '';
+  }
+  function renderMatch() {
+    if (!inPw2.value) { matchNote.textContent = ''; return; }
+    matchNote.textContent = (inPw.value === inPw2.value)
+      ? '비밀번호가 일치합니다.' : '비밀번호가 일치하지 않습니다.';
+  }
+  inPw.addEventListener('input', function () { renderStrength(); renderMatch(); });
+  inPw2.addEventListener('input', renderMatch);
+
+  /* ---- 링크 만료 / 토큰 없음 화면 ------------------------------------- */
+  function showBad(title, message) {
+    clear(badBody);
+    clear(badFoot);
+    badTitle.textContent = title;
+    badBody.appendChild(alertNode(message, 'danger'));
+    badBody.appendChild(el('p', { class: 'text-sm text-muted' },
+      '재설정 링크는 한 번만 쓸 수 있고 발급 후 일정 시간이 지나면 만료됩니다. ' +
+      '아래에서 새 링크를 다시 요청해 주세요.'));
+    badFoot.appendChild(el('a', { class: 'btn btn-primary', href: forgotHref }, '재설정 링크 다시 요청'));
+    badFoot.appendChild(el('a', { class: 'btn btn-ghost', href: loginHref }, '로그인으로'));
+    cardReset.hidden = true;
+    cardDone.hidden = true;
+    cardBad.hidden = false;
+  }
+
+  /* ---- 완료 화면 ------------------------------------------------------ */
+  function showDone(data) {
+    clear(doneBody);
+    clear(doneFoot);
+
+    doneBody.appendChild(alertNode('새 비밀번호로 변경되었습니다. 이제 새 비밀번호로 로그인해 주세요.', 'success'));
+
+    var revoked = (data && typeof data.revoked_count === 'number') ? data.revoked_count : null;
+    if (revoked !== null) {
+      doneBody.appendChild(el('p', { class: 'text-sm text-muted' },
+        revoked > 0
+          ? '보안을 위해 기존에 로그인되어 있던 세션 ' + fmtNum(revoked) + '개를 모두 종료했습니다. ' +
+            '다른 기기에서도 다시 로그인해야 합니다.'
+          : '종료할 기존 로그인 세션이 없었습니다.'));
+    }
+
+    doneFoot.appendChild(el('a', { class: 'btn btn-primary', href: loginHref }, '로그인하기'));
+
+    cardBad.hidden = true;
+    cardReset.hidden = true;
+    cardDone.hidden = false;
+  }
+
+  /* ---- 제출 ---------------------------------------------------------- */
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (btn.disabled) { return; }
+    clearFormErrors(form);
+    startCooldown(0);   // 끝난 쿨다운 안내문을 지운다
+
+    var pw = inPw.value;
+    var pw2 = inPw2.value;
+
+    if (pw.length < 8) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: '비밀번호는 8자 이상이어야 합니다.', field: 'password' });
+      return;
+    }
+    if (pwClasses(pw) < 2) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: '영문·숫자·특수문자 중 2종류 이상을 섞어 주세요.', field: 'password' });
+      return;
+    }
+    if (pw !== pw2) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: '비밀번호가 일치하지 않습니다.', field: 'password_confirm' });
+      return;
+    }
+
+    setBusy(btn, true);
+    apiPost('/api/auth/password/reset', {
+      token: token,
+      password: pw,
+      password_confirm: pw2
+    })
+      .then(function (data) {
+        setBusy(btn, false);
+        inPw.value = '';
+        inPw2.value = '';
+        showDone(data);
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        if (err.code === 'TOKEN_INVALID') {
+          showBad('링크가 만료되었습니다', errorMessage(err));
+          return;
+        }
+        if (err.code === 'RATE_LIMITED') {
+          formBanner(form, errorMessage(err), 'danger');
+          startCooldown(err.data && err.data.retry_after);
+          return;
+        }
+        formErrors(form, err);
+      });
+  });
+
+  /* ---- 시작 ---------------------------------------------------------- */
+  if (!token) {
+    showBad('재설정 토큰이 없습니다',
+      '이 화면은 비밀번호 재설정 메일의 링크로 열어야 합니다. 주소에 token 값이 없습니다.');
+  } else {
+    cardReset.hidden = false;
+    renderStrength();
+    try { inPw.focus(); } catch (e) { /* noop */ }
+  }
+})();
+</script>
+</body>
+</html>

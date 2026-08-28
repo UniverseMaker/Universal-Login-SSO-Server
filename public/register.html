@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>회원가입 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+    <nav><a class="btn btn-ghost btn-sm" id="nav-login" href="login.html">로그인</a></nav>
+  </header>
+
+  <main class="container narrow">
+
+    <section class="card auth-card" id="register-card">
+      <div class="card-head">
+        <h1 id="register-title">회원가입</h1>
+      </div>
+
+      <div class="card-body">
+        <p class="text-sm text-muted" id="sso-note" hidden></p>
+
+        <form class="form" id="register-form" novalidate>
+
+          <div class="field">
+            <label for="reg-username">아이디<span class="req" aria-hidden="true">*</span></label>
+            <input type="text" id="reg-username" name="username" autocomplete="username"
+                   autocapitalize="off" autocorrect="off" spellcheck="false" required
+                   maxlength="20" aria-describedby="hint-username">
+            <span class="field-error"></span>
+            <span class="hint" id="hint-username">영문 소문자·숫자·밑줄(_) 4~20자. 대문자는 소문자로 저장됩니다.</span>
+          </div>
+
+          <div class="field">
+            <label for="reg-email">이메일<span class="req" aria-hidden="true">*</span></label>
+            <input type="email" id="reg-email" name="email" autocomplete="email"
+                   autocapitalize="off" spellcheck="false" required maxlength="190">
+            <span class="field-error"></span>
+          </div>
+
+          <div class="field">
+            <label for="reg-password">비밀번호<span class="req" aria-hidden="true">*</span></label>
+            <input type="password" id="reg-password" name="password" autocomplete="new-password" required>
+            <span class="field-error"></span>
+            <span class="hint">8자 이상. 영문·숫자·특수문자 중 2종류 이상을 섞어 주세요. 아이디와 같은 문자열은 쓸 수 없습니다.</span>
+            <div class="strength" id="pw-strength" data-level="0">
+              <div class="strength-bar"><i></i></div>
+              <div class="strength-text" id="pw-strength-text" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="reg-password-confirm">비밀번호 확인<span class="req" aria-hidden="true">*</span></label>
+            <input type="password" id="reg-password-confirm" name="password_confirm" autocomplete="new-password" required>
+            <span class="field-error"></span>
+            <span class="hint" id="pw-match" role="status" aria-live="polite"></span>
+          </div>
+
+          <div class="field">
+            <label for="reg-name">이름</label>
+            <input type="text" id="reg-name" name="name" autocomplete="name" maxlength="60">
+            <span class="field-error"></span>
+          </div>
+
+          <div class="field">
+            <label for="reg-nickname">닉네임</label>
+            <input type="text" id="reg-nickname" name="nickname" autocomplete="nickname" maxlength="60">
+            <span class="field-error"></span>
+          </div>
+
+          <div class="field">
+            <label for="reg-phone">연락처</label>
+            <input type="tel" id="reg-phone" name="phone" autocomplete="tel" maxlength="30"
+                   aria-describedby="hint-phone">
+            <span class="field-error"></span>
+            <span class="hint" id="hint-phone">예: 010-1234-5678</span>
+          </div>
+
+          <div class="field">
+            <span class="field-label">약관 동의<span class="req" aria-hidden="true">*</span></span>
+            <div class="check-list">
+              <label class="check">
+                <input type="checkbox" id="agree-tos" name="agree_tos">
+                <span>[필수] 이용약관에 동의합니다.</span>
+              </label>
+              <label class="check">
+                <input type="checkbox" id="agree-privacy" name="agree_privacy">
+                <span>[필수] 개인정보 수집·이용에 동의합니다.</span>
+              </label>
+              <label class="check">
+                <input type="checkbox" id="marketing-agreed" name="marketing_agreed">
+                <span>[선택] 마케팅 정보 수신에 동의합니다.</span>
+              </label>
+            </div>
+            <span class="field-error" id="agree-error"></span>
+          </div>
+
+          <p class="text-xs text-muted" id="cooldown-note" role="status" aria-live="polite" hidden></p>
+
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="submit-btn">가입하기</button>
+        </form>
+      </div>
+
+      <div class="card-foot">
+        <a class="btn btn-ghost btn-sm" id="link-login" href="login.html">이미 계정이 있습니다</a>
+      </div>
+    </section>
+
+    <!-- 가입 완료 -->
+    <section class="card auth-card" id="done-card" hidden>
+      <div class="card-head">
+        <h1>가입이 완료되었습니다</h1>
+      </div>
+      <div class="card-body" id="done-body"></div>
+      <div class="card-foot" id="done-foot"></div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * register.html — 회원가입
+ *
+ * 계약: POST /api/auth/register
+ *   응답 data: user, email_verification_required, granted_points, auto_login
+ *   auto_login 은 v1.0.0 에서 항상 false — 가입 직후 토큰이 나오지 않는다.
+ *
+ * 아이디 중복 확인 전용 엔드포인트는 계약에 없다.
+ * blur 시에는 **형식 검사만** 하고, 중복은 제출 시 DUPLICATE_USERNAME /
+ * DUPLICATE_EMAIL 로 받아 필드 옆에 표시한다.
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  var SSO_KEEP = ['service_id', 'redirect_uri', 'state', 'code_challenge'];
+  var PREFILL_KEY = 'ulogin_prefill_username';
+
+  var qs = new URLSearchParams(location.search);
+  function param(k) { var v = qs.get(k); return v === null ? '' : v.trim(); }
+
+  var sso = { service_id: param('service_id'), redirect_uri: param('redirect_uri') };
+  var ssoMode = !!(sso.service_id && sso.redirect_uri);
+
+  function withSso(target) {
+    var next = new URLSearchParams();
+    SSO_KEEP.forEach(function (k) {
+      if (qs.has(k) && qs.get(k) !== '') { next.set(k, qs.get(k)); }
+    });
+    var q = next.toString();
+    return q ? target + '?' + q : target;
+  }
+
+  /* ---- 엘리먼트 ------------------------------------------------------ */
+  var cardReg = $('#register-card');
+  var cardDone = $('#done-card');
+  var doneBody = $('#done-body');
+  var doneFoot = $('#done-foot');
+  var form = $('#register-form');
+  var btn = $('#submit-btn');
+  var coolNote = $('#cooldown-note');
+  var ssoNote = $('#sso-note');
+
+  var inUsername = $('#reg-username');
+  var inEmail = $('#reg-email');
+  var inPw = $('#reg-password');
+  var inPw2 = $('#reg-password-confirm');
+  var inName = $('#reg-name');
+  var inNick = $('#reg-nickname');
+  var inPhone = $('#reg-phone');
+  var cbTos = $('#agree-tos');
+  var cbPrivacy = $('#agree-privacy');
+  var cbMarketing = $('#marketing-agreed');
+
+  var strength = $('#pw-strength');
+  var strengthText = $('#pw-strength-text');
+  var matchNote = $('#pw-match');
+
+  /* ---- 링크에 SSO 파라미터 유지 --------------------------------------- */
+  $('#link-login').setAttribute('href', withSso('login.html'));
+  $('#nav-login').setAttribute('href', withSso('login.html'));
+  if (ssoMode) {
+    ssoNote.hidden = false;
+    ssoNote.textContent = '가입을 마치면 요청한 앱의 로그인 화면으로 돌아갑니다.';
+  }
+
+  /* ---- 쿨다운 (api.js/ui.js 에 없어 화면에서 구현) -------------------- */
+  var coolTimer = null;
+  function startCooldown(seconds) {
+    var left = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (coolTimer) { clearInterval(coolTimer); coolTimer = null; }
+    if (!left) { btn.disabled = false; coolNote.hidden = true; return; }
+    btn.disabled = true;
+    coolNote.hidden = false;
+    var tick = function () {
+      if (left <= 0) {
+        clearInterval(coolTimer); coolTimer = null;
+        btn.disabled = false;
+        coolNote.textContent = '다시 시도할 수 있습니다.';
+        return;
+      }
+      coolNote.textContent = '다시 시도까지 ' + fmtDuration(left) + ' 남았습니다.';
+      left -= 1;
+    };
+    tick();
+    coolTimer = setInterval(tick, 1000);
+  }
+
+  /* ---- 비밀번호 강도 (클라이언트 계산) -------------------------------- */
+  /** 계약 검증 규칙과 같은 축으로 센다: 길이 + (영문/숫자/특수) 종류 수 */
+  function pwClasses(pw) {
+    var n = 0;
+    if (/[A-Za-z]/.test(pw)) { n += 1; }
+    if (/[0-9]/.test(pw)) { n += 1; }
+    if (/[^A-Za-z0-9]/.test(pw)) { n += 1; }
+    return n;
+  }
+
+  function pwLevel(pw) {
+    if (!pw) { return 0; }
+    var kinds = pwClasses(pw);
+    var len = pw.length;
+    if (len < 8 || kinds < 2) { return 1; }          // 서버 규칙 미달
+    if (len >= 12 && kinds >= 3) { return 4; }
+    if (len >= 10 || kinds >= 3) { return 3; }
+    return 2;
+  }
+
+  var LEVEL_TEXT = {
+    0: '',
+    1: '사용할 수 없습니다 — 8자 이상, 영문·숫자·특수문자 중 2종류 이상이 필요합니다.',
+    2: '보통 — 길이를 늘리거나 문자 종류를 추가하면 더 안전합니다.',
+    3: '양호',
+    4: '강함'
+  };
+
+  function renderStrength() {
+    var lv = pwLevel(inPw.value);
+    strength.setAttribute('data-level', String(lv));
+    strengthText.textContent = LEVEL_TEXT[lv] || '';
+  }
+
+  function renderMatch() {
+    if (!inPw2.value) { matchNote.textContent = ''; return; }
+    matchNote.textContent = (inPw.value === inPw2.value)
+      ? '비밀번호가 일치합니다.'
+      : '비밀번호가 일치하지 않습니다.';
+  }
+
+  inPw.addEventListener('input', function () { renderStrength(); renderMatch(); });
+  inPw2.addEventListener('input', renderMatch);
+
+  /* ---- blur 시 형식 검사 (중복 확인 API 는 계약에 없다) --------------- */
+  var USERNAME_RE = /^[a-z0-9_]{4,20}$/;
+
+  function fieldError(name, msg) {
+    formErrors(form, { code: 'VALIDATION_FAILED', message: msg, field: name });
+  }
+
+  inUsername.addEventListener('blur', function () {
+    var v = inUsername.value.trim().toLowerCase();
+    if (v && v !== inUsername.value) { inUsername.value = v; }   // 서버와 같게 소문자 정규화
+    if (!v) { return; }
+    if (!USERNAME_RE.test(v)) {
+      fieldError('username', '영문 소문자·숫자·밑줄(_) 4~20자로 입력해 주세요.');
+    }
+  });
+
+  inEmail.addEventListener('blur', function () {
+    var v = inEmail.value.trim();
+    if (v && v !== inEmail.value) { inEmail.value = v; }
+    if (!v) { return; }
+    if (v.length > 190 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+      fieldError('email', '이메일 주소 형식을 확인해 주세요.');
+    }
+  });
+
+  /* ---- 제출 전 클라이언트 검증 ---------------------------------------- */
+  function validate() {
+    var username = inUsername.value.trim().toLowerCase();
+    var email = inEmail.value.trim();
+    var pw = inPw.value;
+    var pw2 = inPw2.value;
+
+    if (!USERNAME_RE.test(username)) {
+      return { field: 'username', message: '영문 소문자·숫자·밑줄(_) 4~20자로 입력해 주세요.' };
+    }
+    if (!email || email.length > 190 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { field: 'email', message: '이메일 주소 형식을 확인해 주세요.' };
+    }
+    if (pw.length < 8) {
+      return { field: 'password', message: '비밀번호는 8자 이상이어야 합니다.' };
+    }
+    if (pwClasses(pw) < 2) {
+      return { field: 'password', message: '영문·숫자·특수문자 중 2종류 이상을 섞어 주세요.' };
+    }
+    if (pw.toLowerCase() === username) {
+      return { field: 'password', message: '아이디와 같은 문자열은 비밀번호로 쓸 수 없습니다.' };
+    }
+    if (pw !== pw2) {
+      return { field: 'password_confirm', message: '비밀번호가 일치하지 않습니다.' };
+    }
+    if (!cbTos.checked) {
+      return { field: 'agree_tos', message: '이용약관에 동의해야 가입할 수 있습니다.' };
+    }
+    if (!cbPrivacy.checked) {
+      return { field: 'agree_privacy', message: '개인정보 수집·이용에 동의해야 가입할 수 있습니다.' };
+    }
+    return null;
+  }
+
+  /* ---- 가입 완료 화면 ------------------------------------------------- */
+  function showDone(data) {
+    var user = (data && data.user) || {};
+    var needVerify = !!(data && data.email_verification_required);
+    var points = (data && typeof data.granted_points === 'number') ? data.granted_points : 0;
+    var autoLogin = !!(data && data.auto_login);
+
+    clear(doneBody);
+    clear(doneFoot);
+
+    /* 사용자 데이터는 전부 el()/textContent 로만 그린다. */
+    doneBody.appendChild(el('p', null, [
+      el('strong', { text: String(user.username || '') }),
+      text(' 계정이 만들어졌습니다.')
+    ]));
+
+    if (user.email) {
+      doneBody.appendChild(el('p', { class: 'text-sm text-muted' }, [
+        text('가입 이메일: '), el('span', { class: 'mono', text: String(user.email) })
+      ]));
+    }
+
+    if (points > 0) {
+      doneBody.appendChild(alertNode(
+        '가입 축하 포인트 ' + fmtNum(points) + 'P 가 지급되었습니다.', 'success'));
+    }
+
+    if (needVerify) {
+      /* leader_decisions D-5: require_email_verify=1 이면 인증 전에는 로그인이 막힌다. */
+      doneBody.appendChild(alertNode(
+        '가입 확인을 위해 이메일 인증이 필요합니다. 받은 메일의 링크를 열어 인증을 완료해야 로그인할 수 있습니다.',
+        'warn'));
+      doneBody.appendChild(el('p', { class: 'text-sm text-muted' },
+        '메일이 오지 않았다면 로그인 화면에서 "인증 메일 재발송"을 이용해 주세요.'));
+    } else if (autoLogin) {
+      doneBody.appendChild(el('p', { class: 'text-sm text-muted' }, '바로 로그인된 상태로 이동합니다.'));
+    } else {
+      doneBody.appendChild(el('p', { class: 'text-sm text-muted' },
+        '보안을 위해 가입과 로그인은 분리되어 있습니다. 방금 만든 계정으로 로그인해 주세요.'));
+    }
+
+    /* 다음 화면: SSO 파라미터가 있으면 로그인 화면으로 그대로 넘겨 원래 앱으로 복귀시킨다. */
+    var next;
+    if (ssoMode) { next = withSso('login.html'); }
+    else if (autoLogin) { next = 'mypage.html'; }
+    else { next = 'login.html'; }
+
+    var label = (next.indexOf('login.html') === 0) ? '로그인하기' : '마이페이지로 이동';
+    doneFoot.appendChild(el('a', { class: 'btn btn-primary', href: next }, label));
+
+    /* 아이디를 로그인 화면이 한 번만 프리필하도록 넘긴다(1회성, sessionStorage). */
+    try { sessionStorage.setItem(PREFILL_KEY, String(user.username || '')); } catch (e) { /* noop */ }
+
+    cardReg.hidden = true;
+    cardDone.hidden = false;
+
+    /* 이메일 인증이 필요하면 자동 이동하지 않는다 — 안내를 읽어야 한다. */
+    if (!needVerify) {
+      setTimeout(function () { navigate(next, true); }, 2500);
+      doneFoot.appendChild(el('span', { class: 'text-xs text-muted' }, '잠시 후 자동으로 이동합니다.'));
+    }
+  }
+
+  /* ---- 제출 ---------------------------------------------------------- */
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (btn.disabled) { return; }
+    clearFormErrors(form);
+    startCooldown(0);   // 끝난 쿨다운 안내문을 지운다
+
+    var bad = validate();
+    if (bad) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: bad.message, field: bad.field });
+      return;
+    }
+
+    var body = {
+      username: inUsername.value.trim().toLowerCase(),
+      email: inEmail.value.trim(),
+      password: inPw.value,
+      password_confirm: inPw2.value,
+      agree_tos: true,
+      agree_privacy: true,
+      marketing_agreed: !!cbMarketing.checked
+    };
+    if (inName.value.trim()) { body.name = inName.value.trim(); }
+    if (inNick.value.trim()) { body.nickname = inNick.value.trim(); }
+    if (inPhone.value.trim()) { body.phone = inPhone.value.trim(); }
+    if (sso.service_id) { body.service_id = sso.service_id; }
+
+    setBusy(btn, true);
+
+    apiPost('/api/auth/register', body)
+      .then(function (data) {
+        setBusy(btn, false);
+        inPw.value = '';
+        inPw2.value = '';
+        showDone(data);
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        if (err.code === 'RATE_LIMITED') {
+          formBanner(form, errorMessage(err), 'danger');
+          startCooldown(err.data && err.data.retry_after);
+          return;
+        }
+        if (err.code === 'REGISTRATION_DISABLED') {
+          formBanner(form, errorMessage(err), 'warn');
+          btn.disabled = true;
+          return;
+        }
+        if (err.code === 'SSO_INVALID_SERVICE') {
+          formBanner(form,
+            errorMessage(err) + ' (요청된 service_id: ' + sso.service_id + ') 서비스 등록을 관리자에게 요청해 주세요.',
+            'danger');
+          return;
+        }
+        /* DUPLICATE_USERNAME → field:"username" / DUPLICATE_EMAIL → field:"email"
+           둘 다 서버가 field 를 채워 주므로 필드 옆에 표시된다. */
+        formErrors(form, err);
+      });
+  });
+
+  renderStrength();
+})();
+</script>
+</body>
+</html>

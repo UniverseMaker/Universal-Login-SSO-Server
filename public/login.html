@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>로그인 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="container narrow">
+
+    <!-- SSO 사전검증 진행 표시 (SSO 파라미터가 있을 때만 보인다) -->
+    <div id="validating" hidden></div>
+
+    <!-- ================= SSO 검증 실패 화면 =================
+         리다이렉트하지 않는다. 검증 전/실패 시의 리다이렉트가 곧 오픈 리다이렉트다. -->
+    <section class="card auth-card" id="sso-error-card" hidden>
+      <div class="card-head">
+        <h1 id="sso-error-title">로그인 요청을 처리할 수 없습니다</h1>
+      </div>
+      <div class="card-body" id="sso-error-body"></div>
+      <div class="card-foot" id="sso-error-foot"></div>
+    </section>
+
+    <!-- ========================= 로그인 ========================= -->
+    <section class="card auth-card" id="login-card" hidden>
+      <div class="card-head">
+        <h1 id="login-title">로그인</h1>
+      </div>
+
+      <div class="card-body">
+        <p class="text-sm text-muted" id="sso-note" hidden></p>
+
+        <form class="form" id="login-form" novalidate>
+          <div class="field">
+            <label for="username">아이디 또는 이메일<span class="req" aria-hidden="true">*</span></label>
+            <input type="text" id="username" name="username" autocomplete="username"
+                   autocapitalize="off" autocorrect="off" spellcheck="false" required>
+            <span class="field-error"></span>
+          </div>
+
+          <div class="field">
+            <label for="password">비밀번호<span class="req" aria-hidden="true">*</span></label>
+            <input type="password" id="password" name="password" autocomplete="current-password" required>
+            <span class="field-error"></span>
+          </div>
+
+          <div class="check-list">
+            <label class="check">
+              <input type="checkbox" id="remember-id">
+              <span>아이디 저장 <span class="text-xs text-muted">(비밀번호는 저장하지 않습니다)</span></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="remember">
+              <span>로그인 유지</span>
+            </label>
+          </div>
+
+          <p class="text-xs text-muted" id="cooldown-note" role="status" aria-live="polite" hidden></p>
+
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="submit-btn">로그인</button>
+        </form>
+      </div>
+
+      <div class="card-foot" id="link-row">
+        <a class="btn btn-ghost btn-sm" id="link-register" href="register.html">회원가입</a>
+        <a class="btn btn-ghost btn-sm" id="link-forgot" href="forgot.html">비밀번호를 잊으셨나요?</a>
+      </div>
+    </section>
+
+    <!-- =============== 이메일 인증 재발송 (AUTH_EMAIL_UNVERIFIED) =============== -->
+    <section class="card" id="resend-card" hidden>
+      <div class="card-head">
+        <h2>이메일 인증이 필요합니다</h2>
+      </div>
+      <div class="card-body">
+        <p class="text-sm text-muted">
+          가입 시 받은 인증 메일의 링크를 열면 로그인할 수 있습니다.
+          메일이 없거나 링크가 만료되었다면 아래에서 다시 받으세요.
+        </p>
+        <form class="form" id="resend-form" novalidate>
+          <div class="field">
+            <label for="resend-email">이메일</label>
+            <input type="email" id="resend-email" name="email" autocomplete="email"
+                   autocapitalize="off" spellcheck="false">
+            <span class="field-error"></span>
+          </div>
+          <p class="text-xs text-muted" id="resend-note" role="status" aria-live="polite" hidden></p>
+          <button type="submit" class="btn btn-secondary" id="resend-btn">인증 메일 재발송</button>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <span id="footer-site">ulogin</span> · 범용 로그인 서비스
+  </footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * login.html — SSO 로그인 + 일반 로그인
+ *
+ * 순서 (auth-ui-builder/SKILL.md "동작 순서"):
+ *   1) 쿼리에서 SSO 파라미터를 읽는다
+ *   2) 있으면 **먼저** GET /api/sso/validate 로 사전 검증한다
+ *   3) 실패하면 리다이렉트하지 않고 화면에 오류를 표시하고 폼을 숨긴다
+ *   4) 성공하면 헤더에 "{service_name}에 로그인" 을 표시한다
+ *   5) 제출 → POST /api/sso/authorize → data.redirect_to 를 그대로 location.replace()
+ *   6) SSO 파라미터가 없으면 POST /api/auth/login 후 mypage.html
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  /* ---- SSO 파라미터 -------------------------------------------------- */
+  /* references/redirect-flow.md 의 withSso() 유지 대상 4개 */
+  var SSO_KEEP = ['service_id', 'redirect_uri', 'state', 'code_challenge'];
+
+  var qs = new URLSearchParams(location.search);
+  function param(k) { var v = qs.get(k); return v === null ? '' : v.trim(); }
+
+  var sso = {
+    service_id: param('service_id'),
+    redirect_uri: param('redirect_uri'),
+    state: param('state'),
+    code_challenge: param('code_challenge'),
+    prompt: param('prompt')
+  };
+
+  /* sso.prompt('login') 은 읽지만 별도 동작이 없다. 이 화면은 항상 자격증명을 다시 묻고,
+     계약에 무인(silent) authorize 경로가 없어 prompt 유무로 분기할 것이 없다. */
+
+  /* 하나라도 들어왔으면 SSO 요청으로 본다. 둘 다 있어야 유효하다. */
+  var ssoRequested = !!(sso.service_id || sso.redirect_uri);
+  var ssoReady = false;   // validate 성공 후에만 true. 이 값이 false면 authorize를 부르지 않는다.
+
+  /** 현재 SSO 파라미터를 유지한 채 다른 화면으로 가는 URL을 만든다. */
+  function withSso(target) {
+    var next = new URLSearchParams();
+    SSO_KEEP.forEach(function (k) {
+      if (qs.has(k) && qs.get(k) !== '') { next.set(k, qs.get(k)); }
+    });
+    var q = next.toString();
+    return q ? target + '?' + q : target;
+  }
+
+  /* ---- 저장소 안전 접근 (프라이버시 모드에서 throw할 수 있다) ---------- */
+  var ID_KEY = 'ulogin_saved_username';
+  var PREFILL_KEY = 'ulogin_prefill_username';
+
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* noop */ } }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) { /* noop */ } }
+  function ssTake(k) {
+    try { var v = sessionStorage.getItem(k); if (v !== null) { sessionStorage.removeItem(k); } return v; }
+    catch (e) { return null; }
+  }
+
+  /* ---- 엘리먼트 ------------------------------------------------------ */
+  var elValidating = $('#validating');
+  var cardErr = $('#sso-error-card');
+  var errTitle = $('#sso-error-title');
+  var errBody = $('#sso-error-body');
+  var errFoot = $('#sso-error-foot');
+
+  var cardLogin = $('#login-card');
+  var titleEl = $('#login-title');
+  var ssoNote = $('#sso-note');
+  var form = $('#login-form');
+  var inUser = $('#username');
+  var inPass = $('#password');
+  var cbSaveId = $('#remember-id');
+  var cbRemember = $('#remember');
+  var btn = $('#submit-btn');
+  var coolNote = $('#cooldown-note');
+
+  var cardResend = $('#resend-card');
+  var formResend = $('#resend-form');
+  var inResendEmail = $('#resend-email');
+  var btnResend = $('#resend-btn');
+  var resendNote = $('#resend-note');
+
+  var linkRegister = $('#link-register');
+  var linkForgot = $('#link-forgot');
+  var footerSite = $('#footer-site');
+
+  /* ---- 공용: 쿨다운 카운트다운 --------------------------------------- */
+  /* api.js/ui.js 에 카운트다운 기능이 없어 화면에서 자체 구현한다. */
+  function makeCooldown(button, noteEl, prefix) {
+    var timer = null;
+    return function start(seconds, label) {
+      var left = Math.max(0, Math.floor(Number(seconds) || 0));
+      if (timer) { clearInterval(timer); timer = null; }
+      if (!left) { button.disabled = false; noteEl.hidden = true; noteEl.textContent = ''; return; }
+      button.disabled = true;
+      noteEl.hidden = false;
+      var head = label || prefix;
+      var tick = function () {
+        if (left <= 0) {
+          clearInterval(timer); timer = null;
+          button.disabled = false;
+          noteEl.textContent = '다시 시도할 수 있습니다.';
+          return;
+        }
+        noteEl.textContent = head + ' ' + fmtDuration(left) + ' 남았습니다.';
+        left -= 1;
+      };
+      tick();
+      timer = setInterval(tick, 1000);
+    };
+  }
+  var coolSubmit = makeCooldown(btn, coolNote, '다시 시도까지');
+  var coolResend = makeCooldown(btnResend, resendNote, '다시 보낼 수 있을 때까지');
+
+  /** retry_after(초) 우선, 없으면 locked_until(ISO8601)에서 남은 초를 계산한다. */
+  function secondsFrom(data) {
+    if (!data) { return 0; }
+    if (typeof data.retry_after === 'number' && data.retry_after > 0) { return data.retry_after; }
+    if (data.locked_until) {
+      var t = new Date(data.locked_until).getTime();
+      if (!isNaN(t)) { return Math.max(0, Math.ceil((t - Date.now()) / 1000)); }
+    }
+    return 0;
+  }
+
+  /* ---- SSO 오류 화면 -------------------------------------------------- */
+  function kvRow(label, value) {
+    return el('div', { class: 'field' }, [
+      el('span', { class: 'field-label', text: label }),
+      el('code', { class: 'mono text-sm', text: value === '' || value === null ? '(없음)' : String(value) })
+    ]);
+  }
+
+  /**
+   * SSO 오류 화면을 띄우고 로그인 폼을 숨긴다.
+   * @param {string} title
+   * @param {string} message
+   * @param {object} opts { showParams:bool, whitelistHint:bool, retry:bool }
+   */
+  function showSsoError(title, message, opts) {
+    opts = opts || {};
+    cardLogin.hidden = true;
+    cardResend.hidden = true;
+    elValidating.hidden = true;
+    clear(errBody);
+    clear(errFoot);
+
+    errTitle.textContent = title;
+    errBody.appendChild(alertNode(message, 'danger'));
+
+    if (opts.showParams) {
+      errBody.appendChild(el('div', { class: 'stack' }, [
+        kvRow('요청된 service_id', sso.service_id),
+        kvRow('요청된 redirect_uri', sso.redirect_uri)
+      ]));
+    }
+    if (opts.whitelistHint) {
+      errBody.appendChild(el('p', { class: 'text-sm text-muted' },
+        '이 주소는 서비스의 복귀 주소 화이트리스트에 등록되어 있지 않습니다. ' +
+        '위 redirect_uri 를 그대로 로그인 서버 관리자에게 전달해 화이트리스트 등록을 요청해 주세요. ' +
+        '보안을 위해 등록 전에는 어떤 경우에도 해당 주소로 이동하지 않습니다.'));
+    }
+    if (opts.retry) {
+      errFoot.appendChild(el('button', {
+        class: 'btn btn-secondary', type: 'button',
+        on: { click: function () { location.reload(); } }
+      }, '다시 시도'));
+    }
+    errFoot.appendChild(el('a', { class: 'btn btn-ghost', href: 'index.html' }, '처음으로'));
+    cardErr.hidden = false;
+  }
+
+  /* ---- 로그인 폼 노출 ------------------------------------------------- */
+  function showLoginForm(info) {
+    elValidating.hidden = true;
+    cardErr.hidden = true;
+
+    if (info && info.service_name) {
+      titleEl.textContent = info.service_name + '에 로그인';
+    } else {
+      titleEl.textContent = '로그인';
+    }
+    if (info && info.site_name) {
+      footerSite.textContent = info.site_name;
+    }
+
+    /* allow_register=false 인 서비스에서는 가입 링크를 감춘다. */
+    if (info && info.allow_register === false) {
+      linkRegister.hidden = true;
+    }
+
+    /* requires_pkce=true 인데 code_challenge 가 안 왔으면 교환 단계에서 실패한다.
+       로그인 자체는 막지 않고 경고만 띄운다. */
+    if (info && info.requires_pkce === true && !sso.code_challenge) {
+      ssoNote.hidden = true;
+      $('.card-body', cardLogin).insertBefore(
+        alertNode('이 서비스는 PKCE(code_challenge)가 필수입니다. 요청에 code_challenge 가 없어 ' +
+                  '로그인 후 코드 교환이 실패할 수 있습니다. 앱을 HTTPS 또는 localhost 에서 실행해 주세요.',
+                  'warn'),
+        $('.card-body', cardLogin).firstChild
+      );
+    } else if (ssoReady) {
+      ssoNote.hidden = false;
+      ssoNote.textContent = '로그인하면 요청한 앱으로 되돌아갑니다.';
+    }
+
+    cardLogin.hidden = false;
+    /* 아이디가 이미 채워져 있으면 비밀번호로 포커스를 옮긴다. */
+    try { (inUser.value ? inPass : inUser).focus(); } catch (e) { /* noop */ }
+  }
+
+  /* ---- 아이디 저장 / 가입 직후 프리필 --------------------------------- */
+  (function restoreUsername() {
+    var prefill = ssTake(PREFILL_KEY);     // register.html 이 방금 넘긴 값 (1회성)
+    var saved = lsGet(ID_KEY);
+    if (prefill) {
+      inUser.value = prefill;
+    } else if (saved) {
+      inUser.value = saved;
+      cbSaveId.checked = true;
+    }
+  })();
+
+  /* ---- 링크에 SSO 파라미터 유지 --------------------------------------- */
+  linkRegister.setAttribute('href', withSso('register.html'));
+  linkForgot.setAttribute('href', withSso('forgot.html'));
+
+  /* ---- 이메일 인증 재발송 -------------------------------------------- */
+  function showResend(email) {
+    cardResend.hidden = false;
+    if (email && !inResendEmail.value) { inResendEmail.value = email; }
+    if (!inResendEmail.value) {
+      var typed = inUser.value.trim();
+      if (typed.indexOf('@') !== -1) { inResendEmail.value = typed; }
+    }
+    try { cardResend.scrollIntoView({ block: 'nearest' }); } catch (e) { /* noop */ }
+  }
+
+  formResend.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (btnResend.disabled) { return; }
+    clearFormErrors(formResend);
+    coolResend(0);
+    var email = inResendEmail.value.trim();
+    if (!email || email.indexOf('@') === -1) {
+      formErrors(formResend, { code: 'VALIDATION_FAILED', message: '이메일 주소를 입력해 주세요.', field: 'email' });
+      return;
+    }
+    setBusy(btnResend, true);
+    /* D-9 의 신규 엔드포인트. 논리 경로를 쓴다 — D-17 로 api.js 의
+       ULOGIN_PATH_ALIASES 에 '/api/auth/email/resend' → email_resend 별칭이 추가되었다. */
+    apiPost('/api/auth/email/resend', { email: email })
+      .then(function (data) {
+        setBusy(btnResend, false);
+        var msg = (data && data.message) || '인증 메일을 보냈습니다.';
+        formBanner(formResend, msg, 'success');
+        if (data && data.expires_in) {
+          resendNote.hidden = false;
+          resendNote.textContent = '링크는 ' + fmtDuration(data.expires_in) + ' 동안 유효합니다.';
+        }
+      })
+      .catch(function (err) {
+        setBusy(btnResend, false);
+        if (err.code === 'RATE_LIMITED') {
+          formBanner(formResend, errorMessage(err), 'danger');
+          coolResend(secondsFrom(err.data));
+          return;
+        }
+        formErrors(formResend, err);
+      });
+  });
+
+  /* ---- 로그인 실패 처리 ---------------------------------------------- */
+  var STATUS_MESSAGES = {
+    AUTH_ACCOUNT_SUSPENDED:
+      '정지된 계정입니다. 정지 사유와 해제 절차는 로그인 서버 관리자에게 문의해 주세요.',
+    AUTH_ACCOUNT_DORMANT:
+      '휴면 상태의 계정입니다. 휴면 해제는 관리자가 처리합니다. 관리자에게 해제를 요청해 주세요.',
+    AUTH_ACCOUNT_WITHDRAWN:
+      '탈퇴 처리된 계정입니다. 이 계정으로는 로그인할 수 없습니다. 다시 이용하시려면 새로 가입해 주세요.',
+    AUTH_ACCOUNT_PENDING:
+      '가입 처리가 아직 완료되지 않은 계정입니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요.'
+  };
+
+  function handleLoginError(err) {
+    if (Object.prototype.hasOwnProperty.call(STATUS_MESSAGES, err.code)) {
+      formBanner(form, STATUS_MESSAGES[err.code], 'danger');
+      return;
+    }
+    if (err.code === 'AUTH_EMAIL_UNVERIFIED') {
+      formBanner(form, errorMessage(err), 'warn');
+      showResend(err.data && err.data.email);
+      return;
+    }
+    if (err.code === 'AUTH_ACCOUNT_LOCKED') {
+      formBanner(form, errorMessage(err), 'danger');
+      coolSubmit(secondsFrom(err.data), '잠금 해제까지');
+      return;
+    }
+    if (err.code === 'RATE_LIMITED') {
+      formBanner(form, errorMessage(err), 'danger');
+      coolSubmit(secondsFrom(err.data));
+      return;
+    }
+    if (err.code === 'SSO_INVALID_SERVICE' || err.code === 'SSO_INVALID_REDIRECT') {
+      /* 검증을 통과했는데 authorize 에서 거절됐다 — 그 사이에 설정이 바뀐 경우다.
+         리다이렉트하지 않고 오류 화면으로 전환한다. */
+      showSsoError('복귀 주소를 확인할 수 없습니다', errorMessage(err), {
+        showParams: true,
+        whitelistHint: err.code === 'SSO_INVALID_REDIRECT'
+      });
+      return;
+    }
+    /* error.field 가 있으면 필드 옆에, 없으면 폼 상단 배너에 표시된다. */
+    formErrors(form, err);
+  }
+
+  /* ---- 제출 ---------------------------------------------------------- */
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    /* 쿨다운 중에는 제출하지 않는다 (버튼이 disabled 인 상태). */
+    if (btn.disabled) { return; }
+    clearFormErrors(form);
+    coolSubmit(0);              // 끝난 쿨다운 안내문을 지운다
+    cardResend.hidden = true;   // 직전 시도의 재발송 안내를 남기지 않는다
+
+    var username = inUser.value.trim();
+    var password = inPass.value;
+
+    if (!username) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: '아이디 또는 이메일을 입력해 주세요.', field: 'username' });
+      return;
+    }
+    if (!password) {
+      formErrors(form, { code: 'VALIDATION_FAILED', message: '비밀번호를 입력해 주세요.', field: 'password' });
+      return;
+    }
+
+    /* 아이디만 저장한다. 비밀번호는 어떤 경우에도 저장하지 않는다. */
+    if (cbSaveId.checked) { lsSet(ID_KEY, username); } else { lsDel(ID_KEY); }
+
+    setBusy(btn, true);
+
+    if (ssoReady) {
+      var body = {
+        username: username,
+        password: password,
+        service_id: sso.service_id,
+        redirect_uri: sso.redirect_uri
+      };
+      if (sso.state) { body.state = sso.state; }
+      if (sso.code_challenge) {
+        body.code_challenge = sso.code_challenge;
+        body.code_challenge_method = 'S256';
+      }
+      apiPost('/api/sso/authorize', body)
+        .then(function (data) {
+          /* 서버가 준 문자열을 그대로 쓴다. URL을 프론트에서 조립하지 않는다.
+             외부 절대 URL이므로 guardRedirect() 를 통과시키지 않는다(내부 경로 전용). */
+          if (!data || !data.redirect_to) {
+            setBusy(btn, false);
+            formBanner(form, '서버가 복귀 주소를 반환하지 않았습니다. 관리자에게 문의해 주세요.', 'danger');
+            return;
+          }
+          inPass.value = '';
+          location.replace(data.redirect_to);
+        })
+        .catch(function (err) {
+          setBusy(btn, false);
+          handleLoginError(err);
+        });
+      return;
+    }
+
+    /* 일반 로그인 모드 */
+    var loginBody = { username: username, password: password };
+    if (cbRemember.checked) { loginBody.remember = true; }
+    /* device_label 은 보내지 않는다 — 서버가 User-Agent 로 만든다(device_label_from_ua). */
+
+    apiPost('/api/auth/login', loginBody)
+      .then(function () {
+        /* 응답의 access_token 은 저장하지 않는다. 로그인 서버 UI 는 쿠키 세션(ULOGIN_SID)을 쓴다. */
+        inPass.value = '';
+        navigate('mypage.html', true);
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        handleLoginError(err);
+      });
+  });
+
+  /* ---- 시작 ---------------------------------------------------------- */
+  if (!ssoRequested) {
+    /* 일반 로그인 모드 */
+    showLoginForm(null);
+    return;
+  }
+
+  /* SSO 파라미터가 반쪽만 온 경우 — 검증할 수 없으므로 폼을 열지 않는다. */
+  if (!sso.service_id || !sso.redirect_uri) {
+    showSsoError(
+      '로그인 요청이 올바르지 않습니다',
+      'SSO 로그인에는 service_id 와 redirect_uri 가 모두 필요합니다. ' +
+      (!sso.service_id ? 'service_id 가 없습니다. ' : '') +
+      (!sso.redirect_uri ? 'redirect_uri 가 없습니다. ' : '') +
+      '앱의 로그인 요청 URL을 확인해 주세요.',
+      { showParams: true }
+    );
+    return;
+  }
+
+  /* 사전 검증 — 반드시 폼보다 먼저 */
+  clear(elValidating);
+  elValidating.hidden = false;
+  elValidating.appendChild(loadingNode('로그인 요청을 확인하는 중…'));
+
+  /* 검증이 성공하기 전에는 폼을 열지 않는다. 실패·불명 상태에서 폼을 열면
+     검증되지 않은 redirect_uri 로 이동할 경로가 생긴다. */
+  apiGet('/api/sso/validate', { service_id: sso.service_id, redirect_uri: sso.redirect_uri })
+    .then(function (data) {
+      if (!data || data.redirect_uri_valid !== true) {
+        /* 200 이지만 유효하지 않다고 나온 경우 — 폼을 열지 않는다. */
+        showSsoError('허용되지 않은 복귀 주소입니다',
+          '요청한 복귀 주소가 이 서비스에 등록되어 있지 않습니다.',
+          { showParams: true, whitelistHint: true });
+        return;
+      }
+      ssoReady = true;
+      showLoginForm(data);
+    })
+    .catch(function (err) {
+      if (err.code === 'SSO_INVALID_REDIRECT') {
+        showSsoError('허용되지 않은 복귀 주소입니다', errorMessage(err),
+          { showParams: true, whitelistHint: true });
+        return;
+      }
+      if (err.code === 'SSO_INVALID_SERVICE') {
+        showSsoError('서비스 등록이 필요합니다',
+          errorMessage(err) + ' 아래 service_id 로 로그인 서버에 서비스 등록을 요청해 주세요.',
+          { showParams: true });
+        return;
+      }
+      if (err.code === 'VALIDATION_FAILED') {
+        showSsoError('로그인 요청이 올바르지 않습니다', errorMessage(err), { showParams: true });
+        return;
+      }
+      /* NETWORK_ERROR / SERVER_ERROR / RATE_LIMITED — 검증을 못 했으므로 폼을 열지 않는다.
+         검증되지 않은 redirect_uri 로는 절대 이동하지 않는다. */
+      showSsoError('로그인 요청을 확인할 수 없습니다',
+        errorMessage(err) + ' 검증에 성공하기 전에는 복귀 주소로 이동하지 않습니다.',
+        { showParams: true, retry: true });
+    });
+
+})();
+</script>
+</body>
+</html>

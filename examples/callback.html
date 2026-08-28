@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<!--
+  callback.html — ulogin 복귀(콜백) 처리 페이지
+
+  이 파일에는 API 키가 없습니다. 로그인 후 서버에서 받아옵니다.
+
+  하는 일은 딱 하나다: URL의 code를 토큰·시크릿으로 교환하고 원래 있던 화면으로 돌려보낸다.
+  이 파일의 주소(http://localhost:5173/examples/callback.html)가 로그인 서버의
+  redirect_whitelist 에 **완전히 같은 문자열로** 등록되어 있어야 한다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 캐시 정책 — 아래 meta 는 **보조 수단이다.** 현대 브라우저는
+     http-equiv="Cache-Control" 을 무시할 수 있다(HTTP 헤더만 신뢰).
+     주 방어는 같은 폴더의 examples/.htaccess 가 붙이는 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다.
+     그래도 여기에 두는 이유 — 이 파일은 로컬 앱으로 **복사돼 나간다.**
+     복사본에는 examples/.htaccess 가 따라가지 않으므로, 복사본에서는 이 한 줄이
+     남는 유일한 수단이다.
+     왜 필요한가 — 이 HTML 이 캐시되면 아래 script src 의 ?v= 값도 옛 값으로
+     굳는다. 그러면 새 버전을 올려도 브라우저가 서버에 묻지도 않고 옛
+     ulogin-client.js 를 계속 쓴다(그 자산에는 immutable 이 걸려 있다). -->
+<meta http-equiv="Cache-Control" content="no-store">
+<title>로그인 처리 중… — ulogin</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280;
+    --card: #f9fafb; --border: #e5e7eb;
+    --primary: #2563eb; --primary-fg: #ffffff;
+    --danger: #dc2626; --danger-soft: #fef2f2;
+    --warn: #d97706; --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --fg: #e6e8eb; --muted: #9aa4b2;
+      --card: #171a21; --border: #262b36; --danger-soft: #2a1618;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 48px 20px; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    line-height: 1.6; display: flex; justify-content: center;
+  }
+  .card {
+    width: 100%; max-width: 520px; background: var(--card);
+    border: 1px solid var(--border); border-radius: var(--radius); padding: 28px;
+  }
+  h1 { font-size: 1.15rem; margin: 0 0 4px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: .875rem; }
+  .spinner {
+    display: inline-block; width: 16px; height: 16px; vertical-align: -3px;
+    border: 2px solid var(--border); border-top-color: var(--primary);
+    border-radius: 50%; animation: spin .8s linear infinite; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+  .alert {
+    border: 1px solid var(--danger); background: var(--danger-soft);
+    border-radius: var(--radius); padding: 14px 16px; margin: 16px 0;
+  }
+  .alert h2 { font-size: .95rem; margin: 0 0 6px; color: var(--danger); }
+  .code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: .8rem; color: var(--muted); word-break: break-all;
+  }
+  .btn {
+    display: inline-block; padding: 9px 16px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: transparent; color: var(--fg);
+    font: inherit; font-size: .9rem; cursor: pointer; margin: 4px 6px 0 0;
+  }
+  .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1 id="title"><span class="spinner" id="spinner"></span>로그인 처리 중…</h1>
+  <p class="muted" id="msg">잠시만 기다려 주세요. 인증 코드를 토큰으로 교환하고 있습니다.</p>
+
+  <div class="alert hidden" id="errBox" role="alert">
+    <h2 id="errTitle">로그인에 실패했습니다</h2>
+    <p id="errMsg"></p>
+    <p class="muted" id="errHint"></p>
+    <p class="code" id="errCode"></p>
+  </div>
+
+  <div id="actions" class="hidden">
+    <button type="button" class="btn btn-primary" id="btnLogin">다시 로그인</button>
+    <button type="button" class="btn hidden" id="btnRetry">교환 다시 시도</button>
+    <button type="button" class="btn" id="btnHome">앱으로 돌아가기</button>
+  </div>
+</main>
+
+<!-- ?v=1.2.0 — 자산 캐시 무효화(주 수단). 로그인 서버를 새 버전으로 갱신하면 이 값도
+     바뀐다. 지우면 브라우저가 옛 ulogin-client.js 를 무기한 계속 쓴다.
+     값 일괄 변경: _workspace/bump_asset_version.php -->
+<script src="../public/assets/ulogin-client.js?v=1.3.0"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ── 설정 ─────────────────────────────────────────────────────────────
+     local-ai-app.html의 "연결 설정"에서 저장한 값을 그대로 읽는다.
+     두 파일이 같은 server / serviceId / redirectUri 를 써야 교환이 성공한다.
+
+     server 는 ulogin **설치 루트** 한 칸이다 (leader_decisions D-28).
+     클라이언트가 {server}/server/api/... 와 {server}/public/login.html 을 파생시킨다. */
+  var DEFAULTS = { server: 'https://your-host.com/ulogin', serviceId: 'local-ai-chat', apiExt: '.php' };
+  var CONFIG_KEY = 'ulogin_demo_config';
+
+  function loadConfig() {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null'); } catch (e) { saved = null; }
+    var cfg = {
+      server: (saved && saved.server) || DEFAULTS.server,
+      serviceId: (saved && saved.serviceId) || DEFAULTS.serviceId,
+      apiExt: (saved && typeof saved.apiExt === 'string') ? saved.apiExt : DEFAULTS.apiExt
+    };
+    // redirect_uri는 이 파일의 실제 주소다. 화이트리스트 등록값과 완전히 같아야 한다
+    cfg.redirectUri = new URL('callback.html', location.href).href;
+    return cfg;
+  }
+
+  var cfg = loadConfig();
+  var appUrl = new URL('local-ai-app.html', location.href);
+  var appPath = appUrl.pathname + appUrl.search;   // 내부 경로만 (guardReturnTo 통과용)
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function showError(err) {
+    $('spinner').classList.add('hidden');
+    $('title').textContent = '로그인을 완료하지 못했습니다';
+    $('msg').classList.add('hidden');
+    $('errBox').classList.remove('hidden');
+    $('actions').classList.remove('hidden');
+
+    var code = (err && err.code) || 'SERVER_ERROR';
+    var hints = {
+      STATE_MISMATCH:
+        '보안상 요청을 중단했습니다. 이 페이지를 직접 열거나 새로고침·즐겨찾기로 다시 방문하면 발생합니다. ' +
+        '앱에서 로그인 버튼을 눌러 처음부터 다시 시작해 주세요.',
+      CALLBACK_NO_CODE:
+        'URL에 인증 코드가 없습니다. 앱에서 로그인 버튼으로 다시 시작해 주세요.',
+      SSO_CODE_INVALID:
+        '인증 코드가 만료(60초)되었거나 이미 사용되었습니다. 다시 로그인해 주세요.',
+      SSO_INVALID_REDIRECT:
+        '이 페이지 주소가 서비스의 복귀 주소 화이트리스트에 없습니다. 관리자에게 아래 주소 등록을 요청하세요.',
+      SSO_INVALID_SERVICE:
+        'service_id가 등록되지 않았거나 비활성 상태입니다. 관리자 콘솔에서 서비스를 확인해 주세요.',
+      NETWORK_ERROR:
+        '서버에 연결할 수 없습니다. 로그인 서버 주소·HTTPS·CORS(allowed_origins) 설정을 확인하고 다시 시도해 주세요. ' +
+        '인증 코드는 60초만 유효합니다.',
+      RATE_LIMITED: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.'
+    };
+
+    // 서버/클라이언트가 준 문장을 그대로 쓴다. textContent이므로 주입 위험이 없다
+    $('errMsg').textContent = (err && err.message) || '알 수 없는 오류가 발생했습니다.';
+    $('errHint').textContent = hints[code] || '';
+    $('errCode').textContent = 'code: ' + code +
+      (err && err.status ? ' · HTTP ' + err.status : '') +
+      ' · redirect_uri: ' + cfg.redirectUri;
+
+    // 네트워크 실패로 code가 아직 소모되지 않았을 때만 "교환 다시 시도"를 노출한다
+    if (code === 'NETWORK_ERROR' && ulogin && ulogin.canRetryCallback()) {
+      $('btnRetry').classList.remove('hidden');
+    }
+  }
+
+  var ulogin;
+  try {
+    ulogin = new UloginClient({
+      server: cfg.server,
+      serviceId: cfg.serviceId,
+      redirectUri: cfg.redirectUri,
+      apiExt: cfg.apiExt,
+      storage: 'localStorage'
+    });
+  } catch (e) {
+    showError(e);
+    return;
+  }
+
+  $('btnLogin').addEventListener('click', function () {
+    ulogin.login({ returnTo: appPath });
+  });
+
+  $('btnHome').addEventListener('click', function () {
+    location.href = appUrl.href;
+  });
+
+  $('btnRetry').addEventListener('click', function () {
+    var b = $('btnRetry');
+    b.disabled = true;
+    b.textContent = '교환 중…';
+    ulogin.retryCallback().catch(function (err) {
+      b.disabled = false;
+      b.textContent = '교환 다시 시도';
+      showError(err);
+    });
+  });
+
+  // 성공하면 클라이언트 내부에서 return_to로 location.replace() 한다.
+  // 즉 아래 then은 보통 화면 갱신 없이 이동으로 끝난다.
+  ulogin.handleCallback().then(function () {
+    $('msg').textContent = '로그인되었습니다. 원래 화면으로 돌아갑니다…';
+  }).catch(showError);
+})();
+</script>
+</body>
+</html>

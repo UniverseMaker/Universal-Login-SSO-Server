@@ -1,0 +1,2407 @@
+# ulogin 설치 가이드 — v1.2.0_20260828
+
+이 문서 하나만 보고 끝까지 따라 하면 설치가 완료된다. **위에서부터 순서대로** 진행하라.
+PHP를 몰라도 된다. 코드를 손으로 고칠 일은 없다(단, 6절·7절의 예외 상황 제외).
+
+> **읽기 전 경고 — 1절과 2절은 한 번에 이어서 해야 한다.**
+> `server/install.php`는 **인증 없이 누구나 열 수 있는 파일**이다. 업로드된 순간부터 설치가 끝나기 전까지는
+> **그 주소를 먼저 여는 사람이 설치자가 된다.** 제3자가 자기 이메일로 최고관리자 계정을 만들고
+> DB·암호화 키·시크릿을 지정할 수 있다.
+> **업로드 → 즉시 설치 → 즉시 삭제**를 한 번에 끝내라. "나중에 설치"는 선택지가 아니다.
+> 지금 30분을 낼 수 없다면 **파일을 아직 올리지 마라.** (보안 감사 M-15 / 리더 판정 D-52)
+
+---
+
+## 목차
+
+- [0. 준비물](#0-준비물)
+- [1. 파일 업로드](#1-파일-업로드)
+- [2. 웹 설치기 실행 (8단계)](#2-웹-설치기-실행-8단계)
+- [3. 설치 후 보안 확인 (4항목)](#3-설치-후-보안-확인-4항목) — **+ 5번 항목: 쿠키 속성 확인**
+- [4. 서비스·시크릿 등록 (관리자 콘솔)](#4-서비스시크릿-등록-관리자-콘솔)
+- [5. 로컬 앱 연동 (5분)](#5-로컬-앱-연동-5분)
+- [6. HTTPS가 아닌 경우](#6-https가-아닌-경우)
+- [7. 트러블슈팅](#7-트러블슈팅)
+- [**8. 새 버전으로 갱신하기**](#8-새-버전으로-갱신하기) — **v1.2.0 신설.** 이미 설치된 서버에 새 버전을 올리는 절차 7단계
+
+> **이미 설치를 끝냈고 "새 버전을 올렸는데 반영이 안 된다"면 [8절](#8-새-버전으로-갱신하기)로 바로 가라.**
+> 0~7절은 처음 설치하는 절차다. 갱신은 8절이고, 그 절은 v1.2.0에서 처음 생겼다.
+
+---
+
+## 0. 준비물
+
+### 0-1. 호스팅 요구사항 (필수)
+
+설치기 1단계가 아래 **7가지**를 자동으로 검사한다. **하나라도 없으면 설치가 진행되지 않는다.**
+
+| 항목 | 필요 조건 | 없으면 |
+|---|---|---|
+| PHP | **7.2 이상** | 설치 차단 (**7.1 이하만** 차단된다) |
+| `pdo_mysql` 확장 | 있어야 함 | 설치 차단 (DB 접속 불가) |
+| `openssl` 확장 | 있어야 함 (`openssl_encrypt` 포함) | 설치 차단 (시크릿 암호화 불가) |
+| `mbstring` 확장 | 있어야 함 | 설치 차단 |
+| `json` 확장 | 있어야 함 | 설치 차단 |
+| `random_bytes()` | 있어야 함 | 설치 차단 |
+| `server/schema.sql` 읽기 | 있어야 함 | 설치 차단 |
+
+> ### PHP 버전 — 최소 7.2, 다만 7.2·7.3은 보안 지원이 끝났다
+>
+> **최소 요구 버전은 PHP 7.2.0이다.** 설치기 1단계의 필수 항목 라벨도 정확히 **"PHP 버전 7.2 이상"** 이다.
+> 7.2부터 8.x까지 같은 코드가 그대로 동작한다(하위 호환이 아니라 **양방향 호환**이다).
+>
+> **그러면서도 호스팅에 PHP 7.4 이상 옵션이 있으면 그쪽을 고르라.**
+> PHP 7.2는 **2019-11-30**, PHP 7.3은 **2021-12-06**에 보안 지원이 종료됐다.
+> 이후 발견된 인터프리터·확장 모듈 취약점에 패치가 나오지 않는다.
+> 이 서버는 AI API 키를 DB에 암호화 저장하고 인증된 사용자에게 반환하므로
+> 런타임 취약점의 영향 범위에 **그 키가 들어간다.** 일반 웹앱보다 실패의 대가가 크다.
+> 그래도 **7.2에서 정상 동작하게 만든 것이 v1.1.0의 목표였다.** 요구가 아니라 권고다.
+>
+> | 실행 중인 PHP | 1단계 필수 항목 | 1단계 정보성 항목 1번 행 | 설치 |
+> |---|---|---|---|
+> | 7.1 이하 | **실패** | 주의 | **차단됨** — 호스팅 제어판에서 PHP를 올려야 한다 |
+> | 7.2.x | 통과 | **주의 (보안 지원 종료)** | 진행된다 |
+> | 7.3.x | 통과 | **주의 (보안 지원 종료)** | 진행된다 |
+> | 7.4 이상 | 통과 | 확인 | 진행된다 |
+>
+> **주황색 "주의"를 실패로 오인하지 마라.** 7.2·7.3에서 나오는 그 표시는
+> **정보성(권고) 항목**이고 다음 버튼은 활성 상태다. → [7-19절](#7-19-1단계에서-php-버전이-실패로-나온다-또는-주의로-나온다)
+>
+> **쿠키 보호 속성은 7.2에서도 정상 적용된다.** `SameSite`·`HttpOnly`·`Secure`가 빠지지 않는다.
+> 근거와 배포 후 확인 절차는 [3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인)에 있다.
+
+**호스팅 관리 화면에서 PHP 버전을 확인하는 법:** 대부분의 공용 호스팅은 "PHP 버전 선택" 메뉴가 있다.
+확인이 어려우면 아래 파일을 임시로 올려 브라우저로 연다. **확인 후 반드시 삭제하라.**
+
+```php
+<?php
+// phpcheck.php — 확인이 끝나면 즉시 삭제할 것
+echo 'PHP ' . PHP_VERSION . "<br>";
+echo '7.2 이상: ' . (version_compare(PHP_VERSION, '7.2.0', '>=') ? 'OK' : 'TOO OLD') . "<br>";
+echo '보안 지원: ' . (version_compare(PHP_VERSION, '7.4.0', '>=') ? '유지되는 버전대' : 'EOL (동작은 함)') . "<br>";
+// 실행 모드(SAPI). EOL 버전을 쓸 수밖에 없다면 이 값이 위험 판정을 가른다.
+//   fpm-fcgi = php-fpm / cgi-fcgi = FastCGI / apache2handler = mod_php / litespeed = LiteSpeed
+//   해석은 README.md 의 "7.2에서 무엇이 안전하고 무엇이 그렇지 않은가" 절 참조
+echo '실행 모드(SAPI): ' . PHP_SAPI . "<br>";
+foreach (['pdo_mysql', 'openssl', 'mbstring', 'json'] as $e) {
+    echo $e . ': ' . (extension_loaded($e) ? 'OK' : 'MISSING') . "<br>";
+}
+echo 'random_bytes(): ' . (function_exists('random_bytes') ? 'OK' : 'MISSING') . "<br>";
+echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
+```
+
+### 0-2. DB 정보 (미리 받아 둘 것)
+
+설치기는 **DB 자체를 만들지 않는다.** 호스팅 관리 화면에서 MySQL/MariaDB 데이터베이스를 **먼저 생성**하고
+아래 4가지를 손에 들고 시작하라.
+
+| 항목 | 예시 | 비고 |
+|---|---|---|
+| DB 호스트 | `localhost` | 대부분 `localhost`. 별도 DB 서버면 호스팅이 안내한 주소 |
+| DB 이름 | `ulogin_db` | 미리 만들어 두어야 한다. **이름은 아무거나 좋다** — 호스팅이 정해 주는 경우도 많다 |
+| DB 사용자 | `ulogin_user` | 그 DB에 대해 **`CREATE` 권한**이 있어야 한다. 호스팅에 따라 DB 이름과 같은 값일 수도 있다 |
+| DB 비밀번호 | (호스팅이 발급한 값) | **이 문서에 적지 마라.** 설치기 화면에만 입력한다 |
+
+문자셋은 `utf8mb4`를 쓴다. 스키마가 각 테이블에 `utf8mb4`를 직접 지정하므로 DB 기본 문자셋이 달라도 된다.
+
+### 0-3. 도메인 / 설치 주소
+
+설치할 최종 주소를 미리 정한다. 예: `https://example.com/ulogin`
+이 주소를 이 문서 전체에서 **설치 루트**라고 부른다. 1절에서 정확히 정의한다.
+
+### 0-4. 사전 확인 체크리스트 3항목 (리더 판정 D-8)
+
+설치를 시작하기 전에 아래 3가지를 확인하라. 설치기 1단계의 "정보성 항목"에도 같은 내용이 나온다.
+
+- [ ] **HTTPS를 쓸 수 있는가?**
+  → 쓸 수 없다면 [6절](#6-https가-아닌-경우)을 먼저 읽어라. HTTPS 없이 운영하면 로그인 토큰과 AI API 키가
+  **평문으로 전송된다.** 이 시스템의 존재 이유가 성립하지 않는다.
+  대부분의 공용 호스팅은 무료 Let's Encrypt 인증서를 켤 수 있다. 켜고 시작하는 편이 훨씬 낫다.
+- [ ] **PHP `mail()` 함수가 동작하는가?**
+  → 동작하지 않아도 설치는 된다. 기본값은 `log` 드라이버(발송하지 않고 서버에 파일로 저장)다
+  — v1.0.0부터 변경 없다.
+  `mail()`이 되면 나중에 관리자 콘솔 → 설정에서 `mail`로 바꿀 수 있다.
+- [ ] **`.htaccess` 오버라이드와 `mod_rewrite`를 쓸 수 있는가?**
+  → `mod_rewrite`가 **없어도 설치·운영은 된다.** API는 `.php` 확장자를 붙인 경로로 호출한다
+  (`/server/api/auth/login.php`). rewrite는 확장자를 생략하는 편의 기능일 뿐이다.
+  → 다만 **`.htaccess` 자체가 무시되는 환경(nginx, `AllowOverride None`)이면 보안 차단이 걸리지 않는다.**
+  그 경우 [7절 트러블슈팅의 nginx 스니펫](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)을 반드시 적용하라.
+
+---
+
+## 1. 파일 업로드
+
+### 1-1. "설치 루트"란 무엇인가 (여기를 틀리면 전부 404다)
+
+버전 폴더 `v1.2.0_20260828/`의 **내용을 그대로** 업로드한다. 폴더 자체를 통째로 올려도 되고
+내용만 꺼내 올려도 되지만, **`server/` · `public/` · `examples/` 세 디렉토리가 같은 부모 아래 나란히**
+있어야 한다. 그 부모의 공개 URL이 **설치 루트**다.
+
+```
+{설치루트}/                          ← 예: https://example.com/ulogin
+├── server/
+│   ├── api/          (엔드포인트 32개)
+│   ├── core/         (내부 모듈 — 웹에서 열리면 안 된다)
+│   ├── storage/      (메일 로그 — 웹에서 열리면 안 된다)
+│   ├── config.sample.php
+│   ├── install.php   ← 설치 후 삭제한다
+│   ├── schema.sql
+│   └── .htaccess
+├── public/
+│   ├── index.html login.html register.html forgot.html reset.html verify.html mypage.html admin.html
+│   └── assets/  style.css api.js ui.js ulogin-client.js
+└── examples/
+    ├── local-ai-app.html callback.html README.md
+```
+
+**자원별 최종 URL** (리더 판정 D-28)
+
+| 자원 | 최종 URL | 실제 예시 (설치 루트 = `https://example.com/ulogin`) |
+|---|---|---|
+| API | `{설치루트}/server/api/...` | `https://example.com/ulogin/server/api/auth/login.php` |
+| 로그인 화면 | `{설치루트}/public/login.html` | `https://example.com/ulogin/public/login.html` |
+| 관리자 콘솔 | `{설치루트}/public/admin.html` | `https://example.com/ulogin/public/admin.html` |
+| 마이페이지 | `{설치루트}/public/mypage.html` | `https://example.com/ulogin/public/mypage.html` |
+| 공통 자산 | `{설치루트}/public/assets/*` | `https://example.com/ulogin/public/assets/ulogin-client.js` |
+| 연동 데모 | `{설치루트}/examples/*` | `https://example.com/ulogin/examples/local-ai-app.html` |
+| 웹 설치기 | `{설치루트}/server/install.php` | `https://example.com/ulogin/server/install.php` |
+
+**도메인 루트에 올려도 된다.** 그 경우 설치 루트는 `https://example.com` (경로 없음)이다.
+
+### 1-2. 설정값 4개 대응표 (리더 판정 D-45 #2)
+
+같은 "설치 루트"를 가리키는 값이 네 군데에 나온다. **서로 다른 형식**이라 헷갈리기 쉽다.
+아래 표가 전부다. 이 표대로면 손으로 고칠 파일은 **하나도 없다.**
+
+| # | 이름 | 어디에 있나 | 넣을 값 | 실제 예시 | 손으로 고쳐야 하나 |
+|---|---|---|---|---|---|
+| 1 | `BASE_URL` | `server/config.php` (설치기가 생성) | **설치 루트 절대 URL**, 끝 슬래시 없이 | `https://example.com/ulogin` | 아니오 — 설치기 4단계에서 입력 |
+| 2 | `ULOGIN_API_BASE` | `public/assets/api.js` 40행 | **`'../server'`** (상대 경로) | `'../server'` | 아니오 — 기본값 그대로 |
+| 3 | `API_EXT` | `public/assets/api.js` 48행 | **`'.php'`** | `'.php'` | 아니오 — 기본값 그대로 |
+| 4 | 클라이언트 `server` 옵션 | 내 앱의 `new UloginClient({...})` | **설치 루트 절대 URL**, 끝 슬래시 없이 | `https://example.com/ulogin` | 예 — 내 앱 코드에 직접 쓴다 |
+
+**왜 2번만 상대 경로인가:** 로그인·마이페이지·관리자 화면은 전부 `{설치루트}/public/` **직하**에 있다.
+거기서 `../server`는 항상 `{설치루트}/server`로 해소된다. 절대 경로(`/server`)로 두면
+설치 루트가 도메인 루트가 아닐 때(= 서브디렉토리 배치, 공용 호스팅에서 흔하다) 전부 404가 된다.
+
+> **주의:** `public/` **아래에 하위 디렉토리를 만들어 화면을 추가하면** 이 상대 경로가 깨진다.
+> 화면은 `public/` 직하에만 둔다.
+
+**변형 배치를 했다면** (예: `public/`의 내용을 도메인 루트에 직접 올림)
+`public/assets/api.js` 40행의 `'../server'`를 실제 위치에 맞게 고치고,
+클라이언트에는 `apiBase` · `loginUrl` 옵션을 개별로 넘긴다. ([5절](#5-로컬-앱-연동-5분) 참조)
+
+### 1-3. 업로드 절차
+
+FTP·SFTP 클라이언트나 호스팅의 파일 관리자를 쓴다.
+
+1. 웹 공개 디렉토리(`public_html/`, `www/`, `htdocs/` 등)로 이동한다.
+2. 설치 루트로 쓸 폴더를 만든다. 예: `public_html/ulogin`
+   (도메인 루트에 올릴 거면 이 단계를 건너뛴다.)
+3. `server/`, `public/`, `examples/` **세 디렉토리를 통째로** 그 안에 올린다.
+   `README.md` · `INSTALL.md` · `CHANGELOG.md` · `AI_INTEGRATION_GUIDE.md`는 올려도 되고 안 올려도 된다
+   (`.md` 파일은 `server/.htaccess`가 차단하지만, `public/`·`examples/`에서는 차단되지 않으므로
+   운영 서버에 문서를 두고 싶지 않다면 올리지 않는 편이 깔끔하다).
+4. **바로 다음 단계(2절)로 넘어가라.** 여기서 멈추지 마라.
+
+**업로드 확인:** 브라우저로 `{설치루트}/public/login.html`을 열어 로그인 화면이 나오는지 본다.
+아직 설치 전이므로 화면은 뜨지만 로그인은 되지 않는다. 그게 정상이다.
+404가 나오면 업로드 위치가 틀린 것이다. 2절로 넘어가지 말고 위치를 고쳐라.
+
+---
+
+## 2. 웹 설치기 실행 (8단계)
+
+브라우저로 아래 주소를 연다.
+
+```
+{설치루트}/server/install.php
+```
+
+실제 예시:
+
+```
+https://example.com/ulogin/server/install.php
+```
+
+설치기는 8개 화면으로 되어 있고, 각 화면 상단에 진행 표시가 나온다.
+DB 접속 정보는 브라우저가 아니라 **서버 세션**에만 담기고, 설치가 끝나면 폐기된다.
+
+> 화면이 하얗게 나오거나 PHP 코드가 그대로 보이면 → [7-11절](#7-11-installphp를-열었더니-php-코드가-그대로-보인다)
+
+### 2-1. 1단계 — 환경 점검
+
+입력할 것은 없다. 화면 최상단의 **선점 경고**를 읽고 아래 두 표를 확인한다.
+
+- **필수 항목 7개** — [0-1절](#0-1-호스팅-요구사항-필수)의 7가지. 하나라도 "실패"면 다음 버튼이 비활성이다.
+  호스팅 관리자에게 해당 확장 모듈 활성화를 요청한 뒤 새로고침하라.
+- **정보성(권고) 항목 7개** — **없어도, "주의"로 나와도 설치는 진행된다.** 화면에 나오는 순서 그대로:
+
+| # | 정보성 항목 | 무엇을 보는가 |
+|---|---|---|
+| 1 | **PHP 보안 지원 상태** | 7.2.x → "주의(2019-11 EOL)" / 7.3.x → "주의(2021-12 EOL)" / 7.4 이상 → "확인". **설치를 막지 않는다** |
+| 2 | `mod_rewrite` | 없어도 된다. API는 `.php` 확장자 경로로 호출한다 |
+| 3 | `mail()` 함수 | 없으면 메일 드라이버를 `log`로만 쓸 수 있다 |
+| 4 | 현재 접속 방식 | HTTP면 4단계에서 경고가 나온다 |
+| 5 | `server/` 쓰기 권한 | `config.php` 자동 생성 가능 여부 |
+| 6 | `server/storage/` 쓰기 권한 | `log` 메일 드라이버의 저장 위치 |
+| 7 | `config.sample.php` | 상수 집합 대조용. 없어도 설치에는 영향 없다 |
+
+> **1번 행이 주황색 "주의"로 나와도 그것은 실패가 아니다.** 필수 항목 표가 아니라 정보성 표에 있고,
+> 다음 버튼은 활성 상태다. 7.2·7.3 호스팅에서는 항상 이렇게 나온다.
+> → [7-19절](#7-19-1단계에서-php-버전이-실패로-나온다-또는-주의로-나온다)
+
+`server/` 쓰기 권한이 "쓰기 불가"로 나와도 계속 진행하라. 마지막 단계에서
+`config.php` 내용을 화면에 출력해 주므로 손으로 만들면 된다.
+
+**[다음 — DB 접속 정보 입력]** 을 누른다.
+
+### 2-2. 2단계 — DB 접속
+
+[0-2절](#0-2-db-정보-미리-받아-둘-것)에서 준비한 값을 넣는다.
+
+| 입력 칸 | 넣을 값 | 실제 예시 | 주의 |
+|---|---|---|---|
+| DB 호스트 | 호스팅이 안내한 값 | `localhost` | 대부분 `localhost` |
+| DB 이름 | 미리 만들어 둔 DB | `ulogin_db` | 설치기는 DB를 만들지 않는다 |
+| DB 사용자 | DB 계정 | `ulogin_user` | `CREATE` 권한 필요 |
+| DB 비밀번호 | 호스팅이 발급한 값 | (여기 적지 않는다) | 화면·로그에 다시 표시되지 않는다. 비밀번호 없는 계정이면 비워 둔다 |
+| 테이블 prefix | 영문 소문자·숫자·밑줄 1~32자 | `app_ulogin_` | **설치 후에는 바꿀 수 없다** |
+
+**테이블 prefix란:** 한 DB를 여러 서비스가 공유하는 공용 호스팅에서 테이블 이름이 충돌하지 않게
+앞에 붙이는 접두사다. 기본값 `app_ulogin_`을 그대로 쓰면 테이블 이름은
+`app_ulogin_users`, `app_ulogin_services` … 가 된다. 특별한 이유가 없으면 바꾸지 마라.
+
+**[접속 테스트 후 다음]** 을 누르면 실제로 접속해 본다. 실패하면 원인이 화면에 나온다.
+→ [7-2절](#7-2-db-에-접속할-수-없습니다)
+
+### 2-3. 3단계 — 스키마 적용
+
+입력할 것은 없다. **[스키마 적용 실행]** 을 누른다.
+
+`server/schema.sql`의 테이블 **15개**를 만든다. 모든 문장이 `CREATE TABLE IF NOT EXISTS`라
+이미 있는 테이블은 건드리지 않는다 — **여러 번 실행해도 안전하다.**
+
+만들어지는 테이블(prefix 기본값 기준):
+
+```
+app_ulogin_users               app_ulogin_services            app_ulogin_user_services
+app_ulogin_service_secrets     app_ulogin_sessions            app_ulogin_auth_codes
+app_ulogin_password_resets     app_ulogin_email_verifications app_ulogin_login_logs
+app_ulogin_point_logs          app_ulogin_admin_logs          app_ulogin_rate_limits
+app_ulogin_settings            app_ulogin_terms               app_ulogin_user_consents
+```
+
+**결과 표에서 15줄이 전부 "성공"이면 정상이다.** 하나라도 실패하면
+DB 사용자에게 `CREATE` 권한이 있는지 확인하고 **[다시 실행]** 을 누른다.
+
+**[다음 — 사이트·전송 보안 설정]** 을 누른다.
+
+### 2-4. 4단계 — 사이트 · 전송 보안 (가장 중요한 화면)
+
+#### `BASE_URL` (필수) — 비우면 조용히 고장 난다
+
+**설치 루트의 절대 URL을 끝 슬래시 없이** 넣는다.
+
+| 넣을 값 | 실제 예시 |
+|---|---|
+| 서브디렉토리 배치 | `https://example.com/ulogin` |
+| 도메인 루트 배치 | `https://example.com` |
+
+설치기가 현재 접속 정보로 추론한 값을 미리 채워 준다. **그 값은 요청의 `Host` 헤더에서 왔으므로
+반드시 눈으로 확인하고**, 실제 서비스 도메인이 다르면 고쳐라.
+
+> **`BASE_URL`을 비우거나 잘못 넣으면 두 가지가 조용히 멈춘다** (리더 판정 D-33 · D-53)
+> 1. **메일 발송이 전면 중단된다.** 비밀번호 재설정·이메일 인증 메일이 아예 만들어지지 않는다.
+>    그런데 API 응답은 계정 열거 방지 규약 때문에 여전히 **"보냈습니다"** 로 나간다.
+>    즉 **에러 없이 그냥 안 온다.**
+> 2. **HTTPS 강제 리다이렉트가 중단된다.** `FORCE_HTTPS=true`인데 `BASE_URL`이 비어 있으면
+>    서버가 500으로 멈춘다(추측한 호스트로 리다이렉트하는 것보다 안전하기 때문이다).
+>
+> **왜 이렇게 만들었나:** 예전에는 `BASE_URL`이 비면 요청의 `Host` 헤더로 폴백했다.
+> `Host`는 **요청을 보낸 쪽이 정하는 값**이다. 공격자가 `Host: evil.example.net`을 붙여
+> 비밀번호 찾기를 호출하면 메일 링크가 `https://evil.example.net/public/reset.html?token=...`으로
+> 만들어지고, 피해자가 그 링크를 누르는 순간 재설정 토큰이 공격자 서버 로그로 넘어간다 → 계정 탈취.
+> 그래서 폴백을 제거했다. (보안 감사 H-4)
+
+**검증법:** 넣은 값 뒤에 `/public/login.html`을 붙여 브라우저로 열었을 때 로그인 화면이 나오면 맞는 값이다.
+
+#### 전송 보안 (HTTPS) — `FORCE_HTTPS`와 `COOKIE_SECURE`를 함께 결정
+
+라디오 버튼 2개 중 하나를 고른다. **두 값은 하나의 선택으로 묶여 있다.**
+따로 두면 한쪽만 바뀌어 세션 쿠키가 평문으로 전송된다. (보안 감사 M-3)
+
+| 선택 | 기록되는 값 | 언제 |
+|---|---|---|
+| **HTTPS 강제 (권장)** | `FORCE_HTTPS=true`, `COOKIE_SECURE=true` | 기본. HTTP 요청을 https로 301 리다이렉트하고 쿠키에 `Secure`를 붙인다 |
+| HTTP 허용 (비권장) | `FORCE_HTTPS=false`, `COOKIE_SECURE=false` | HTTPS를 지원하지 않는 호스팅에서만. [6절](#6-https가-아닌-경우)을 반드시 읽어라 |
+
+"HTTPS 강제"를 골랐으면 `BASE_URL`도 `https://`로 시작해야 한다. 아니면 저장되지 않는다.
+
+#### 사이트 · 메일
+
+| 입력 칸 | 넣을 값 | 실제 예시 | 비고 |
+|---|---|---|---|
+| 사이트 표시명 | 1~60자 | `우리 서비스 로그인` | 메일 제목과 화면에 쓰인다 |
+| 보내는 메일 주소 (`MAIL_FROM`) | 이메일 형식 | `no-reply@example.com` | **실제 서비스 도메인 주소를 쓴다.** 다른 도메인 주소는 스팸 처리된다 |
+| 보내는 이름 | 1~60자 | `우리 서비스` | |
+| 메일 발송 방식 | `log` 또는 `mail` | `log` | **기본값 `log`** (리더 판정 D-1) |
+
+**`log` 드라이버란:** 메일을 보내지 않고 `server/storage/mail/` 에 파일로 저장한다.
+비밀번호 재설정 링크와 임시 비밀번호가 그 파일 안에 **평문으로** 들어간다.
+[3절](#3-설치-후-보안-확인-4항목)에서 그 디렉토리가 웹에 노출되지 않는지 반드시 확인하라.
+호스팅의 `mail()`이 동작한다면 설치 후 관리자 콘솔 → 설정에서 `mail`로 바꿔라.
+
+#### 가입 정책
+
+| 입력 칸 | 기본 | 의미 |
+|---|---|---|
+| 신규 회원가입 허용 (`ALLOW_REGISTER`) | 켜짐 | 끄면 관리자가 만든 계정만 로그인할 수 있다 |
+| 가입 시 이메일 인증 필수 (`REQUIRE_EMAIL_VERIFY`) | 꺼짐 | **메일 발송이 확실히 동작할 때만 켜라.** 켜면 인증 전 로그인이 차단된다 |
+| 가입 보너스 포인트 | `100` | 0 ~ 1000000 사이의 정수 |
+
+> `REQUIRE_EMAIL_VERIFY`를 켰는데 메일이 안 오면 계정이 잠긴다. `log` 드라이버로도
+> `server/storage/mail/`의 파일에서 링크를 꺼내 인증할 수는 있지만, 회원에게 시킬 수 있는 일은 아니다.
+
+**[다음 — 관리자 계정 만들기]** 를 누른다.
+
+### 2-5. 5단계 — 관리자 계정
+
+최고관리자(`superadmin`) 계정을 만든다. **이 계정만이** 시크릿 평문 조회와 탈퇴 계정 복구를 할 수 있다.
+
+| 입력 칸 | 규칙 | 실제 예시 | 주의 |
+|---|---|---|---|
+| 관리자 아이디 | 영문·숫자·밑줄 4~20자 | `admin01` | **대문자를 넣어도 소문자로 저장된다.** 로그인도 소문자로 한다 |
+| 관리자 이메일 | 이메일 형식, 190자 이내 | `admin@example.com` | 비밀번호를 잊었을 때 재설정 링크를 받는 주소. 이메일 인증 완료 상태로 생성된다 |
+| 이름 | 80자 이내 (선택) | `관리자` | 관리자 콘솔에 표시된다 |
+| 비밀번호 | **8자 이상 200자 이내** + 영문·숫자·특수문자 중 **2종 이상**. 아이디와 같은 문자열 불가. **NUL 바이트(`\0`)를 포함할 수 없다** | — | NUL 규칙은 관리자 계정만이 아니라 회원가입·비밀번호 재설정·비밀번호 변경 **모든 경로에 적용된다.** 이유는 아래 |
+| 비밀번호 확인 | 위와 동일 | — | |
+
+생성되는 계정의 속성: `role=superadmin` / `account_level=staff` / `status=active` /
+`billing_tier=free` / 포인트 0 / 타임존 `Asia/Seoul` / 로케일 `ko-KR`.
+
+> **왜 NUL을 막는가 (v1.1.0 추가 — 보안 감사 V11-L-5 / 리더 판정 D-66).**
+> `password_hash()`는 bcrypt를 쓰고 bcrypt는 C 문자열이라 **첫 NUL에서 잘린다.**
+> 막지 않으면 "8자 이상·2종 이상"을 통과한 비밀번호가 실제로는 **앞 몇 글자만 해시로 저장**되고
+> 그 몇 글자만으로 로그인이 된다(감사 실측: `Abc\0defgh1` → `Abc`로 로그인 성공).
+> 즉 화면이 보여 주는 정책과 실제로 저장된 해시가 어긋난다.
+> `validate_password()`가 NUL을 발견하면 `VALIDATION_FAILED`(400)로 거부한다 —
+> **"비밀번호에 사용할 수 없는 문자가 포함되어 있습니다."** 가 그 메시지다.
+> 정상적인 키보드 입력으로는 NUL이 들어가지 않으므로 **실사용에서 이 메시지를 볼 일은 없다.**
+> 봤다면 붙여넣은 값에 제어문자가 섞였거나 API를 직접 호출한 경우다.
+
+**[다음 — 첫 서비스 등록]** 을 누른다.
+
+### 2-6. 6단계 — 첫 서비스 등록
+
+로그인을 붙일 앱을 **서비스**로 등록한다. 이 서버는 여러 앱을 `service_id`로 구분한다.
+
+| 입력 칸 | 규칙 | 기본값 / 실제 예시 |
+|---|---|---|
+| `service_id` | 영문 소문자·숫자로 시작, 소문자·숫자·`-`·`_` 3~64자 | `local-ai-app` |
+| 서비스 이름 | 1~100자 | `로컬 AI 앱` |
+| 복귀 주소 화이트리스트 (`redirect_whitelist`) | 한 줄에 하나 | `http://localhost:5173/callback.html` |
+| 허용 출처 (`allowed_origins`) | 한 줄에 하나, `scheme://host[:port]` | `http://localhost:5173` |
+
+> **`service_id`는 만든 뒤 바꿀 수 없다.** 세션·시크릿·가입 매핑·로그가 전부 이 문자열을 키로 참조한다.
+> 바꿔야 하면 **새로 만들고 기존 것을 `disabled`로 내린다.**
+
+**복귀 주소 화이트리스트란:** SSO 로그인이 끝난 뒤 사용자를 돌려보낼 주소다.
+**완전 일치**로만 비교한다 — 접두사 매칭이 아니다. 실제 콜백 파일 경로까지 정확히 적어야 한다.
+쿼리스트링(`?`)은 넣을 수 없다. 여기 없는 주소로 로그인을 시도하면 `SSO_INVALID_REDIRECT`로 막힌다.
+
+기본값으로 아래 3줄이 미리 채워져 있다 (마지막 줄은 4단계의 `BASE_URL`에서 만들어진다):
+
+```
+http://localhost:5173/callback.html
+http://127.0.0.1:5173/callback.html
+https://example.com/ulogin/examples/callback.html
+```
+
+**허용 출처란:** 브라우저 CORS용이다. **반드시 입력하라.**
+여기 없는 출처에서 온 브라우저 요청은 전부 막혀 **로컬 앱이 아무 API도 호출하지 못한다.**
+형식은 `scheme://host[:port]` — **경로를 붙이면 안 된다.**
+`file://`로 연 페이지는 출처가 `null`이라 한 줄에 `null`만 적어 허용할 수 있지만,
+로컬 웹서버를 쓰는 편이 훨씬 안전하다.
+
+기본값:
+
+```
+http://localhost:5173
+http://127.0.0.1:5173
+```
+
+**[다음 — 시크릿 등록]** 을 누른다.
+
+### 2-7. 7단계 — 시크릿 등록 + 등급 게이트 (건너뛸 수 있다)
+
+로그인한 사용자에게 `payload`로 내려줄 값이다. AES-256-CBC로 암호화해 저장한다.
+설치기는 아래 3개 항목을 받는다. **값을 비워 두면 그 항목은 등록하지 않는다.**
+
+| `secret_key` | 종류 | 입력 예시 | 기본 게이트 |
+|---|---|---|---|
+| `ai_api_key` | **민감 값** | `sk-...` (AI 제공자 API 키) | **`min_billing_tier = lite`** |
+| `api_base` | 설정값 | `https://api.openai.com/v1` | 없음 |
+| `model` | 설정값 | `gpt-4o-mini` | 없음 |
+
+각 항목마다 게이트 3축을 고르는 셀렉트가 있다.
+
+| 셀렉트 | 상수 | 선택지 (랭크 오름차순) |
+|---|---|---|
+| 최소 계정등급 | `min_account_level` | 제한 없음 / `guest`(0) / `basic`(10) / `verified`(20) / `vip`(30) / `staff`(90) |
+| 최소 결제등급 | `min_billing_tier` | 제한 없음 / `free`(0) / `lite`(10) / `pro`(20) / `enterprise`(30) |
+| 최소 역할 | `min_role` | 제한 없음 / `user`(0) / `manager`(10) / `admin`(20) / `superadmin`(30) |
+
+> ### 게이트를 비우면 가입한 누구나 그 값을 받는다 (보안 감사 C-3 / 리더 판정 D-47)
+>
+> 세 축을 전부 "제한 없음"으로 두면 서버는 등급 검사를 **건너뛴다.**
+> 첫 서비스는 `auto_join=1`(로그인 시 자동 가입)이고 `ALLOW_REGISTER`가 켜져 있으므로,
+> **가입 폼을 채우는 것이 곧 그 값을 받는 절차**가 된다.
+> 게이트 없는 `ai_api_key`는 이 시스템을 만든 이유를 통째로 무효화한다.
+>
+> **랭크 0 값은 게이트가 아니다.** `min_billing_tier='free'` / `min_account_level='guest'` /
+> `min_role='user'`는 게이트를 건 것처럼 보이지만 랭크가 0이라 **전원 통과**다.
+> 화면의 선택지에도 "랭크 0, 전원 통과(게이트 효과 없음)"라고 표시된다.
+>
+> **권장 설정:** `ai_api_key` → `min_billing_tier = lite` (기본 선택값 그대로 두면 된다).
+> `api_base`·`model`은 비밀이 아니므로 게이트 없이 둔다 — 전부 잠그면 데모가 돌지 않는다.
+
+민감 키(`*_api_key` · `*_secret` · `*_token` · `*_password` 계열)의 게이트를 전부 비우려면
+**"게이트 없이 등록하겠습니다"** 체크박스를 명시적으로 켜야 진행된다. 켜지 않으면 오류로 되돌아온다.
+
+**[등록하고 설치 마무리]** 또는 **[건너뛰고 설치 마무리]** 를 누른다.
+건너뛰어도 나중에 관리자 콘솔에서 등록할 수 있다([4절](#4-서비스시크릿-등록-관리자-콘솔)).
+
+### 2-8. 8단계 — 설치 실행 + 마무리 안내
+
+버튼을 누르면 아래가 한 번에 실행된다.
+
+1. `SECRET_ENC_KEY` · `APP_KEY` 생성 (`random_bytes(32)` → 64자 hex).
+   **화면에 표시되지 않는다** — 브라우저 히스토리·스크린샷으로 새는 것을 막기 위해서다
+2. 관리자 계정 · 첫 서비스 · 시크릿 · 관리자의 서비스 가입 행 · 전역 설정 11개를 **한 트랜잭션**으로 저장
+   (실패하면 전부 되돌리고 `config.php`도 만들지 않는다 — 새로고침해 다시 시도할 수 있다)
+   <br>*설치기가 심는 설정 키는 **11개**이고, 관리자 콘솔이 관리하는 키는 **12개**다 — 숫자가 다른 것이 정상이다.
+   `auth_code_ttl`은 설치기가 심지 않고 `config.php`의 `AUTH_CODE_TTL`(기본 60초) 폴백을 쓴다.
+   콘솔에서 한 번 저장하면 그때 DB 행이 생긴다. **두 숫자를 같게 "고치지" 마라.***
+3. `server/storage/` · `server/storage/mail/` 생성 + 접근 차단 파일(`chmod 0700` + `.htaccess` + `index.html`)
+4. `server/config.php` 생성 (상수 **51개**, `chmod 0600`)
+5. 자기 잠금 — `server/.install.lock` + `server/storage/.installed` 생성
+6. 자체 보안 진단 — 4개 주소에 HTTP 요청을 보내 차단 여부를 확인
+
+**완료 화면에서 반드시 할 일 (화면에 나오는 순서 그대로)**
+
+1. **`server/install.php` 를 삭제한다** ← 가장 급하다. 아래 [2-9절](#2-9-installphp-삭제-필수)
+2. `config.php`가 자동 생성되지 못한 경우 → 화면에 출력된 내용을 복사해 손으로 만든다.
+   **이 화면을 닫으면 키를 다시 볼 수 없다.**
+3. 시크릿 등급 게이트 확인 — "게이트 없는 민감 시크릿" 목록이 비어 있어야 정상
+4. 보안 확인 4항목 — [3절](#3-설치-후-보안-확인-4항목)
+5. **로그인 1회 후 `Set-Cookie` 속성 육안 확인** (30초) — [3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인)
+
+**완료 화면에서 함께 보이는 안내 2건 (번호 없는 항목이라 놓치기 쉽다)**
+
+| 안내 | 언제 보이나 | 무엇을 하라는 것인가 |
+|---|---|---|
+| **주의 — 현재 PHP 버전은 보안 지원이 종료된 버전입니다** (1행) | `PHP_VERSION_ID < 70400`일 때만. **7.4·8.x에서는 나타나지 않는다** | 1단계 정보성 표와 같은 사실이다. **이 화면이 그 사실을 볼 수 있는 마지막 곳**이다 — `install.php`를 삭제하면 사라진다. 같은 내용이 `README.md`의 **`## PHP 요구 버전 — 7.2 이상`** 절에 있다. 설치를 막지는 않는다 (감사 §C-4 조건 1 / 리더 판정 D-69(a)) |
+| **"다음 단계" — 리버스 프록시·CDN 뒤에 있다면** | 항상 | `TRUST_PROXY`와 `TRUSTED_PROXIES`를 **함께** 바꾸라는 안내다. **`TRUST_PROXY`만 `true`로 바꾸면 전 요청이 500이 된다.** → [3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다) |
+
+**번호 있는 필수 항목의 개수는 위 5개 그대로다.** 위 2건은 번호를 차지하지 않는다.
+
+### 2-9. `install.php` 삭제 (필수)
+
+FTP·파일 관리자로 아래 파일을 **지금 삭제한다.**
+
+```
+{설치루트}/server/install.php
+```
+
+설치기는 인증 없이 도는 코드다. 락 파일(`.install.lock`)이 재실행을 막아 주긴 하지만,
+**파일이 없는 것이 유일하게 확실한 방어**다.
+
+**확인:** 브라우저로 `{설치루트}/server/install.php`를 열어 **404**가 나오면 삭제된 것이다.
+"이미 설치가 완료된 서버입니다" 화면이 나오면 **아직 파일이 남아 있다.**
+
+---
+
+## 3. 설치 후 보안 확인 (4항목)
+
+> **확인할 것은 모두 5개다.**
+> **1~4번** = 아래 표의 **웹 접근 차단 4항목** (브라우저로 주소를 직접 열어 본다)
+> **5번** = **로그인 응답의 `Set-Cookie` 속성 1회 확인** → [3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인)
+> 5번은 PHP 7.2 배포에서 특히 중요하다. 확인 비용은 30초다.
+
+설치기 완료 화면이 자동 진단을 해 주지만, 프록시·캐시 때문에 결과가 다를 수 있다.
+**브라우저 새 탭에 아래 주소를 직접 붙여 넣어 눈으로 확인하라.**
+
+| # | 열어 볼 주소 | 정상 결과 | 노출되면 무슨 일이 |
+|---|---|---|---|
+| 1 | `{설치루트}/server/config.php` | **403 / 404 / 빈 화면** | DB 비밀번호와 `SECRET_ENC_KEY`가 노출된다 → 저장된 AI 키 전부 복호화 가능 |
+| 2 | `{설치루트}/server/core/db.php` | **403 / 404 / 빈 화면** | 내부 구현 노출. `core/*.php`는 코드 자체에 `ULOGIN_BOOTSTRAPPED` 가드가 있어 `.htaccess`가 없어도 404로 죽는다 |
+| 3 | `{설치루트}/server/storage/mail/` | **403 / 404 / 빈 화면** (디렉토리 목록이 보이면 안 된다) | 비밀번호 재설정 링크와 임시 비밀번호 평문이 노출된다 → 즉시 계정 탈취 |
+| 4 | `{설치루트}/server/install.php` | **404** | 설치기가 남아 있다. 지금 삭제하라 |
+
+실제 예시 (설치 루트 = `https://example.com/ulogin`):
+
+```
+https://example.com/ulogin/server/config.php
+https://example.com/ulogin/server/core/db.php
+https://example.com/ulogin/server/storage/mail/
+https://example.com/ulogin/server/install.php
+```
+
+추가로 확인하면 좋은 것:
+
+```
+https://example.com/ulogin/server/schema.sql
+```
+→ 전 테이블 구조가 그대로 나오면 안 된다. **403 / 404**여야 한다.
+
+### 3-1. 하나라도 내용이 보인다면
+
+`.htaccess`가 무시되는 환경이다. 아래 중 하나를 해야 한다.
+
+- **(권장)** `server/` 디렉토리를 웹 공개 디렉토리 **밖으로** 옮기고 `public/`의 상대 경로를 조정한다
+  — 다만 이 배치는 v1.0.0·v1.1.0 어느 쪽에서도 검증되지 않았다. 아래 방법을 먼저 시도하라
+- **nginx라면** [7-9절의 deny 스니펫](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)을 서버 설정에 넣는다
+- **Apache인데 `AllowOverride None`이라면** 호스팅 관리자에게
+  "`.htaccess` 오버라이드를 허용해 달라"고 요청한다
+
+### 3-2. `log` 드라이버를 쓴다면 — `storage/mail/` 정리
+
+메일 발송 방식이 `log`면 `server/storage/mail/`에 아래가 **평문으로** 쌓인다.
+
+- 비밀번호 재설정 링크 (`reset.html?token=…`) — 그 자체로 계정을 탈취할 수 있는 토큰
+- 관리자가 발급한 **임시 비밀번호 평문**
+- 이메일 인증 링크
+
+**파일 형식:** 이름은 `20260826_031500_a1b2c3d4e5f6a7b8.php` 형태이고
+확장자가 **`.php`**, 첫 줄이 `<?php exit; ?>` 다 (리더 판정 D-34).
+그래서 브라우저로 열어도 내용이 보이지 않는다. **FTP로 내려받아 텍스트 편집기로 열어야 읽을 수 있다.**
+
+**정리 방법**
+
+1. 비밀번호 재설정을 처리한 뒤에는 `server/storage/mail/*.php`를 **즉시 삭제**한다.
+   토큰 수명(30분)이 지나도 **임시 비밀번호는 계속 유효하다.**
+2. 호스팅의 `mail()`이 동작하면 관리자 콘솔 → 설정 → `메일 발송 방식`을 `mail`로 바꾼다.
+   그 뒤에는 파일이 쌓이지 않는다.
+3. 위 4항목 확인에서 `storage/mail/`이 노출되어 있었다면 **지금 즉시** 조치하라.
+
+### 3-3. 프록시·CDN 뒤라면 — `TRUST_PROXY` + `TRUSTED_PROXIES` (**짝이다**)
+
+> **이 두 상수는 짝이다. 한쪽만 바꾸면 틀린다.**
+> `TRUST_PROXY=true`인데 `TRUSTED_PROXIES`가 비어 있으면 **설정 오류로 취급해 요청이 500이 된다.**
+> 아래 두 줄을 **함께** 바꿔라. (리더 판정 D-51 / D-53 / **D-67**)
+
+Cloudflare 같은 리버스 프록시·CDN 뒤에 배포했다면 `server/config.php`를 FTP로 열어
+아래 **두 줄을 함께** 바꾼다.
+
+```php
+define('TRUST_PROXY', true);
+define('TRUSTED_PROXIES', ['10.0.0.1', '10.0.0.2']);   // 프록시의 실제 IP 목록
+```
+
+프록시·CDN의 실제 IP는 호스팅·CDN 사업자에게 확인해 넣는다.
+
+**조합별 동작 — 세 가지뿐이다.**
+
+| `TRUST_PROXY` | `TRUSTED_PROXIES` | 서버 동작 |
+|---|---|---|
+| `false` (기본값) | `[]` (기본값) | `X-Forwarded-Proto` · `X-Forwarded-For`를 **무시**한다. 서버가 직접 본 프로토콜과 `REMOTE_ADDR`만 본다. **프록시 뒤가 아니면 이게 맞다** |
+| `true` | **`[]` (비어 있음)** | **설정 오류. 요청이 500이 된다.** → [7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다) |
+| `true` | `['10.0.0.1', …]` | `REMOTE_ADDR`가 **그 목록에 있는** 요청에서만 `X-Forwarded-*`를 신뢰한다. 목록 밖에서 온 요청의 헤더는 무시된다 |
+
+**왜 500인가 (조용히 넘어가지 않는 이유).** `TRUST_PROXY=true`는 "나는 프록시 뒤에 있다"는 선언이고
+`TRUSTED_PROXIES=[]`는 "어떤 홉도 신뢰하지 않는다"는 선언이다. 두 선언이 서로를 부정한다.
+이 상태에서 헤더를 **신뢰하면** 누구든 `X-Forwarded-Proto: https` 한 줄로 HTTPS 강제를 우회하고
+(보안 감사 L-8 · V11-L-6), 반대로 **조용히 무시하면** 프록시 뒤에서 무한 리다이렉트가 나고
+로그에 원인이 남지 않는다. 그래서 **어느 쪽으로도 넘어가지 않고 멈춘다**(fail-closed).
+서버 오류 로그에 사유가 남는다 — 검색어는 `TRUST_PROXY is on but TRUSTED_PROXIES is empty`.
+
+**켤 때 반드시 확인할 것:** 프록시가 `X-Forwarded-Proto`와 `X-Forwarded-For`를
+**클라이언트가 보낸 값을 덮어쓰도록** 설정되어 있어야 한다.
+그렇지 않으면 클라이언트가 헤더 한 줄로 `FORCE_HTTPS`를 우회하고 레이트리밋·락아웃도 IP 위조로 뚫린다.
+
+**증상으로 알아채는 법:** 프록시 뒤인데 `TRUST_PROXY=false`면 HTTPS로 접속해도 서버는 HTTP로 보고
+**무한 리다이렉트**에 빠진다. → [7-8절](#7-8-프록시cdn-뒤인데-무한-리다이렉트에-빠진다)
+반대로 두 상수를 짝으로 채우지 않으면 **전 요청 500**이다. → [7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)
+
+> **설치기는 이 두 값을 항상 `false` + `[]`로만 생성한다.** 설치 화면에 프록시 IP 입력란이 없다.
+> 프록시 뒤 배포는 설치 후 `config.php`를 손으로 고치는 것이 정상 절차다.
+
+### 3-4. 항목 5 — 로그인 응답의 `Set-Cookie` 속성 1회 확인
+
+**배포 후 딱 한 번만 하면 된다. 30초짜리 확인이고, PHP 7.2 배포에서는 건너뛰지 마라.**
+
+**왜 하는가 (한 줄):** PHP 7.2에서는 서버가 쿠키 헤더를 **직접 조립**하므로,
+`HttpOnly`·`Secure`·`SameSite`가 **조용히 빠질 수 있었던 유일한 지점**이다.
+오류도 로그도 없이 빠지는 종류라 눈으로 보는 것 말고 알아낼 방법이 없다.
+
+> **HTTPS 없이(평문 HTTP로) 운영한다면 먼저 이것을 확인하라.**
+> `server/config.php`에 `define('COOKIE_SECURE', false);` 이고
+> `define('COOKIE_SAMESITE', 'Lax');` 여야 한다.
+> 둘 중 하나라도 `Secure`를 요구하는 상태면(`COOKIE_SECURE=true` 또는 `COOKIE_SAMESITE='None'`)
+> **아래 절차의 로그인 요청 자체가 500이 되고 `Set-Cookie` 줄이 나가지 않는다** (리더 판정 D-75).
+> 그때는 [7-7절](#7-7-쿠키가-저장되지-않는다--로그인이-유지되지-않는다--로그인만-500이다)을 먼저 처리하라.
+> HTTPS로 운영한다면 `COOKIE_SECURE=true` 그대로 두고 아래로 진행한다.
+
+#### 절차
+
+1. 브라우저로 로그인 화면을 연다.
+
+   ```
+   {설치루트}/public/login.html
+   ```
+
+   실제 예시:
+
+   ```
+   https://example.com/ulogin/public/login.html
+   ```
+
+2. **`F12`** 를 눌러 개발자도구를 연다. (macOS Chrome/Safari는 `⌥⌘I`)
+3. **Network** 탭을 선택한다. 비어 있으면 그 상태로 두면 된다 — 다음 단계에서 채워진다.
+4. 아이디·비밀번호를 넣고 **로그인 버튼을 클릭**한다.
+5. Network 목록에서 **`login.php`** 요청을 클릭한다.
+   (SSO 리다이렉트로 로그인했다면 대신 **`exchange.php`** 를 본다. 둘 다 같은 쿠키를 심는다.)
+6. 오른쪽 패널의 **Headers** → **Response Headers** 에서 **`Set-Cookie`** 줄을 찾는다.
+
+#### 정상이면 무엇이 보이는가
+
+`Set-Cookie` 줄에 아래 3개가 **모두** 붙어 있어야 한다.
+
+| 속성 | 정상 표기 | 없으면 무슨 일이 |
+|---|---|---|
+| **`HttpOnly`** | `HttpOnly` | JS가 세션 쿠키를 읽을 수 있다 → XSS 1건으로 세션 탈취 |
+| **`Secure`** | `secure` (소문자다. 정상이다) | 세션 쿠키가 평문 HTTP 요청에도 실려 나간다 |
+| **`SameSite=Lax`** | `SameSite=Lax` | 교차 사이트 요청에 쿠키가 실린다 → CSRF 심층 방어 한 겹이 사라진다 |
+
+HTTPS + `remember` 없이 로그인한 경우의 실제 예시:
+
+```
+Set-Cookie: ULOGIN_SID=3f9a…c1; path=/; secure; HttpOnly; SameSite=Lax
+```
+
+`remember`를 켰거나 CSRF 쿠키(`ULOGIN_CSRF`)라면 `expires`·`Max-Age`가 함께 붙는다. 그것도 정상이다.
+
+```
+Set-Cookie: ULOGIN_SID=3f9a…c1; expires=Fri, 25-Sep-2026 07:55:41 GMT; Max-Age=2592000; path=/; secure; HttpOnly; SameSite=Lax
+```
+
+> `expires`의 날짜 형식이 `Wed, 26-Aug-2026`처럼 **하이픈**인 것도 정상이다.
+> PHP 본체가 쓰는 구 Netscape 형식을 그대로 맞춘 것이다.
+
+#### 하나라도 없으면 — 무엇을 확인하나
+
+**순서대로** 확인하라. 앞의 것이 원인일 확률이 훨씬 높다.
+
+| 빠진 것 | 먼저 확인할 것 | 어떻게 |
+|---|---|---|
+| **`Secure`만 없다** | `COOKIE_SECURE` | `server/config.php`에 `define('COOKIE_SECURE', true);` 인지 본다. `false`면 4단계에서 "HTTP 허용"을 골랐거나 [6-1절](#6-1-설치기-4단계에서-http-허용을-고른다)로 내린 것이다 |
+| **`Secure`만 없다 (계속)** | **HTTPS 여부** | 주소창이 `https://`인가. HTTP로 서비스하면서 `COOKIE_SECURE=true`로 두면 **v1.1.0에서는 그 요청이 500이 되고 `Set-Cookie` 줄 자체가 나가지 않는다**(리더 판정 D-75). 서버 오류 로그에 `COOKIE_SECURE is on but the request is not HTTPS`가 남는다 → [7-7절](#7-7-쿠키가-저장되지-않는다--로그인이-유지되지-않는다--로그인만-500이다) |
+| **`HttpOnly`·`SameSite`가 함께 없다** | **PHP 버전** | 이것이 v1.1.0이 고친 증상이다. `phpcheck.php`([0-1절](#0-1-호스팅-요구사항-필수))로 실제 실행 중인 PHP 버전을 확인한다 |
+| 위와 같음 | **배포된 파일이 v1.1.0인가** | `server/core/request.php`에 `send_cookie` 문자열이 있어야 한다. 없으면 v1.0.0 파일이 올라간 것이다 — 버전 폴더를 다시 업로드하라 |
+| `SameSite`만 없다 | `COOKIE_SAMESITE` | `server/config.php`의 `define('COOKIE_SAMESITE', 'Lax');`가 빈 문자열로 바뀌지 않았는지 본다 |
+
+`Set-Cookie` 줄 자체가 아예 안 보인다면 로그인이 실패한 것이다. **응답 코드를 먼저 보라** —
+`4xx`면 응답 본문의 `error.code`를 보고 [7절](#7-트러블슈팅)로 가고,
+**`500`이면 설정 오류다.** 서버 오류 로그를 열고
+[7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)의 로그 문장 표에서 원인을 찾아라
+(쿠키 설정에서 오는 500이 2가지 있다 — `COOKIE_SECURE` 모순, `COOKIE_PATH`/`COOKIE_DOMAIN` 구분자).
+
+#### 왜 v1.1.0이 이 항목을 추가했는가
+
+`setcookie()`의 **옵션 배열 형식은 PHP 7.3부터만** 동작한다.
+7.2에서 옵션 배열을 넘기면 그것이 **만료 시각 인자로 정수 캐스팅**되어
+`SameSite`가 통째로 사라지고 `HttpOnly`·`Secure`·`path`도 기본값으로 떨어진다.
+**오류 하나 없이 조용히** 그렇게 된다.
+
+v1.1.0은 `send_cookie()` 래퍼 하나로 이 지점을 막았다.
+`PHP_VERSION_ID`로 분기해서 **7.3 이상에서는 `setcookie()` 옵션 배열**을 쓰고,
+**7.2에서는 `Set-Cookie` 헤더를 직접 조립**한다.
+
+```
+send_cookie()  ─ PHP_VERSION_ID >= 70300 ─→ setcookie($name, $value, $optionsArray)
+               ─ PHP_VERSION_ID <  70300 ─→ header('Set-Cookie: …', false) 로 직접 조립
+```
+
+세션 쿠키와 CSRF 쿠키의 **발급과 삭제가 모두 이 한 함수**를 지난다.
+두 분기가 같은 헤더 문자열을 만드는지 16개 케이스로 바이트 단위 대조해 전부 일치했다.
+**그래도 실제 배포 환경에서 눈으로 한 번 보는 것이 최종 확인이다** —
+개발 환경에 PHP 7.2 바이너리가 없어 7.2 인터프리터 자체로는 실행하지 못했다
+(`README.md` `## 미검증 항목` 10번).
+
+---
+
+## 4. 서비스·시크릿 등록 (관리자 콘솔)
+
+```
+{설치루트}/public/admin.html
+```
+
+5단계에서 만든 관리자 아이디(**소문자**)로 로그인한다.
+
+관리자 콘솔은 6개 탭으로 되어 있다: **대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정**.
+`manager` 역할로 로그인하면 대시보드·회원(읽기 전용)·로그 3개만 보인다 (리더 판정 D-36).
+
+### 4-1. 이 서버는 여러 서비스를 `service_id`로 구분한다
+
+하나의 로그인 서버에 앱을 여러 개 붙일 수 있다. 각 앱이 **하나의 서비스**다.
+
+- 서비스마다 **복귀 주소·허용 출처·세션 수명·시크릿**이 따로 있다
+- **같은 계정이 서비스마다 다른 등급·권한·결제등급**을 가질 수 있다
+  (`app_ulogin_user_services` 테이블이 사용자 × 서비스 매핑을 보관한다)
+- 특정 서비스에서만 **`blocked` 차단**할 수 있다. 전역 계정은 정상인 채로 그 서비스만 막힌다
+
+### 4-2. 서비스 탭에서 관리하는 항목 전부
+
+**서비스** 탭 → **[새 서비스]** 또는 목록에서 행 클릭 → 수정.
+
+| 항목 | 무엇에 영향을 주는가 |
+|---|---|
+| `service_id` | 앱 코드에 그대로 넣는 식별자. 로그인·시크릿·세션·로그가 전부 이 값을 키로 쓴다. **생성 후 변경 불가** |
+| `service_name` | 관리자 콘솔·로그인 화면에 표시되는 이름 (1~100자) |
+| `description` | 관리자용 메모 (255자 이내). 목록 검색 대상에 포함된다 |
+| `redirect_whitelist` | SSO 로그인 후 돌아갈 주소 목록. **완전 일치** 비교. 여기 없으면 `SSO_INVALID_REDIRECT`로 로그인이 시작조차 되지 않는다 |
+| `allowed_origins` | 브라우저 CORS 허용 출처(`scheme://host[:port]`). 여기 없으면 그 출처의 앱은 **모든 API 호출이 막힌다** |
+| `auto_join` | `1`이면 첫 로그인 시 `user_services` 가입 행을 자동 생성. **`0`이면 별도 가입 절차가 필요하다** (아래 4-4절) |
+| `allow_register` | 이 서비스를 통한 신규 가입 허용 여부 |
+| `default_account_level` | **자동 가입 시 최소 보장 등급.** 전역 등급보다 랭크가 **높을 때만** 오버라이드로 기록된다(grant-only) — 강등은 일어나지 않는다 (리더 판정 D-35 / D-49) |
+| `session_ttl` | 이 서비스의 access token 수명(초). 60 ~ 604800 |
+| `refresh_ttl` | refresh token 수명(초). 300 ~ 31536000 |
+| `is_confidential` / `service_secret` | 서버사이드 클라이언트용. `is_confidential=true`면 `service_secret`(8~255자)이 필요하고 `exchange` 시 그 값을 요구한다. **로컬 HTML 앱은 시크릿을 숨길 수 없으므로 `false`(public client)로 둔다** |
+| `payload_fields` | 문자열 배열 또는 `null`. **v1.1.0에서도 저장·반환만 되고 실제 필터링에 쓰이지 않는다** (아래 주의) |
+| `status` | `active` / `disabled`. `disabled`면 그 서비스로는 로그인할 수 없다 |
+
+목록 화면에는 서비스별 **`user_count`**(가입 회원 수)와 **`secret_count`**(등록된 시크릿 수)가 함께 보인다.
+
+> **`payload_fields` 주의:** 이 값을 채워도 `payload`가 걸러지지 않는다.
+> v1.1.0의 `build_payload()`는 이 컬럼을 읽지 않는다. **동작하지 않는 통제이므로 이것에 기대지 마라.**
+> 접근 통제는 **시크릿의 등급 게이트**가 전부다. (보안 감사 M-10 — 미해결, README `## 알려진 제한` 참조)
+
+### 4-3. `service_id`를 바꿔야 할 때
+
+**바꿀 수 없다.** PUT으로 다른 값을 보내면
+`서비스 ID 는 변경할 수 없습니다. 새로 만들고 기존 서비스를 disabled 로 내려 주세요.` 가 나온다.
+
+세션·시크릿·가입 매핑·로그가 전부 이 문자열을 키로 참조하기 때문이다. 절차는 이렇다.
+
+1. 새 `service_id`로 서비스를 하나 더 만든다 (복귀 주소·출처·시크릿을 다시 등록)
+2. 앱 코드의 `serviceId`를 새 값으로 바꾼다
+3. 기존 서비스의 `status`를 `disabled`로 내린다
+
+### 4-4. `auto_join=0`이면 가입 절차를 따로 거쳐야 `payload`가 나온다
+
+**모르면 무증상 실패로 보이는 항목이다.** (리더 판정 D-48 / QA Q-15)
+
+`auto_join=0` 서비스에 가입 행이 없는 사용자가 그 `service_id`로 로그인하면:
+
+- **로그인 자체는 성공한다** (200). 가입 심사 중인 사용자도 로그인은 할 수 있어야 하기 때문이다
+- **그러나 `payload`는 빈 객체 `{}`다.** 에러도 경고도 없다
+- 앱 화면에는 "AI 기능을 쓸 수 없습니다" 같은 메시지만 뜬다
+
+**생성 경로 3곳의 기본값은 전부 `auto_join=1`이다.** 일부러 끄지 않았다면 이 문제는 생기지 않는다.
+껐다면, 관리자 콘솔 → 회원 → 대상 회원 상세 → 서비스 오버라이드에서 그 서비스에 가입 행을 만들어 줘야 한다.
+
+### 4-5. 시크릿 탭 — 서비스별 등록
+
+**시크릿** 탭 → 서비스 선택 → **[새 시크릿]**.
+
+| 항목 | 설명 |
+|---|---|
+| `secret_key` | `payload` 객체의 키 이름이 된다. 앱 코드가 `payload.ai_api_key`로 읽는다 |
+| 값 | AES-256-CBC로 암호화해 저장한다. **수정 창의 값 입력을 비워 두면 기존 값이 유지된다** |
+| `value_type` | `string` / `url` 등 |
+| `min_account_level` | 최소 계정등급 게이트 |
+| `min_billing_tier` | 최소 결제등급 게이트 |
+| `min_role` | 최소 역할 게이트 |
+| `is_masked` | **UI 힌트일 뿐이다.** "값 보기" 버튼을 노출할지 여부만 정한다 |
+| `status` | `active` / `disabled` |
+
+**등급 게이트 값과 랭크** — 문자열이 아니라 **랭크 정수**로 비교한다.
+
+| 축 | 값 (랭크) |
+|---|---|
+| `min_account_level` | `guest`(0) · `basic`(10) · `verified`(20) · `vip`(30) · `staff`(90) |
+| `min_billing_tier` | `free`(0) · `lite`(10) · `pro`(20) · `enterprise`(30) |
+| `min_role` | `user`(0) · `manager`(10) · `admin`(20) · `superadmin`(30) |
+
+> **랭크 0 값은 게이트로 인정되지 않는다.** `free` / `guest` / `user`를 고르면 비교가 항상 통과해
+> "제한 없음"과 결과가 같다. 관리자 API는 이 값들을 게이트로 세지 않는다. (리더 판정 D-54)
+
+**평문은 목록에 절대 나오지 않는다.** 목록·상세·생성·수정 응답의 `secret_value`는
+`is_masked` 값과 무관하게 **항상 `****`** 다 (리더 판정 D-24 / D-32).
+평문은 **superadmin의 "값 보기"** 한 경로에서만 나가고, 그 조회 사실이 `admin_logs`에 기록된다
+(값 자체는 로그에 남기지 않는다).
+
+### 4-6. 게이트 없는 민감 시크릿은 콘솔로 만들 수 없다 (리더 판정 D-55)
+
+관리자 API가 민감 키(`*_api_key` · `*_secret` · `*_token` · `*_password` 계열)에
+**실효 게이트가 하나도 없는** 생성·수정 요청을 **400으로 거부**한다.
+PUT으로 기존 게이트를 전부 지우는 요청도 같은 검사를 받는다.
+
+관리자 콘솔의 시크릿 폼에는 이 검사를 우회할 체크박스가 **일부러 없다.**
+체크박스를 두면 눌리기 때문이다. **의도적 마찰이다.**
+
+정말로 공개해야 한다면 API를 직접 호출해 `allow_public: true`를 함께 보내야 한다.
+
+```bash
+curl -X POST "https://example.com/ulogin/server/api/admin/secrets.php?service_id=local-ai-app" \
+  -H "Authorization: Bearer <<관리자_ACCESS_TOKEN>>" \
+  -H "Content-Type: application/json" \
+  -d '{"secret_key":"public_demo_token","secret_value":"...","allow_public":true}'
+```
+
+`<<관리자_ACCESS_TOKEN>>`은 관리자 콘솔에 로그인한 상태에서 브라우저 개발자도구 →
+Application → Local Storage의 `ulogin_*_access_token` 값에서 얻는다.
+
+`allow_public`으로 만든 시크릿은 그 사실이 `admin_logs.after_json`에 기록된다(값은 기록하지 않는다).
+
+### 4-7. 정기 점검 항목
+
+D-54의 게이트 검사는 **생성·수정 시점**만 막는다. 그 이전에 만들어진 게이트 없는 시크릿은 그대로 동작한다.
+**시크릿 탭을 주기적으로 열어 게이트 열이 비어 있는 민감 키가 없는지 확인하라.**
+
+또한 이름 기반 판정에는 한계가 있다. `openai_org`처럼 규칙에 걸리지 않는 이름으로 민감한 값을 넣으면
+자동 검사가 통과시킨다. **키 이름을 정할 때 사람이 판단해야 한다.**
+
+---
+
+## 5. 로컬 앱 연동 (5분)
+
+가장 빠른 확인 경로다. 자세한 내용은 `examples/README.md`에 있다.
+
+### 5-1. 서비스가 등록되어 있는지 확인
+
+관리자 콘솔 → 서비스 탭에서 `service_id`와 `redirect_whitelist` · `allowed_origins`를 확인한다.
+설치기 6단계에서 이미 등록했다면 그대로 쓰면 된다.
+
+### 5-2. 데모 열기
+
+버전 폴더 안에서 로컬 웹서버를 띄운다.
+
+```bash
+cd v1.2.0_20260828
+php -S localhost:5173 -t .
+```
+
+브라우저에서:
+
+```
+http://localhost:5173/examples/local-ai-app.html
+```
+
+> **`python -m http.server`는 PHP를 실행하지 못한다.** 정적 파일만 서빙하므로
+> `server/api/*.php` 를 호출하면 PHP 소스가 그대로 내려온다. 화면·경로 확인용으로는 쓸 수 있지만
+> **API까지 실제로 돌리려면 PHP가 동작하는 서버가 필요하다.**
+> 운영 서버(`{설치루트}`)를 그대로 쓰는 것이 가장 확실하다.
+
+### 5-3. 데모 화면에서 설정 3칸
+
+**"연결 설정"** 을 펼쳐 아래를 넣고 저장한다.
+
+| 입력 칸 | 넣을 값 | 실제 예시 |
+|---|---|---|
+| ulogin 설치 루트 URL | **설치 루트 한 칸.** `/server`·`/public`을 붙이지 않는다 | `https://example.com/ulogin` |
+| `service_id` | 등록한 값 | `local-ai-app` |
+| API 확장자 | `.php` (rewrite가 동작하면 비워 둔다) | `.php` |
+
+### 5-4. 내 앱에 직접 붙이기 — 복붙 가능한 최소 코드
+
+```html
+<!-- ?v= 는 캐시 무효화용이다. 지우면 브라우저가 옛 ulogin-client.js 를 최대 1년간 계속 쓴다
+     (자산에 immutable 이 걸려 있어 일반 새로고침으로도 갱신되지 않는다).
+     값은 {설치루트}/public/version.txt 의 앞부분과 맞춘다 — 8-3절. -->
+<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v=1.2.0"></script>
+<script>
+  // server 는 설치 루트 한 칸. /server 나 /public 을 붙이지 않는다.
+  var ulogin = new UloginClient({
+    server: 'https://example.com/ulogin',
+    serviceId: 'local-ai-app',
+    redirectUri: location.origin + '/callback.html'   // redirect_whitelist 와 완전히 같은 문자열
+  });
+
+  async function boot() {
+    if (!ulogin.isLoggedIn()) { ulogin.login(); return; }
+    var s = await ulogin.getSession();       // 토큰 검증 + payload 재수신
+    var p = ulogin.getPayload();             // { ai_api_key, api_base, model }
+    if (!p.ai_api_key) {
+      alert('이 등급에서는 AI 기능을 쓸 수 없습니다.');
+      return;
+    }
+    console.log('로그인:', s.user.username, '포인트:', s.user.points);
+  }
+  boot();
+</script>
+```
+
+`callback.html`에는 **같은 값으로 클라이언트를 하나 더 만들고** 한 줄만 부른다.
+
+```html
+<!-- ?v= 는 캐시 무효화용이다. 위 코드와 같은 값으로 맞춘다 — 지우면 옛 파일이 최대 1년 고정된다. -->
+<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v=1.2.0"></script>
+<script>
+  var ulogin = new UloginClient({
+    server: 'https://example.com/ulogin',
+    serviceId: 'local-ai-app',
+    redirectUri: location.origin + '/callback.html'
+  });
+  ulogin.handleCallback().catch(function (err) {
+    document.body.textContent = '로그인 실패: ' + err.code;
+  });
+</script>
+```
+
+`redirectUri`에 넣은 문자열을 관리자 콘솔의 `redirect_whitelist`에 **한 글자도 다르지 않게** 등록해야 한다.
+
+### 5-5. 이 시점에 무엇이 보여야 정상인가
+
+1. 로그인 버튼 → `{설치루트}/public/login.html?service_id=...` 로 이동한다
+2. 로그인 → `callback.html`로 돌아온다 → 원래 화면으로 복귀한다
+3. 사용자 이름·3축 등급 배지·포인트가 표시된다
+4. `payload` 항목이 표시된다 (키는 앞 6자만 보이고 나머지는 마스킹)
+5. 프롬프트를 보내면 포인트가 차감되고 AI 응답이 나온다
+
+안 되면 → [7절 트러블슈팅](#7-트러블슈팅)
+
+---
+
+## 6. HTTPS가 아닌 경우
+
+> **경고: HTTPS 없이 운영하면 로그인 토큰과 AI API 키가 평문으로 전송된다.**
+> 같은 네트워크(공용 와이파이, 사무실 랜)의 누구든 그것을 그대로 볼 수 있다.
+> **이 시스템의 존재 이유 — "AI 키를 클라이언트에 노출하지 않는다" — 가 성립하지 않는다.**
+> 가능하면 배포를 멈추고 호스팅에서 HTTPS(무료 Let's Encrypt 등)를 먼저 켜라. (리더 판정 D-6)
+
+그래도 HTTP로 가야 한다면:
+
+### 6-1. 설치기 4단계에서 "HTTP 허용"을 고른다
+
+`FORCE_HTTPS=false`와 `COOKIE_SECURE=false`가 함께 기록된다.
+`BASE_URL`도 `http://`로 시작해야 한다.
+
+이미 설치를 끝냈다면 `server/config.php`에서 **두 줄을 함께** 고친다. 하나만 바꾸면 안 된다.
+
+```php
+define('FORCE_HTTPS', false);
+define('COOKIE_SECURE', false);
+```
+
+**왜 함께 바꿔야 하나:** `FORCE_HTTPS=true` + `COOKIE_SECURE=false`면 301 리다이렉트 **직전의 평문 요청**에
+세션 쿠키가 실려 그대로 노출된다. 반대로 `COOKIE_SECURE=true`인데 HTTP로 서비스하면
+브라우저가 쿠키를 저장하지 않아 로그인이 유지되지 않는다 —
+**v1.1.0부터는 그 상태를 조용히 두지 않고 쿠키를 발급하는 요청을 500으로 멈춘다**(리더 판정 D-75).
+서버 오류 로그에 `COOKIE_SECURE is on but the request is not HTTPS`가 남는다.
+→ [7-7절](#7-7-쿠키가-저장되지-않는다--로그인이-유지되지-않는다--로그인만-500이다)
+
+**HTTP로 운영한다면 `COOKIE_SAMESITE`도 확인하라.** `'None'`은 브라우저 요구사항 때문에
+`secure`를 자동 강제하므로, `COOKIE_SECURE=false`로 내려도 위와 같은 500이 난다.
+평문 HTTP 배포에서는 `define('COOKIE_SAMESITE', 'Lax');`여야 한다.
+
+### 6-2. HTTP에서 생기는 제약
+
+| 제약 | 내용 |
+|---|---|
+| **PKCE가 걸리지 않는다** | `crypto.subtle`은 보안 컨텍스트(HTTPS 또는 `http://localhost`)에서만 동작한다. 그 밖에서는 클라이언트가 PKCE를 **조용히 생략**하고 콘솔에 경고만 남긴다 |
+| 쿠키 세션 | `Secure` 없이 동작한다. 중간자가 쿠키를 훔칠 수 있다 |
+| 토큰 | `Authorization: Bearer` 헤더가 평문으로 흐른다 |
+| 시크릿 | `payload`의 AI API 키가 평문으로 흐른다 |
+
+### 6-3. 그나마 위험을 줄이는 방법
+
+- 로컬 개발은 `http://localhost` 로 한다. `localhost`는 브라우저가 **보안 컨텍스트로 취급**해서
+  PKCE가 정상 동작한다. `http://192.168.0.10` 같은 IP는 그렇지 않다
+- 시크릿에 **높은 게이트**를 건다 (`min_billing_tier = pro` 등). 노출 대상 자체를 줄인다
+- 운영 전환 시 `FORCE_HTTPS` · `COOKIE_SECURE` · `BASE_URL` 세 값을 **함께** 되돌린다
+
+---
+
+## 7. 트러블슈팅
+
+### 7-1. 모든 API가 404다
+
+**원인:** `mod_rewrite`가 없거나 `.htaccess` 오버라이드가 막혀 있다.
+
+**확인:** 아래 두 주소를 브라우저로 열어 본다.
+
+```
+{설치루트}/server/api/auth/csrf.php     ← JSON 응답이 나와야 한다
+{설치루트}/server/api/auth/csrf         ← 404여도 정상 (rewrite 편의 기능)
+```
+
+첫 번째가 **JSON**이면 서버는 정상이다. 프론트가 확장자 없는 경로를 쓰고 있는 것이다.
+
+**대응:** `public/assets/api.js` 48행이 `.php`인지 확인한다. 기본값이 이미 `.php`다.
+
+```js
+  var API_EXT = '.php';
+```
+
+클라이언트를 쓰는 앱이라면 `apiExt` 옵션을 확인한다.
+
+```js
+var ulogin = new UloginClient({
+  server: 'https://example.com/ulogin',
+  serviceId: 'local-ai-app',
+  redirectUri: location.origin + '/callback.html',
+  apiExt: '.php'          // rewrite 가 되는 서버라면 '' 로 둘 수 있다
+});
+```
+
+첫 번째도 404라면 **업로드 위치가 틀린 것**이다. [1-1절](#1-1-설치-루트란-무엇인가-여기를-틀리면-전부-404다)로 돌아가라.
+
+### 7-2. "DB 에 접속할 수 없습니다"
+
+설치기 2단계에서 나온다.
+
+| 화면에 나오는 사유 | 대응 |
+|---|---|
+| 접근 거부 | DB 사용자·비밀번호가 틀렸다. 호스팅 관리 화면에서 다시 확인하라 |
+| 알 수 없는 데이터베이스 | DB를 아직 만들지 않았다. 호스팅 관리 화면에서 **먼저 생성**하라 |
+| 접속 실패 (호스트) | DB 호스트가 틀렸다. `localhost`를 먼저 시도하라 |
+
+3단계에서 테이블 생성이 실패한다면 원인은 **`CREATE` 권한 부족** 하나뿐이다.
+호스팅 관리 화면에서 그 DB 사용자에게 모든 권한을 부여하라.
+
+### 7-3. 로그인은 되는데 이후 요청이 전부 401이다
+
+**원인:** `Authorization` 헤더가 PHP에 전달되지 않는다. CGI/FastCGI 모드에서 흔하다.
+
+**확인:** 로그인은 성공(200 + 토큰 수신)하는데 `GET /api/me/index.php`가 `AUTH_REQUIRED`(401)를 낸다.
+
+**대응 1 — `.htaccess` rewrite 규칙 (이미 들어 있다):**
+`server/.htaccess`에 아래 두 블록이 있는지 확인한다. 없으면 추가한다.
+
+```apache
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
+
+<IfModule mod_setenvif.c>
+  SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+</IfModule>
+```
+
+**대응 2 — `X-Auth-Token` 대체 헤더:** 서버는 `Authorization: Bearer <token>` 외에
+`X-Auth-Token: <token>` 도 받는다. 앱에서 그쪽으로 보내면 CGI 환경을 우회할 수 있다.
+
+```js
+fetch('https://example.com/ulogin/server/api/me/index.php', {
+  headers: { 'X-Auth-Token': accessToken }
+});
+```
+
+### 7-4. 한글이 깨진다
+
+**원인:** DB 문자셋이 `utf8mb4`가 아니다.
+
+**확인:** phpMyAdmin 등에서 아래를 실행한다.
+
+```sql
+SELECT TABLE_NAME, TABLE_COLLATION
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'app_ulogin_%';
+```
+
+`utf8mb4_unicode_ci`(또는 `utf8mb4_general_ci`)가 아니면 아래로 변환한다.
+**`app_ulogin_` 부분은 실제 prefix로, DB 이름은 실제 값으로 바꿔라.**
+
+```sql
+ALTER TABLE `app_ulogin_users`    CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+ALTER TABLE `app_ulogin_services` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- 15개 테이블 전부에 대해 같은 문장을 실행한다
+```
+
+접속 문자셋은 `server/config.php`의 아래 값이 정한다. 기본값 그대로 두면 된다.
+
+```php
+define('DB_CHARSET', 'utf8mb4');
+```
+
+### 7-5. 시각이 9시간 어긋난다
+
+**원인이 아니다 — 설계다.** 서버는 모든 시각을 **UTC로 저장**한다.
+API 응답도 UTC ISO-8601(`2026-08-26T03:15:00Z`)로 나간다. 표시만 로컬 시간으로 바꾸는 것이 맞다.
+
+**확인:**
+
+```sql
+SELECT created_at FROM `app_ulogin_users` ORDER BY id DESC LIMIT 1;
+```
+
+현재 UTC 시각과 같으면 정상이다(한국 시간보다 9시간 이르다).
+
+**클라이언트에서 로컬 시간으로 표시하는 법:**
+
+```js
+new Date('2026-08-26T03:15:00Z').toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+// → "2026. 8. 26. 오후 12:15:00"
+```
+
+DB의 시각을 손으로 바꾸지 마라. 토큰 만료·레이트리밋 판정이 전부 어긋난다.
+
+### 7-6. 로컬 앱에서 CORS 오류가 난다
+
+브라우저 콘솔에 `has been blocked by CORS policy` 또는 `Failed to fetch`가 나온다.
+
+**원인:** 그 서비스의 `allowed_origins`에 앱의 출처가 없다.
+
+**대응:** 관리자 콘솔 → 서비스 → 해당 서비스 → `allowed_origins`에 한 줄 추가한다.
+
+```
+http://localhost:5173
+```
+
+**형식 규칙:** `scheme://host[:port]` — **경로를 붙이면 안 된다.**
+
+| 올바름 | 틀림 |
+|---|---|
+| `http://localhost:5173` | `http://localhost:5173/` (끝 슬래시) |
+| `https://myapp.example.com` | `https://myapp.example.com/app` (경로) |
+
+**포트가 다르면 다른 출처다.** `5173`에서 `3000`으로 바꿨다면 그것도 추가해야 한다.
+
+**`file://`로 연 페이지:** 출처가 문자열 `null`이라 CORS가 통과되지 않는다.
+`allowed_origins`에 `null` 한 줄을 넣으면 허용되긴 하지만 **권장하지 않는다** —
+어떤 로컬 파일에서든 API를 부를 수 있게 되기 때문이다.
+로컬 웹서버를 쓰는 편이 안전하다.
+
+```bash
+php -S localhost:5173 -t .
+```
+
+### 7-7. 쿠키가 저장되지 않는다 / 로그인이 유지되지 않는다 / 로그인만 500이다
+
+**원인:** HTTP로 접속하는데 실효 `secure`가 켜져 있다. 브라우저가 그 쿠키를 버린다.
+
+> **v1.1.0에서 증상이 바뀌었다 (리더 판정 D-75).**
+> v1.0.0에서 이것은 **조용한 실패**였다 — 로그인 API가 `200`을 반환하는데 브라우저가 쿠키를
+> 버려서 다음 요청에 세션이 없고, 사용자는 "로그인을 눌렀는데 다시 로그인 화면"만 봤다.
+> 서버 로그에도 아무것도 남지 않았다.
+> **v1.1.0부터는 그 요청이 명시적으로 500이 되고 서버 오류 로그에 사유가 남는다.**
+> 그래서 아래 두 증상이 **같은 원인**이다:
+> - (v1.0.0 파일이 올라간 경우) 쿠키가 저장되지 않고 로그인이 유지되지 않는다
+> - (v1.1.0) 로그인·로그아웃·CSRF 발급 요청이 500이다 → [7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)의 표에서 로그 문장으로 구분한다
+
+**확인 2가지.**
+
+1. 개발자도구 → Application → Cookies에서 `ULOGIN_SID`가 없다.
+2. 서버 오류 로그에 다음 문장이 있다 — **이것이 확정 증거다.**
+
+```
+COOKIE_SECURE is on but the request is not HTTPS
+```
+
+**대응:** `server/config.php`의 **두 줄을 함께** 바꾼다. ([6-1절](#6-1-설치기-4단계에서-http-허용을-고른다) 참조)
+
+```php
+define('FORCE_HTTPS', false);
+define('COOKIE_SECURE', false);
+```
+
+**한 줄만 바꾸면 안 된다.** `FORCE_HTTPS`만 내리면 위 500이 나고, `COOKIE_SECURE`만 내리면
+301 리다이렉트 직전의 평문 요청에 세션 쿠키가 실려 그대로 노출된다.
+
+> **`COOKIE_SECURE`가 이미 `false`인데 위 로그가 보이는 경우가 있다.**
+> 판정은 상수가 아니라 **그 요청에서 실제로 내보내려는 쿠키의 `secure` 값**으로 한다.
+> `COOKIE_SAMESITE`가 `'None'`이면 브라우저 요구사항 때문에 `secure`가 자동으로 강제되므로,
+> `COOKIE_SECURE=false`여도 같은 500이 난다. **`'None'`은 HTTPS 전용 값이다** —
+> 평문 HTTP 배포에서는 `define('COOKIE_SAMESITE', 'Lax');`로 되돌려라.
+> (`COOKIE_SECURE` 줄 자체가 config.php에 없는 구버전 파일도 같은 이유로 500이 난다)
+
+**더 나은 대응은 HTTPS를 켜는 것이다.** 위는 임시 조치로만 쓴다.
+프록시가 TLS를 종료하는 구성이라면 `COOKIE_SECURE=true`를 유지하되
+`TRUST_PROXY`·`TRUSTED_PROXIES`를 짝으로 채워야 한다 —
+그것이 비어 있으면 서버는 그 요청을 평문으로 보고 같은 500을 낸다
+([3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다)).
+
+**영향 범위 — 모든 API가 500이 되는 것은 아니다.** 쿠키를 실제로 내보내는 요청만 500이다
+(실측: 미인증 상태로 32개 엔드포인트에 GET+POST 64요청을 보내 5xx는
+`GET /api/auth/csrf.php` **1건**뿐이었다). 그래서 증상이 비대칭으로 보인다 —
+**브라우저에서는 로그인이 안 되는데 Bearer를 쓰는 로컬 AI 앱은 조회가 계속 동작한다.**
+이 조합을 보면 이 절을 의심하라.
+
+#### 경계는 인증 방식이 아니라 `Set-Cookie` 발행 여부다
+
+**"`Authorization: Bearer`는 무영향"은 조회 경로에만 참이다.** 판정이 `send_cookie()` 안에 있으므로
+경계를 가르는 것은 인증 방식이 아니라 **그 엔드포인트가 `Set-Cookie`를 내보내는가**다.
+Bearer로 호출해도 쿠키를 지우는 엔드포인트는 500이 된다.
+
+| Bearer로 호출하는 경로 | 모순 설정에서 |
+|---|---|
+| `GET /api/me` · `GET /api/me/sessions`(목록) · `GET /api/me/points` 등 **조회 전반** | **200.** 쿠키를 내보내지 않는다 (실측 확인) |
+| `POST /api/auth/exchange.php` — **SSO 연동 핵심 경로** | **무영향.** `'set_cookie' => false`로 세션을 만든다 (`server/api/auth/exchange.php:104`) |
+| `POST /api/auth/refresh.php` · `POST /api/points/consume.php` · `PUT /api/me/*` 등 | **무영향.** 요청에 세션 쿠키가 묶여 있지 않으면 쿠키를 발급하지 않는다 (`server/core/auth.php:557`) |
+| `GET /api/auth/csrf.php` | **500.** Bearer 연동에서는 부를 필요가 없다 — CSRF는 쿠키 세션 전용이고 Bearer는 검사 면제다 |
+| **`POST /api/auth/logout.php`** | **500.** 인증 방식과 무관하게 쿠키 삭제를 시도한다 (`server/api/auth/logout.php:30`) |
+| **`POST /api/me/withdraw.php`** | **500.** 같은 이유다 (`server/api/me/withdraw.php:113`) |
+| **`DELETE /api/me/sessions.php`** — 끊는 대상이 **지금 쓰고 있는 세션일 때만** | **500** (`server/api/me/sessions.php:84-89`). 다른 기기의 세션을 끊는 것은 영향 없다 |
+
+세 곳 모두 `clear_session_cookie()`(`server/core/auth.php:223-241`)를 부르고, 그 함수는
+**세션 쿠키와 CSRF 쿠키를 지우려고 `send_cookie()`를 2회 호출한다** — 즉 위 판정을 두 번 통과한다.
+
+> **위 표의 `logout`·`withdraw`·현재 세션 `DELETE` 세 행은 실측이 아니라 코드 경로로 확인한 것이다.**
+> 위 64요청 스윕은 **미인증**이었으므로 그 세 경로는 `AUTH_REQUIRED`(401)에서 끝나
+> 쿠키 삭제에 도달하지 않았다. 즉 그 수치는 이 세 행을 반증하지 않는다.
+
+> **`logout`·`withdraw`의 500에 재시도 루프를 걸지 마라.** 두 엔드포인트는 세션 회수(그리고 탈퇴 처리)를
+> **DB에 커밋한 뒤 마지막에** 쿠키를 지우려다 500이 된다(`logout.php`: `revoke_session()` →
+> `clear_session_cookie()` / `withdraw.php`: `db_tx(...)` 반환 후 `clear_session_cookie()`).
+> 따라서 **500을 받아도 세션 회수·탈퇴는 이미 완료되어 있다.** 연동 앱은 로컬 토큰을 지우고
+> 로그아웃 성공으로 처리해야 한다 — 재시도하면 이미 회수된 토큰이므로 두 번째 호출은 **401**이 온다.
+
+> **단, 완료되지 않는 것이 하나 있다 — 감사 로그 1행이다.**
+> DB 상태 변경(세션 회수·탈퇴)은 완료되지만 **감사 로그 1행이 누락된다.**
+> `app_ulogin_login_logs`에 `result='logout'`으로 남아야 할 그 1행이다 — `log_login()`이
+> `clear_session_cookie()`의 **다음 줄**에 있어서, 500이 그 앞에서 요청을 끊으면
+> 실행되지 않는다: `server/api/auth/logout.php:30-31` ·
+> `server/api/me/withdraw.php:113-114` · `server/api/me/sessions.php:88-89` 세 곳 모두 같은 순서다.
+> **실측:** 모순 설정에서 500이면 `result='logout'` 행이 **3 → 3**(증가 없음), 정상 설정에서 200이면
+> **3 → 4**다(2026-08-26 실측).
+>
+> **운영자가 알아야 할 것.** 보안 영향은 없다 — 세션은 실제로 회수됐고 재시도는 401이다. 하지만
+> 관리자 콘솔의 **로그 탭 → 로그인 로그**로 로그아웃을 추적하면 그 사용자에게 **로그아웃 기록이 없는
+> 로그인**이 남는다. 이 모순 설정을 고칠 때까지는 세션이 실제로 끊겼는지를 로그인 로그가 아니라
+> `app_ulogin_sessions` 테이블의 `revoke_reason` 열로 확인하라.
+>
+> ```sql
+> -- 그 사용자의 세션이 실제로 회수됐는지 확인한다 (phpMyAdmin 등에서 실행)
+> -- 접두사 app_ulogin_ 는 설치기 2단계에서 입력한 값이다. 바꿨다면 그 값으로 읽어라.
+> SELECT `session_id`, `revoked_at`, `revoke_reason`
+> FROM `app_ulogin_sessions`
+> WHERE `user_id` = 1 ORDER BY `id` DESC LIMIT 10;
+> ```
+>
+> `revoke_reason`이 `logout`(전체 기기 로그아웃이면 `logout_all`, 탈퇴면 `withdraw`)이고
+> `revoked_at`이 채워져 있으면 회수는 끝난 것이다. 로그인 로그에 그 행이 없더라도
+> 그 세션은 살아 있지 않다.
+> 이 순서를 고치는 것은 다음 버전 과제다 (`README.md` `## v1.3 검토 목록` 5번). **v1.2.0에서는 처리하지 않았다** — 그 라운드는 배포 반영·캐시만 다뤘다.
+
+### 7-8. 프록시/CDN 뒤인데 무한 리다이렉트에 빠진다
+
+**증상:** 브라우저가 `ERR_TOO_MANY_REDIRECTS`를 낸다. HTTPS로 접속했는데도 계속 리다이렉트된다.
+
+**원인:** 프록시가 서버와는 HTTP로 통신한다. 서버는 자기가 본 프로토콜이 HTTP라
+`FORCE_HTTPS=true` 규칙에 따라 다시 https로 301을 보낸다 → 무한 반복.
+`TRUST_PROXY` 기본값이 `false`라 `X-Forwarded-Proto: https` 헤더를 무시하기 때문이다.
+
+**대응:** `server/config.php`를 FTP로 열어 아래 **두 줄을 함께** 바꾼다. (리더 판정 D-51 / **D-67**)
+
+```php
+define('TRUST_PROXY', true);
+define('TRUSTED_PROXIES', ['10.0.0.1']);   // 프록시의 실제 IP 목록. 비우면 안 된다
+```
+
+> **`TRUSTED_PROXIES`를 비운 채 `TRUST_PROXY`만 `true`로 하지 마라.**
+> 그 조합은 **설정 오류로 취급되어 요청이 500이 된다** — 무한 리다이렉트가 500으로 바뀔 뿐
+> 문제는 해결되지 않는다. → [7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)
+> 조합별 동작 표는 [3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다)에 있다.
+
+**반드시 함께 확인할 것:** 프록시가 `X-Forwarded-Proto`와 `X-Forwarded-For`를
+클라이언트가 보낸 값 위에 **덮어쓰는지** 확인하라. 통과시키기만 하면
+클라이언트가 헤더 한 줄로 `FORCE_HTTPS`를 우회하고 레이트리밋도 IP 위조로 뚫린다.
+
+### 7-9. `.htaccess`가 무시되는 환경 (nginx / `AllowOverride None`)
+
+[3절](#3-설치-후-보안-확인-4항목)의 확인에서 `config.php` · `core/db.php` · `storage/mail/` · `schema.sql` 중
+하나라도 내용이 보인다면 이 상황이다.
+
+#### nginx — 서버 블록에 아래를 넣는다
+
+`{설치루트경로}`는 도메인 루트 기준의 경로다. 도메인 루트에 설치했다면 `/ulogin`을 지운다.
+
+```nginx
+# ulogin — 웹에서 절대 열려서는 안 되는 경로
+location ~ ^/ulogin/server/(core|storage)/ {
+    deny all;
+    return 404;
+}
+
+location ~ ^/ulogin/server/(config\.php|config\.sample\.php|schema\.sql|install\.php|\.install\.lock)$ {
+    deny all;
+    return 404;
+}
+
+# 점으로 시작하는 파일 전면 차단
+location ~ ^/ulogin/.*/\. {
+    deny all;
+    return 404;
+}
+
+# 실행 대상이 아닌 확장자 차단
+location ~ ^/ulogin/server/.*\.(sql|log|txt|md|ini|conf|bak|old|orig|swp|dist|sample|json|lock|ya?ml)$ {
+    deny all;
+    return 404;
+}
+
+# 디렉토리 목록 금지
+autoindex off;
+```
+
+설정을 넣은 뒤 문법 검사와 재적용:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+#### Apache인데 `AllowOverride None`이라면
+
+호스팅 관리자에게 요청하거나, 직접 서버 설정을 만질 수 있다면
+가상호스트 설정에 아래를 넣는다.
+
+```apache
+<Directory "/var/www/html/ulogin/server/core">
+    Require all denied
+</Directory>
+<Directory "/var/www/html/ulogin/server/storage">
+    Require all denied
+</Directory>
+<Directory "/var/www/html/ulogin/server">
+    <FilesMatch "^(config\.php|config\.sample\.php|schema\.sql|install\.php)$">
+        Require all denied
+    </FilesMatch>
+    Options -Indexes
+</Directory>
+```
+
+**적용 후 반드시 [3절의 4항목](#3-설치-후-보안-확인-4항목)을 다시 확인하라.**
+
+> `core/*.php`는 코드 자체에 직접 실행 가드가 있어 서버 설정이 없어도 404로 죽는다.
+> `server/core/`의 `.php` 파일은 **13개**이고, 그중 `bootstrap.php` **1개**가 `ULOGIN_BOOTSTRAPPED`
+> 상수를 **정의**하며, 나머지 **12개**가 상단에서 그 상수가 없으면 즉시 종료한다
+> (**정의 1 + 검사 12 = 13**, 리더 판정 D-34 / D-43).
+>
+> 파일이 늘거나 줄면 이 세 숫자를 함께 고쳐야 한다. 다시 세는 명령은 아래 한 줄이다
+> (`README.md` `## 보안 설계 요약`의 같은 문장도 함께 고칠 것).
+>
+> ```bash
+> ls -1 server/core/*.php | wc -l                                      # 13 = 전체
+> grep -l "define('ULOGIN_BOOTSTRAPPED'"  server/core/*.php | wc -l    #  1 = 정의부
+> grep -l "defined('ULOGIN_BOOTSTRAPPED')" server/core/*.php | wc -l   # 13 = 정의부 포함
+> ```
+>
+> 세 번째 명령이 13을 내는 것은 `bootstrap.php`가 `if (!defined(...)) { define(...) }` 형태로
+> **자기 상수를 중복 정의하지 않기 위해** 같은 검사를 쓰기 때문이다. **404로 종료하는 가드를 가진 것은 12개**다.
+>
+> **`storage/` · `schema.sql` · `config.php`는 웹서버 설정에만 의존한다** — 그래서 위 스니펫이 필요하다.
+
+#### 캐시 헤더 3종 — `.htaccess`가 무시되면 이것도 함께 사라진다 (v1.2.0 / 리더 판정 D-85)
+
+위의 deny 규칙과 **별개로 반드시 함께 넣어야 하는 설정이다.**
+
+`public/.htaccess`가 무시되면 보안 헤더만 사라지는 것이 아니다. **캐시 정책도 함께 사라진다.**
+그러면 `public/*.html`이 브라우저에 캐시되고, **새 자산 URL(`?v=`)을 가리키는 새 HTML조차
+도달하지 않는다.** 자산 URL의 `?v=` 쿼리는 서버 설정에 의존하지 않는 주 수단이지만,
+**그 전제는 "HTML은 항상 새로 받는다"** 이다. HTML이 캐시되는 순간 그 전제가 깨진다.
+**이 구멍은 프론트 코드로 닫을 수 없고 아래 설정으로만 닫힌다** —
+그것이 "새 버전을 올려도 반영이 안 된다"는 증상의 근원이다([8절](#8-새-버전으로-갱신하기)).
+
+걸어야 할 규칙은 셋이다. **정본은 `public/.htaccess`의 `Header always set` 줄이다** —
+값을 기억해서 옮겨 적지 말고 그 파일을 열어 문자열을 복사하라.
+
+| 대상 | `Cache-Control` | 이유 |
+|---|---|---|
+| `public/` 의 `*.html` | `no-store` | 일회성 토큰(`reset.html?token=` · `verify.html?token=`)과 로그인 사용자 데이터를 그린다. 그리고 이것이 `?v=` 방식의 전제다 |
+| `public/` 의 `*.css` · `*.js` | `public, max-age=31536000, immutable` | 참조 URL에 `?v={버전}`이 붙어 있으므로 버전이 바뀌면 URL이 바뀐다. 오래 캐시해도 갱신이 막히지 않는다 |
+| `public/version.txt` | `no-store` | 이 파일의 존재 이유가 "지금 서버에 올라간 버전 확인"이다. 캐시되면 확인 수단이 거짓말을 시작한다 |
+| **`examples/` 의 `*.html`** (v1.2.0 검증 라운드에 추가) | `no-store` | **`examples/callback.html`은 단순 데모가 아니다.** [2-6절](#2-6-6단계--첫-서비스-등록)이 제시하는 복귀 주소 화이트리스트 **기본값**에 그 주소가 들어 있어 **SSO 플로우가 실제로 이 페이지를 지나간다.** 두 데모가 참조하는 `../public/assets/ulogin-client.js`에는 `immutable`이 걸리므로, 이 HTML이 캐시되면 그 안의 옛 `?v=` 값이 굳고 **브라우저가 서버에 묻지도 않고 1년치로 잠긴 옛 클라이언트를 계속 쓴다** |
+
+> **`examples/`에 보안 헤더 5종은 넣지 않는다 — 누락이 아니라 판단이다.**
+> `public/.htaccess`의 CSP 값을 그대로 옮기면 두 데모가 깨진다. `style-src 'self'`는
+> `public/*.html`이 `<style>` 블록을 갖지 않기 때문에 성립하는 값인데 데모 둘은 스타일 전체를
+> `<style>`로 갖고, `connect-src 'self'`는 `local-ai-app.html`이 사용자가 입력한 AI 제공자 주소로
+> 교차 출처 `fetch`를 하는 것 — **그것이 데모의 본체다** — 를 막는다.
+> 값을 데모에 맞게 고쳐 넣는 것은 새 정책을 설계하는 일이고 별도 보안 감사가 필요하다.
+> 같은 판단이 `{설치루트}/examples/.htaccess` 머리 주석에 이유와 함께 적혀 있다.
+> **`examples/`의 캐시 정책만 아래 스니펫에 넣는다.** 그리고 **디렉토리 목록 차단은 함께 넣는다**
+> (`autoindex off` / `Options -Indexes`) — `examples/`에는 `index.html`이 없어서 목록을 막지
+> 않으면 `{설치루트}/examples/`가 파일 목록을 그대로 낸다. `examples/.htaccess`에도 같은 지시자가 있다.
+
+> **`?v=`를 자산 참조에서 빼야 할 사정이 생기면 위 두 번째 규칙도 반드시 같이 지워라.**
+> 버전 쿼리 없는 자산에 `immutable`을 걸면 **1년간 갱신이 불가능해져 지금 문제보다 훨씬 나빠진다.**
+
+##### 이 설정이 없을 때 실제로 깨지는 것은 "링크·주소창 재진입"뿐이다 — 새로고침은 동작한다
+
+**이 구분을 알면 진단이 빨라지고, 모르면 설정을 넣기 전에는 아무것도 안 된다고 오판한다.**
+`mod_headers`가 없는 Apache 인스턴스를 별도로 만들어 실측한 결과다(2026-08-28,
+`_workspace/25_qa_v1.2.md` `## A. 사용자 문제 해결 확인`).
+
+| 사용자가 한 동작 | `mod_headers` 있음 (의도한 배포 형태) | `mod_headers` 없음 / `.htaccess` 무시 (이 절의 환경) |
+|---|---|---|
+| **일반 새로고침** (`F5` · `Ctrl+R`) | **반영된다** | **반영된다** |
+| **링크를 눌러 다시 들어오기 / 주소창에서 Enter / 북마크** | **반영된다** (HTML `no-store`) | **지연될 수 있다.** HTML이 캐시에서 나오고 그 안의 `?v=`가 옛 값이다 |
+
+**왜 새로고침은 되는가 —** 일반 새로고침은 브라우저가 **최상위 문서를 항상 서버에 재검증**한다.
+그래서 캐시 헤더가 없어도 새 HTML이 오고, 새 HTML이 가리키는 새 자산 URL이 브라우저에 도달한다.
+반면 링크·주소창 재진입은 그 재검증을 하지 않으므로 HTML이 캐시에서 나올 수 있다.
+**즉 `?v=` 방식이 무력해지는 경로는 새로고침이 아니라 재진입에 한정된다.**
+
+**그래서 "반영이 안 된다"는 신고를 받으면 물어볼 질문이 정해진다** —
+**"새로고침해도 안 되는가, 링크로 들어갔을 때만 안 되는가."**
+
+- **링크로 들어갈 때만 안 된다** → 이 절의 설정이 빠진 것이다. 위 스니펫을 넣는다. **그때까지는 새로고침 1회로 해소된다**
+- **새로고침해도 안 된다** → 원인이 여기가 아니다. `?v=` 값이 안 올라갔거나([8-1절](#8-1-1단계--버전-문자열-일괄-치환)의 종료코드 확인), 업로드가 안 됐거나([8-3절](#8-3-3단계--업로드가-실제로-됐는지-확인-versiontxt)), PHP 코드 캐시다([8-6절](#8-6-6단계--반영이-안-될-때-opcache-진단))
+
+> **그래도 이 설정은 넣어야 한다.** 방문자에게 "새로고침해 주세요"를 요구할 수 없고
+> ([8-7절](#8-7-7단계--ctrlshiftr는-해결책이-아니다)), 로그인 링크·SSO 복귀 리다이렉트·북마크로
+> 들어오는 경로가 실제 사용의 대부분이다.
+> 다만 **이 설정이 없어도 `?v=` 방식이 통째로 무력해지는 것은 아니다** — 서버 설정에 의존하지 않는
+> 방식을 고른 이유가 그것이다.
+
+##### nginx — 보안 헤더 5종 + 캐시 3종 합본
+
+**`add_header`는 상속되지 않는다.** 하위 `location`에 `add_header`가 **하나라도** 있으면
+상위 `location`의 `add_header`를 **전부 버린다.** 그래서 캐시 규칙을 하위 블록에 넣는 순간
+그 블록의 응답에서는 CSP를 포함한 보안 헤더 5종이 **조용히 사라진다.**
+`nginx -t`는 통과하고 오류도 나지 않는다 — 눈으로 헤더를 확인하지 않으면 알 수 없는 종류의 고장이다.
+
+해결은 **하위 블록마다 5종을 다시 넣는 것**이다. 네 번 복사하지 않으려면 `include`를 쓴다.
+
+`/etc/nginx/snippets/ulogin-public-headers.conf` 를 만든다
+(값은 `public/.htaccess`에서 복사한다):
+
+```nginx
+# ulogin public/ 보안 헤더 5종 — 정본은 {설치루트}/public/.htaccess
+# add_header 가 상속되지 않으므로 add_header 를 쓰는 모든 location 에서 include 한다.
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), usb=()" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'" always;
+```
+
+서버 블록에 아래를 넣는다. `/ulogin`은 도메인 루트 기준 설치 경로다 — 루트에 설치했다면 지운다.
+
+```nginx
+# ulogin — public/ 화면·자산  (public/.htaccess 대체: 보안 헤더 5종 + 캐시 3종)
+location ^~ /ulogin/public/ {
+    autoindex off;
+
+    include snippets/ulogin-public-headers.conf;
+    add_header Cache-Control "no-store" always;   # 아래 어디에도 걸리지 않는 파일의 기본값
+
+    # version.txt — 배포 반영 확인 수단. 캐시하지 않는다.
+    location = /ulogin/public/version.txt {
+        include snippets/ulogin-public-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # 자산 — 참조 URL 에 ?v={버전} 이 붙어 있으므로 오래 캐시해도 안전하다.
+    location ~* \.(css|js)$ {
+        include snippets/ulogin-public-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    # HTML — no-store. 이것이 ?v= 방식의 전제다.
+    location ~* \.html$ {
+        include snippets/ulogin-public-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+}
+
+# ulogin — examples/ 데모  (examples/.htaccess 대체: HTML no-store 만)
+#   callback.html 은 복귀 주소 화이트리스트 기본값이라 SSO 플로우의 실참여자다.
+#   보안 헤더 5종은 의도적으로 넣지 않는다 — 위 표 아래의 인용 블록에 이유가 있다.
+#   (그대로 걸면 데모의 <style> 블록과 교차 출처 fetch 가 CSP 로 막힌다)
+location ^~ /ulogin/examples/ {
+    autoindex off;
+
+    location ~* \.html$ {
+        add_header Cache-Control "no-store" always;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+> **`?v=1.2.0` 쿼리스트링은 `location` 매칭에 영향을 주지 않는다.** nginx는 쿼리를 뗀
+> 경로로만 매칭하므로 `assets/api.js?v=1.2.0`은 `location ~* \.(css|js)$`에 정상적으로 걸린다.
+>
+> **이 블록은 `README.md`의 `### M-4 보충`에 있는 `public/` 스니펫과 같은 `location`이다.**
+> 그쪽은 보안 헤더만 다루고 여기는 **보안 헤더 + 캐시 합본**이다.
+> **둘 다 넣지 마라 — 이것 하나만 넣으면 양쪽이 모두 걸린다.**
+>
+> `server/`쪽 deny 규칙은 이 절 앞부분의 스니펫이다. 그것과 이 블록은 **둘 다** 필요하다.
+
+##### Apache `AllowOverride None` 환경의 캐시 헤더
+
+Apache는 `Header`가 하위 컨텍스트로 상속되므로 nginx처럼 복사할 필요가 없다.
+보안 헤더 5종은 `README.md` `### M-4 보충`의 `<Directory>` 블록에 있다.
+그 블록에 캐시 규칙 3종을 **더한** 형태가 아래다.
+
+```apache
+<Directory "/var/www/html/ulogin/public">
+    Options -Indexes
+    DirectoryIndex index.html
+    <IfModule mod_headers.c>
+        # 보안 헤더 5종은 README.md `### M-4 보충` 의 같은 블록에 있다. 값의 정본은 public/.htaccess.
+        # 여기서는 캐시 3종만 보인다 — 두 블록을 하나로 합쳐서 넣어라.
+
+        # 1) HTML — no-store. ?v= 방식의 전제다.
+        <FilesMatch "\.html$">
+            Header always set Cache-Control "no-store"
+        </FilesMatch>
+
+        # 2) 자산 — 참조 URL 에 ?v={버전} 이 있으므로 오래 캐시해도 안전하다.
+        <FilesMatch "\.(css|js)$">
+            Header always set Cache-Control "public, max-age=31536000, immutable"
+        </FilesMatch>
+
+        # 3) version.txt — 배포 반영 확인 수단. 캐시하지 않는다.
+        <FilesMatch "^version\.txt$">
+            Header always set Cache-Control "no-store"
+        </FilesMatch>
+    </IfModule>
+</Directory>
+
+# examples/ — 데모. examples/.htaccess 대체.
+#   callback.html 은 복귀 주소 화이트리스트 기본값이라 SSO 플로우의 실참여자다.
+#   보안 헤더 5종은 의도적으로 넣지 않는다 (위 표 아래의 인용 블록에 이유가 있다).
+<Directory "/var/www/html/ulogin/examples">
+    Options -Indexes
+    <IfModule mod_headers.c>
+        <FilesMatch "\.html$">
+            Header always set Cache-Control "no-store"
+        </FilesMatch>
+    </IfModule>
+</Directory>
+```
+
+`AllowOverride None`이 호스팅사 정책이고 서버 설정을 만질 수 없다면, 아래를 요청한다.
+**무엇을 요청해야 하는지 모르면 "설정을 바꿔 주세요"만 보내게 되고 답이 돌아오지 않는다.**
+
+```
+안녕하세요. {도메인} 계정 관련 문의입니다.
+
+{설치루트}/public/ 디렉토리에 .htaccess 를 두었는데 적용되지 않는 것으로 보입니다.
+아래 두 가지를 확인 부탁드립니다.
+
+1) 이 디렉토리에 AllowOverride 가 None 으로 설정되어 있는지, 그리고
+   FileInfo Options 를 허용해 주실 수 있는지 알려주세요.
+   (.htaccess 안에서 Header 지시자와 Options -Indexes 를 쓰려고 합니다)
+2) mod_headers 모듈이 활성화되어 있는지 알려주세요.
+
+1)이 정책상 불가하다면, 아래 응답 헤더를 서버 설정에 직접 넣어 주실 수 있을까요.
+  - {설치루트}/public/ 의 *.html          → Cache-Control: no-store
+  - {설치루트}/public/ 의 *.css, *.js     → Cache-Control: public, max-age=31536000, immutable
+  - {설치루트}/public/version.txt         → Cache-Control: no-store
+  - {설치루트}/examples/ 의 *.html        → Cache-Control: no-store
+
+감사합니다.
+```
+
+##### 적용됐는지 확인하는 방법
+
+```bash
+curl -sSI "https://your-host.com/ulogin/public/login.html"       | grep -i "cache-control\|content-security-policy"
+curl -sSI "https://your-host.com/ulogin/public/assets/api.js"    | grep -i "cache-control"
+curl -sSI "https://your-host.com/ulogin/public/version.txt"      | grep -i "cache-control"
+curl -sSI "https://your-host.com/ulogin/examples/callback.html"  | grep -i "cache-control"
+```
+
+| 요청 | 기대 `Cache-Control` |
+|---|---|
+| `login.html` | `no-store` (+ `Content-Security-Policy` 한 줄이 함께 보여야 한다) |
+| `assets/api.js` | `public, max-age=31536000, immutable` |
+| `version.txt` | `no-store` |
+| `examples/callback.html` | `no-store` — **`Content-Security-Policy`는 여기에 없는 것이 정상이다**(위 인용 블록의 판단) |
+
+`login.html`에서 `Cache-Control`은 보이는데 `Content-Security-Policy`가 사라졌다면
+**위의 `add_header` 상속 함정에 걸린 것이다** — 하위 블록의 `include` 줄이 빠졌다.
+
+> **검증 상태는 두 스니펫이 다르다.**
+>
+> - **Apache `<Directory>` 스니펫 — 검증했다.** v1.2.0 QA가 `AllowOverride None` 환경에 이 블록과
+>   `README.md` `### M-4 보충`의 보안 헤더 블록을 합쳐 실제로 기동해 `httpd -t` **Syntax OK** 후
+>   위 기대값 표를 **전부 충족**했다(Apache 2.4.58 + `mod_headers`, 2026-08-28.
+>   `_workspace/25_qa_v1.2.md` F4). **남은 것은 실 호스팅의 Apache 버전·정책 차이다**
+> - **nginx 스니펫 — 여전히 미검증이다.** **이 개발 환경에 nginx가 없어 `nginx -t`조차 돌리지 못했다.**
+>   `include`로 보안 헤더를 재삽입하는 형태가 의도대로 동작하는지 확인하지 못했고,
+>   **`add_header` 비상속도 nginx 문서상의 동작이며 실측이 아니다.** 검증한 것은 값의
+>   출처(`public/.htaccess`와 문자 단위 대조)뿐이다 (`README.md` `## 미검증 항목` 11번)
+>
+> **Apache가 통과했다는 것이 nginx가 통과한다는 뜻이 아니다.** 어느 쪽이든 **적용 후 위의 `curl`
+> 4줄을 직접 확인하라.**
+> 다만 **자산 URL의 `?v=` 주 수단은 이 설정과 무관하게 동작한다** — 그래서 그 방식을 골랐다.
+
+### 7-10. 500 오류만 나오고 원인을 모르겠다
+
+**대응:** `server/config.php`에서 임시로 켠다.
+
+```php
+define('DEBUG', true);
+```
+
+문제를 재현하면 응답 본문에 예외 메시지(SQL 오류문·컬럼명 등)가 실려 나온다.
+
+> **확인이 끝나면 반드시 되돌려라.**
+> ```php
+> define('DEBUG', false);
+> ```
+> `DEBUG=true`인 채로 운영하면 DB 구조와 내부 경로가 공격자에게 그대로 노출된다.
+> 설치기는 이 값을 **항상 `false`로 기록한다.**
+
+서버 오류 로그도 함께 본다. 호스팅 관리 화면의 "오류 로그" 메뉴 또는
+`error_log` 파일에서 `[ulogin` 으로 시작하는 줄을 찾는다.
+
+**`config.php`가 없으면** 모든 API가 500이 된다. `server/config.php`가 실제로 있는지 FTP로 확인하라.
+
+### 7-11. `install.php`를 열었더니 PHP 코드가 그대로 보인다
+
+**원인:** 그 디렉토리에서 PHP가 실행되지 않는다.
+
+**대응:** 호스팅 관리 화면에서 해당 도메인·디렉토리의 PHP 실행이 켜져 있는지 확인한다.
+정적 호스팅(GitHub Pages, S3 등)에는 이 시스템을 배포할 수 없다.
+
+### 7-12. `install.php`에 접속하니 "이미 설치가 완료된 서버입니다"
+
+**원인:** 아래 3개 파일 중 하나 이상이 존재한다. 설치기가 스스로를 잠근 것이다.
+
+```
+server/.install.lock
+server/storage/.installed
+server/config.php
+```
+
+**정상이라면** `install.php`를 삭제하고 `{설치루트}/public/login.html`로 가면 된다.
+
+**정말로 재설치해야 한다면** — FTP로 **세 파일을 모두** 손으로 지운 뒤 다시 실행한다.
+잠금 해제 파라미터(`?force=1` 같은 것)는 **구현되어 있지 않다.**
+
+> **경고: 기존 `config.php`의 `SECRET_ENC_KEY`를 잃으면 저장된 AI API 키를 복호화할 수 없다.**
+> 지우기 전에 반드시 `config.php`를 백업하라. 재설치는 새 키를 생성하므로
+> 기존 시크릿 행은 전부 못 읽는 값이 된다(= 다시 등록해야 한다).
+
+### 7-13. 비밀번호 찾기 메일이 오지 않는다
+
+**가장 흔한 원인 3가지를 순서대로 확인하라.**
+
+**① 메일 드라이버가 `log`다 (기본값. v1.0.0부터 변경 없다)**
+
+메일을 보내지 않고 서버에 파일로 저장한다. FTP로 확인한다.
+
+```
+server/storage/mail/
+```
+
+파일 이름은 `20260826_031500_a1b2c3d4e5f6a7b8.php` 형태다.
+**확장자가 `.php`이고 첫 줄이 `<?php exit; ?>` 라서 브라우저로는 열리지 않는다.**
+FTP로 내려받아 텍스트 편집기로 열면 메일 본문과 재설정 링크가 그대로 보인다.
+
+`mail()`이 동작하는 호스팅이면 관리자 콘솔 → 설정 → `메일 발송 방식`을 `mail`로 바꿔라.
+
+**② `BASE_URL`이 비어 있거나 자리표시자다**
+
+`BASE_URL`이 비어 있으면 **메일 발송 자체가 중단된다**(fail-closed, 리더 판정 D-33).
+그런데 API 응답은 계정 열거 방지 규약 때문에 여전히 "보냈습니다"로 나간다 —
+**에러 없이 그냥 안 온다.**
+
+`server/config.php`를 FTP로 열어 확인한다.
+
+```php
+define('BASE_URL', 'https://example.com/ulogin');   // ← __CHANGE_ME__ 나 빈 문자열이면 안 된다
+```
+
+서버 오류 로그에 `set BASE_URL in config.php` 가 남아 있으면 이 원인이 확정이다.
+
+**③ 스팸함 / `MAIL_FROM` 도메인 불일치**
+
+`MAIL_FROM`이 서비스 도메인과 다르면 대부분의 메일 서버가 스팸으로 처리한다.
+
+```php
+define('MAIL_FROM', 'no-reply@example.com');   // 서비스 도메인과 같아야 한다
+```
+
+### 7-14. `payload`가 비어 있다 (`{}`)
+
+**에러도 경고도 없이 빈 객체가 온다.** 아래 3가지를 **순서대로** 확인하라.
+
+**① 미가입 — 그 서비스에 `user_services` 행이 없다** (리더 판정 D-48)
+
+`auto_join=0` 서비스인데 가입 절차를 거치지 않았다. 로그인은 200으로 성공하지만 `payload`는 `{}`다.
+
+확인: 관리자 콘솔 → 서비스 탭에서 그 서비스의 `auto_join`이 켜져 있는지 본다.
+꺼져 있다면 관리자 콘솔 → 회원 → 대상 회원 상세에서 그 서비스 가입 행을 만들어 준다.
+
+DB에서 직접 확인하려면:
+
+```sql
+SELECT * FROM `app_ulogin_user_services`
+WHERE user_id = (SELECT id FROM `app_ulogin_users` WHERE username = 'hong')
+  AND service_id = 'local-ai-app';
+```
+
+행이 0건이면 이 원인이다.
+
+**② 등급 미달 — 시크릿의 게이트를 넘지 못했다**
+
+**등급이 부족하면 에러가 아니라 그 키가 `payload`에서 조용히 빠진다.**
+`api_base`·`model`만 오고 `ai_api_key`만 없다면 이 경우다.
+
+확인: 관리자 콘솔 → 시크릿 탭에서 그 키의 `min_account_level` / `min_billing_tier` / `min_role`을 본다.
+그리고 회원 탭에서 그 회원의 3축 등급을 본다. **랭크 정수로 비교**된다.
+
+| 축 | 랭크 |
+|---|---|
+| `account_level` | `guest`(0) · `basic`(10) · `verified`(20) · `vip`(30) · `staff`(90) |
+| `billing_tier` | `free`(0) · `lite`(10) · `pro`(20) · `enterprise`(30) |
+| `role` | `user`(0) · `manager`(10) · `admin`(20) · `superadmin`(30) |
+
+예: 시크릿이 `min_billing_tier='lite'`(10)인데 회원이 `free`(0)이면 빠진다.
+회원의 `billing_tier`를 `lite` 이상으로 올리거나(관리자 콘솔 → 회원 → 등급 조정),
+그 시크릿의 게이트를 낮춘다.
+
+**③ 서비스 차단 — `user_services.status = 'blocked'`**
+
+그 서비스에 대해 차단된 회원이다. `payload`가 빈 배열이 되고,
+`service_id`를 붙여 로그인하면 `FORBIDDEN`(403) + "이 서비스 이용이 제한되었습니다"가 나온다
+(리더 판정 D-31).
+
+확인: 관리자 콘솔 → 회원 상세 → 서비스 목록에서 상태를 본다.
+또는 회원 본인의 마이페이지 → 서비스 탭에서 `membership_status`로 보인다.
+
+### 7-15. 관리자 API가 403을 낸다
+
+**원인:** 관리자 권한 판정은 **전역 `users.role`만** 본다 (리더 판정 D-50).
+서비스별 `role` 오버라이드는 **로그인 서버 전체의 관리 권한이 되지 않는다.**
+
+특정 서비스에서 `admin` 오버라이드를 받은 사용자가 로그인 서버 전체의 관리자가 되면
+그 자체가 권한 상승이기 때문이다.
+
+**확인:**
+
+```sql
+SELECT username, role FROM `app_ulogin_users` WHERE username = 'admin01';
+```
+
+여기의 `role`이 `manager` 이상이어야 콘솔에 들어갈 수 있다.
+
+**최소 역할표**
+
+| 기능 | 최소 전역 `role` |
+|---|---|
+| 관리자 콘솔 진입 · 대시보드 · 회원 목록/상세(읽기) · 로그인 로그 | `manager` |
+| 회원 수정 · 포인트 조정 · 정지/복구 · 비밀번호 초기화 · 세션 종료 | `admin` |
+| 서비스 · 시크릿 · 설정 탭 · 관리자 로그 | `admin` |
+| 회원 하드 삭제 · **시크릿 평문 조회(값 보기)** | `superadmin` |
+
+**대상 계정에 대한 추가 규칙:** 자신과 **같거나 높은** `role_rank`를 가진 **다른** 계정은
+어떤 변경도 할 수 없다 (리더 판정 D-30 / D-41). `admin`이 다른 `admin`을 수정하려 하면 403이다.
+`superadmin`은 자신보다 낮은 계정만 변경할 수 있다.
+
+### 7-16. 로그인 시도가 `RATE_LIMITED`로 막힌다
+
+레이트리밋과 락아웃이 걸린 것이다. 응답의 `retry_after`(초)와 `Retry-After` 헤더에 남은 시간이 나온다.
+
+| 기본값 | 설정 키 (관리자 콘솔 → 설정) |
+|---|---|
+| 연속 실패 5회에 잠금 | `login_fail_threshold` |
+| 잠금 15분 | `login_lock_minutes` |
+
+**즉시 풀어야 한다면** 관리자 콘솔 → 설정에서 값을 올리거나, DB에서 직접 지운다.
+
+```sql
+DELETE FROM `app_ulogin_rate_limits` WHERE bucket LIKE 'login:%';
+```
+
+**같은 IP에서 여러 계정을 테스트하면** IP 버킷이 먼저 걸려 계정 락아웃보다 앞서 `RATE_LIMITED`가 나온다.
+정상 동작이다 (리더 판정 D-15).
+
+### 7-17. 설치 도중 "설치 정보가 유실되었습니다(세션 만료)"
+
+PHP 세션이 끊긴 것이다. 브라우저를 오래 방치했거나 호스팅의 세션 수명이 짧다.
+
+**대응:** `{설치루트}/server/install.php`를 새로 열어 **처음부터 다시** 진행한다.
+DB에는 아무것도 저장되지 않았으므로 안전하다.
+3단계까지 갔었다면 테이블은 이미 만들어져 있지만 `CREATE TABLE IF NOT EXISTS`라 다시 실행해도 문제없다.
+
+### 7-18. "설치 폼의 보안 토큰이 유효하지 않습니다"
+
+브라우저 뒤로 가기로 이전 화면에 돌아가 다시 제출했을 때 나온다.
+설치기의 CSRF 토큰은 **1회용**이라 한 번 쓰면 회전한다.
+
+**대응:** `install.php`를 새로 열어 처음부터 다시 진행한다.
+
+### 7-19. 1단계에서 PHP 버전이 "실패"로 나온다 (또는 "주의"로 나온다)
+
+**두 가지는 완전히 다른 상황이다. 먼저 어느 표에 있는지 보라.**
+
+| 어디에 나오는가 | 표시 | 실행 중인 PHP | 설치 |
+|---|---|---|---|
+| **필수 항목** 표의 `PHP 버전 7.2 이상` 행 | **빨간 "실패"** | **7.1 이하** | **차단된다** |
+| **정보성(권고) 항목** 표의 1번 행 `PHP 보안 지원 상태` | 주황 **"주의"** | 7.2.x 또는 7.3.x | **그대로 진행된다** |
+
+#### 필수 항목이 "실패"인 경우 — PHP 7.1 이하다
+
+v1.1.0의 최소 요구 버전은 **7.2.0**이다. 이보다 낮으면 차단된다.
+(v1.0.0의 요구 버전은 7.4였다. 7.2·7.3 호스팅에서 막혀 있었다면 v1.1.0으로 해결된다.)
+
+**대응:** 호스팅 제어판의 **"PHP 버전 선택"** 메뉴에서 **7.4 이상**을 고른다.
+7.4 이상 옵션이 있다면 7.2를 고를 이유가 없다 — 7.2·7.3은 보안 지원이 끝났다([0-1절](#0-1-호스팅-요구사항-필수)).
+선택 후 브라우저를 새로고침하면 필수 항목이 통과로 바뀐다.
+
+실제로 어떤 버전이 실행되는지는 `phpcheck.php`([0-1절](#0-1-호스팅-요구사항-필수))로 확인한다.
+제어판에서 7.4를 골랐는데도 7.1이 보인다면 그 디렉토리에만 다른 PHP가 적용된 것이다 —
+호스팅 관리자에게 문의하라.
+
+#### 정보성 항목이 "주의"인 경우 — 실패가 아니다
+
+**7.2·7.3에서는 항상 이렇게 나온다. 설치는 그대로 진행된다.**
+
+- 이 행은 **필수 항목 표가 아니라 정보성(권고) 표**에 있다
+- 문구 마지막에 "설치는 이대로 진행됩니다(이 항목은 설치를 막지 않습니다)"가 붙어 있다
+- **다음 버튼이 활성 상태**다. 그대로 누르면 된다
+
+주황색이라고 멈추지 마라. 이 표시의 목적은 차단이 아니라
+"보안 지원이 끝난 버전을 쓰고 있다"는 사실을 배포자에게 알리는 것이다.
+
+7.2·7.3에서도 쿠키 보호 속성(`HttpOnly`·`Secure`·`SameSite`)은 정상 적용된다 —
+그래도 배포 후 한 번은 눈으로 확인하라([3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인)).
+
+### 7-20. `Set-Cookie`에 `HttpOnly`·`Secure`·`SameSite`가 안 보인다
+
+[3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인)의 "하나라도 없으면 — 무엇을 확인하나" 표를
+**순서대로** 따라가라. 확인 순서는 `COOKIE_SECURE` → HTTPS 여부 → PHP 버전 → 배포된 파일이 v1.1.0인지다.
+
+### 7-21. 설치는 정상이었는데 **모든 API가 500**이다
+
+**증상:** 설치기 8단계까지 정상으로 끝났고 자체 진단도 통과했는데, 그 뒤로 화면·API 요청이
+**500**(`{"ok":false,"error":{"code":"SERVER_ERROR"}}`)이다.
+
+**응답 본문에는 원인이 없다.** 내부 정보(SQL·경로·스택)를 노출하지 않도록 그렇게 만들었다.
+대신 **원인은 전부 서버 오류 로그에 남는다.** 그것이 이 fail-closed 설계의 요점이다 —
+로그를 먼저 열고, 아래 표에서 **로그에 있는 문장으로 원인을 구분하라.**
+로그를 못 찾겠으면 이 절 맨 아래 안내를 보라.
+
+| 로그에 있는 문장 | 원인 | 범위 | 대응 |
+|---|---|---|---|
+| `TRUST_PROXY is on but TRUSTED_PROXIES is empty` | **`TRUST_PROXY=true` + `TRUSTED_PROXIES=[]`** — 짝이 맞지 않는 프록시 설정이다. v1.1.0부터 이 조합을 설정 오류로 보고 **의도적으로 500을 낸다**(리더 판정 D-67). 조용히 넘기면 무한 리다이렉트가 나고 원인이 가려지기 때문이다 | 평문으로 들어온 **전 요청** | 아래 대응 참조 |
+| `config.php not found. run install.php first` | `server/config.php`가 없거나 읽히지 않는다 | **전 요청** | [7-2절](#7-2-db-에-접속할-수-없습니다)·[2-8절](#2-8-8단계--설치-실행--마무리-안내)의 "손으로 만드는 절차" |
+| `FORCE_HTTPS is on but BASE_URL is not configured` | `BASE_URL`이 비어 있다 | 평문으로 들어온 **전 요청** | [2-4절](#2-4-4단계--사이트--전송-보안-가장-중요한-화면)대로 `BASE_URL`을 채운다 |
+| `COOKIE_SECURE is on but the request is not HTTPS` | **평문 HTTP 요청에 `Secure` 쿠키를 내보내려 했다** (리더 판정 D-75). 브라우저는 평문 연결에서 `Secure` 쿠키를 저장하지 않으므로, 그대로 두면 "로그인 API는 200인데 세션이 안 붙는" 조용한 실패가 된다. v1.1.0부터 그 자리에서 멈춘다 | **쿠키를 내보내는 요청만** — 로그인·로그아웃·CSRF 발급. 경계는 인증 방식이 아니라 `Set-Cookie` 발행 여부다: `Authorization: Bearer` **조회**는 200이지만 **로그아웃·탈퇴·현재 세션 끊기는 Bearer로도 500**이다 (엔드포인트별 표와 재시도 금지 안내는 7-7절) | [7-7절](#7-7-쿠키가-저장되지-않는다--로그인이-유지되지-않는다--로그인만-500이다) |
+| `invalid "path" cookie option rejected` (또는 `"domain"`) | `COOKIE_PATH`·`COOKIE_DOMAIN`에 쿠키 구분자(`,` `;` 공백 탭 등)가 들어 있다. PHP 7.2에서만 조용히 통과해 쿠키 속성 주입이 됐던 값이다 (리더 판정 D-65) | **쿠키를 내보내는 요청만** | `server/config.php`를 `define('COOKIE_PATH', '/');` / `define('COOKIE_DOMAIN', '');`로 되돌린다 |
+
+> **로그에 `invalid COOKIE_SAMESITE`만 있고 500은 없다면** 그것은 오류가 아니라 경고다.
+> `COOKIE_SAMESITE`에 `Lax`·`Strict`·`None` 밖의 값(오타 포함)이 들어가 **`Lax`로 강제**된 것이다.
+> 요청은 정상 처리된다 — 다만 적어 둔 값은 쓰이지 않으므로 config.php를 고쳐라.
+
+> **`COOKIE_SAMESITE='None'`인데 HTTPS가 아닌 경우**는 위 표의 `COOKIE_SECURE is on but the
+> request is not HTTPS` 행으로 나타난다. `None`은 브라우저 요구사항 때문에 `secure`를 자동
+> 강제하므로, `COOKIE_SECURE=false`여도 같은 500·같은 로그가 난다. **`None`은 HTTPS 전용
+> 값이다.** → [7-7절](#7-7-쿠키가-저장되지-않는다--로그인이-유지되지-않는다--로그인만-500이다)
+
+**대응 (프록시 설정 오류인 경우).** `server/config.php`를 FTP로 열어 **둘 중 하나**를 한다.
+
+```php
+// (a) 프록시·CDN 뒤가 맞다 — 프록시 IP를 채운다
+define('TRUST_PROXY', true);
+define('TRUSTED_PROXIES', ['10.0.0.1', '10.0.0.2']);
+
+// (b) 프록시 뒤가 아니다 — 기본값으로 되돌린다
+define('TRUST_PROXY', false);
+define('TRUSTED_PROXIES', []);
+```
+
+**`TRUST_PROXY`만 `false`로 되돌려도 500은 사라진다.** 다만 실제로 프록시 뒤라면 이번에는
+무한 리다이렉트가 날 수 있으므로([7-8절](#7-8-프록시cdn-뒤인데-무한-리다이렉트에-빠진다)),
+프록시 뒤라면 (a)가 정답이다. 조합별 동작은
+[3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다)의 표에 있다.
+
+**서버 오류 로그를 못 찾겠으면** [7-10절](#7-10-500-오류만-나오고-원인을-모르겠다)의 `DEBUG` 임시 활성화
+절차를 쓴다. 확인이 끝나면 **반드시 다시 끈다.**
+
+---
+
+## 8. 새 버전으로 갱신하기
+
+**이 절은 v1.2.0에서 신설했다.** 그전까지 이 문서에는 **설치 절차만 있고 갱신 절차가 없었다.**
+그래서 "새 버전을 올렸는데 새로고침해도 반영이 안 된다"는 상황에서 무엇을 확인해야 하는지가
+어디에도 적혀 있지 않았다. 아래 7단계가 그 공백을 메운다.
+
+> **이미 운영 중인 서버를 갱신하는 절차다.** 처음 설치라면 이 절이 아니라 [1절](#1-파일-업로드)부터 시작하라.
+
+| 단계 | 무엇을 하는가 | 실패하면 무엇이 보이는가 |
+|---|---|---|
+| 1 | 버전 문자열 일괄 치환 (`?v=` · `version.txt`) | 일부 자산만 옛 것으로 남는다 |
+| 2 | 업로드 — **덮어쓰면 안 되는 파일 3종을 지킨다** | 전 API 500 / 시크릿 복호화 불가 |
+| 3 | `version.txt`로 **업로드가 됐는지** 확인 | 값이 그대로면 업로드가 안 된 것이다 |
+| 4 | Network 탭에서 자산 URL의 `?v=` 확인 | 옛 값이면 옛 HTML을 보고 있다 |
+| 5 | `curl`로 API 응답 헤더 확인 | `no-store` 단독이면 **PHP 옛 코드**다 |
+| 6 | 그래도 그대로면 → opcache 진단 | — |
+| 7 | `Ctrl+Shift+R`는 **최후 수단이지 해결책이 아니다** | — |
+
+**DB는 건드리지 않는다.** `schema.sql`은 전부 `CREATE TABLE IF NOT EXISTS`이고,
+v1.2.0은 테이블·컬럼을 하나도 바꾸지 않았다. 스키마가 바뀌는 버전에서는 별도
+`migrate_{from}_to_{to}.sql`이 버전 폴더에 함께 들어 있으며, 그때는 이 절의 2단계 앞에
+그 파일 적용이 추가된다. **v1.2.0에는 그 파일이 없다** — 없으면 마이그레이션이 없다는 뜻이다.
+
+### 8-1. 1단계 — 버전 문자열 일괄 치환
+
+새 버전 폴더의 자산 참조(`assets/*.css` · `assets/*.js`)에 붙은 `?v=` 값과
+`public/version.txt`를 새 버전으로 맞춘다. **이 값이 브라우저 캐시 무효화의 주 수단이다** —
+`.htaccess`·`mod_headers`·프록시 설정에 전혀 의존하지 않는다.
+
+손으로 넣지 마라. 참조가 여러 파일에 흩어져 있어 반드시 일부가 빠진다.
+치환 스크립트가 `_workspace/bump_asset_version.php`에 있다.
+
+> **이 스크립트는 배포물이 아니다.** `_workspace/`에 두고 릴리스마다 재사용한다.
+> **호스팅에 업로드하지 마라.** 버전 폴더에 복사해 넣어서도 안 된다.
+
+```bash
+cd _workspace
+php bump_asset_version.php <새버전> --dir=../<버전폴더> --version-txt=<새버전>_<YYYYMMDD>
+```
+
+실제 값 예시 (v1.2.0을 v1.3.0으로 올리는 경우):
+
+```bash
+cd _workspace
+php bump_asset_version.php 1.3.0 --dir=../v1.3.0_20260901 --dry-run
+php bump_asset_version.php 1.3.0 --dir=../v1.3.0_20260901 --version-txt=1.3.0_20260901
+```
+
+옵션은 이것뿐이다.
+
+| 옵션 | 의미 |
+|---|---|
+| `--dir=<경로>` | 대상 버전 폴더. 생략하면 스크립트 상위의 가장 최근 버전 폴더를 자동 선택한다 |
+| `--from=<현재버전>` | 치환 대상을 이 값으로 한정한다. 생략하면 발견된 모든 `?v=` 값이 대상이다 |
+| `--version-txt=<문자열>` | `public/version.txt`를 이 내용으로 덮어쓴다. **형식이 `{버전}_{YYYYMMDD}`로 달라 자동 추론하지 않는다** |
+| `--dry-run` | 파일을 쓰지 않고 결과만 출력한다 |
+
+#### 전후 개수를 확인하는 것까지가 절차다
+
+스크립트는 파일별로 `참조 / 변경 / 이미동일 / 건너뜀 / 버전없음` 5개 숫자를 출력하고
+마지막에 합계를 낸다. **`버전없음` 열이 0인지 확인하라.** 0이 아니면 그 자산만 버전 쿼리 없이
+남아 있고, 그 파일은 새 버전을 올려도 브라우저가 옛 것을 계속 쓴다.
+
+출력 형태(v1.2.0 폴더에 `--dry-run`을 돌린 **2026-08-28 실제 출력**을 발췌한 것이다):
+
+```
+파일                       참조   변경 이미동일 건너뜀 버전없음
+------------------------------------------------------------------------
+public/admin.html                 3        0        3        0        0
+...
+------------------------------------------------------------------------
+합계 (10개 파일)            24        0       24        0        0
+```
+
+**위 숫자를 이 문서의 판정 기준으로 삼지 마라.** 화면이나 데모가 늘면 곧 낡는다.
+**판정은 `버전없음` 열과 종료코드로 한다** — 스크립트가 매번 직접 센다.
+
+| 종료코드 | 의미 | 해야 할 일 |
+|---|---|---|
+| `0` | 정상. 버전 쿼리 없는 참조 0곳, 푸터에 박힌 버전 문자열 0곳 | 다음 단계로 |
+| `1` | **산출물에 결함이 있다.** 두 원인 중 하나이며 출력이 어느 쪽인지 말해 준다 — ① **버전 쿼리 없는 자산 참조를 발견했다** ② **화면 푸터에 버전 문자열이 손으로 박혀 있다**(스크립트가 갱신할 수 없는 자리라 다음 릴리스에서 조용히 낡는다) | ①은 지목된 파일·참조에 `?v=`를 넣는다. ②는 **푸터에서 버전을 지운다** — 버전의 출처는 `public/version.txt`와 자산 URL의 `?v=` 둘뿐이고 둘 다 이 스크립트가 갱신한다. 고친 뒤 다시 실행 |
+| `2` | 사용법 오류 / 대상 폴더 없음 / 파일을 읽거나 쓸 수 없음 | 메시지대로 인자·경로·권한을 고친다 |
+| `3` | **`--from=` 값이 현재 버전과 달라 아무것도 치환되지 않았다** (`변경 0` · `건너뜀`이 0이 아니다). 오타 하나로 치환이 전혀 안 된 상태다. **파일은 하나도 바뀌지 않았다** | 출력의 `파일에 실제로 들어 있는 값:` 줄을 보고 `--from` 값을 고친다. 또는 **`--from`을 아예 빼고** 실행한다(그러면 발견된 모든 값을 대상으로 한다) |
+
+> **`1`과 `3`이 동시에 성립하면 `1`이 나간다.** 산출물의 결함을 고치는 것이 명령줄을 고치는 것보다
+> 급하기 때문이다. `1`을 닫은 뒤 다시 실행하면 남아 있던 `3`이 드러난다.
+
+종료코드를 셸에서 확인하는 방법:
+
+```bash
+php bump_asset_version.php 1.3.0 --dir=../v1.3.0_20260901
+echo "종료코드=$?"
+```
+
+> **`0`이 아니면 업로드하지 마라.** 배포해도 반영되지 않는 상태다.
+> 스크립트도 종료코드가 0이 아니면 "다음 할 일" 안내를 출력하지 않고 실패 문장을 낸다 —
+> **종료코드만 보는 절차와 출력만 읽는 절차가 같은 결론에 닿게** 만든 것이다.
+
+> **버전 쿼리가 없는 참조에 스크립트가 조용히 붙여 주지는 않는다.** 보고하고 종료코드 1로 실패한다.
+> 조용히 고치면 "왜 빠져 있었는지"가 묻히고 다음 릴리스에서 같은 일이 반복된다.
+> 같은 이유로 푸터에 박힌 버전 문자열도 고쳐 주지 않는다 — 고쳐 주면 손으로 유지해야 하는 자리를
+> 스크립트가 정당화하는 셈이 된다.
+
+#### 스크립트가 건드리지 않는 것
+
+| 대상 | 이유 |
+|---|---|
+| `public/assets/ulogin-client.js`의 `UloginClient.version` | 연동 클라이언트의 **공개 API 버전**이다. 자산 URL의 `?v=`와 완전히 별개다. 현재 값 `'1.0.0'`이 정상 상태다 |
+| `public/version.txt` | 형식이 `{버전}_{YYYYMMDD}`로 달라 자동 추론하지 않는다. `--version-txt=`로 명시할 때만 쓴다. 안 주면 스크립트가 갱신하라고 출력에 경고한다 |
+| `server/**` · `README.md` · `INSTALL.md` · `CHANGELOG.md` · `AI_INTEGRATION_GUIDE.md` | 대상이 아니다. 스크립트는 `public/*.html`과 `examples/*.html`만 연다 |
+| **연동 앱(제3자 HTML)의 `<script src>`** | **앱 소유자만 고칠 수 있다.** 그 HTML은 당신의 설치 폴더에 없다. 스크립트를 돌렸다고 전부 끝난 것이 아니다 — **새 버전을 올릴 때 연동 앱 개발자에게 새 `?v=` 값을 알려야 한다.** 그 앱이 참조하는 `ulogin-client.js`는 `public/` 아래라 `immutable`이 걸리고, `?v=`가 옛 값이거나 아예 없으면 **최대 1년간 옛 클라이언트에 고정된다.** 서버 쪽에서 이미 나간 응답을 철회할 수단은 없다(5-4절의 코드 주석과 `AI_INTEGRATION_GUIDE.md` 14-11절이 같은 내용을 연동 담당 쪽에 적어 두었다) |
+
+> **`?v=`와 `UloginClient.version`을 같은 값으로 맞추려 하지 마라.** 서로 다른 것을 가리킨다.
+> 전자는 브라우저 캐시를 깨기 위한 URL 파라미터이고, 후자는 연동 앱이 클라이언트 라이브러리의
+> API 세대를 판별하는 문자열이다.
+
+### 8-2. 2단계 — 업로드 (덮어쓸 것과 절대 덮어쓰면 안 될 것)
+
+**갱신 사고는 거의 전부 이 단계에서 난다.** 폴더를 통째로 덮어쓰면 설치 시 생성된 파일이 사라진다.
+
+#### 덮어써야 하는 것
+
+| 경로 | 비고 |
+|---|---|
+| `server/api/**` · `server/core/**` | 코드 본체 |
+| `server/config.sample.php` · `server/schema.sql` | 템플릿·DDL. 실제 값은 들어 있지 않다 |
+| `server/.htaccess` · `server/core/.htaccess` · `server/storage/.htaccess` · `server/storage/mail/.htaccess` | 접근 차단 규칙 |
+| `public/**` (HTML 8개 · `assets/` 4개 · `.htaccess` · `version.txt`) | 화면과 자산. **`version.txt`도 반드시 함께 올린다** |
+| `examples/**` (HTML 2개 · `README.md` · **`.htaccess`**) | 데모. 필요 없으면 아예 올리지 않아도 된다. 올린다면 **`.htaccess`를 함께 올려라** — 점(`.`)으로 시작해 FTP 클라이언트에서 숨겨지기 쉽고, 이 파일이 없으면 `callback.html`이 캐시된다([7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)) |
+
+#### 절대 덮어쓰거나 지우면 안 되는 것
+
+| 경로 | 덮어쓰면 무슨 일이 생기는가 |
+|---|---|
+| **`server/config.php`** | 이 파일에는 **DB 비밀번호**와 **`SECRET_ENC_KEY` · `APP_KEY`**가 들어 있다. 사라지면 **모든 API가 500**이 된다([7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)). 더 나쁜 것은 키가 **바뀌는** 경우다 — `SECRET_ENC_KEY`가 달라지면 DB에 암호문으로 저장된 시크릿을 **복호화할 수 없고**, 로그인은 성공하는데 `payload`만 조용히 깨진다. 그 키는 어디에도 백업되어 있지 않다. **복구 방법은 관리자 콘솔에서 시크릿을 전부 다시 등록하는 것뿐이다** |
+| **`server/.install.lock`** | 설치기의 자기 잠금이다. 사라지면 `server/install.php`가 **다시 열린다.** 그 파일은 **인증 없이 누구나 여는 파일**이고, 먼저 여는 사람이 설치자가 되어 DB·암호화 키·최고관리자 계정을 지정할 수 있다 |
+| **`server/storage/.installed`** | 위와 같은 잠금의 두 번째 마커다. 둘 중 하나만 남아도 잠금은 유효하다 |
+| `server/storage/mail/` | `log` 드라이버를 쓰면 **비밀번호 재설정 링크가 그대로 담긴 파일**이 여기 쌓인다. 갱신과 무관하게 정리 대상이다([3-2절](#3-2-log-드라이버를-쓴다면--storagemail-정리)). 새 버전으로 덮어써서 지우는 것 자체는 피해가 없지만, **`.installed`가 같은 폴더 아래 있으므로 `storage/`를 통째로 덮어쓰면 잠금이 풀린다** |
+
+> **`server/install.php`는 새 버전에서도 패키지에 들어 있다. 갱신 시에는 올리지 마라.**
+> 설치는 이미 끝났고 v1.2.0에는 마이그레이션이 없으므로 설치기를 쓸 일이 없다.
+> 실수로 올렸다면 **즉시 삭제하라**([2-9절](#2-9-installphp-삭제-필수)).
+> 위의 잠금 파일 2개가 남아 있으면 설치기는 "이미 설치가 완료된 서버입니다"로 막히지만,
+> **그것은 두 번째 방어선이고 첫 번째 방어선은 파일을 올리지 않는 것이다.**
+
+#### FTP 클라이언트에서 실수를 막는 방법
+
+가장 안전한 순서는 **덮어쓰지 않을 파일을 업로드 대상에서 빼는 것**이다.
+
+1. 로컬 버전 폴더에서 `server/install.php`를 **먼저 삭제한다**(버전 폴더 사본에서. 원본은 남긴다)
+2. FTP 업로드 대상에서 `server/config.php`를 제외한다 — 로컬 버전 폴더에는 이 파일이 **애초에 없다.**
+   패키지에는 `config.sample.php`만 들어 있으므로, "로컬에 없는 파일은 서버에서 지운다" 류의
+   **동기화(mirror·sync) 모드를 쓰지 마라.** 그 모드는 `config.php`와 잠금 파일 2개를 지운다
+3. 업로드 방식은 **"있으면 덮어쓰기"**(overwrite)로 두고, **"대상에만 있는 파일 삭제"는 끄라**
+
+업로드 직후 이 3개가 서버에 그대로 있는지 확인한다. 하나라도 없으면 다음 단계로 가지 마라.
+
+```
+server/config.php
+server/.install.lock
+server/storage/.installed
+```
+
+전체 파일 상태는 [부록 점검표](#부록--설치-후-파일-상태-점검표)와 대조한다.
+
+### 8-3. 3단계 — 업로드가 실제로 됐는지 확인 (`version.txt`)
+
+`public/version.txt`에는 버전 문자열 한 줄만 들어 있다. **이 파일의 존재 이유가 이 확인이다.**
+
+```bash
+curl -sS https://your-host.com/ulogin/public/version.txt
+```
+
+`{설치루트}`가 도메인 루트라면:
+
+```bash
+curl -sS https://your-host.com/public/version.txt
+```
+
+기대 출력 — 방금 올린 버전 문자열 한 줄:
+
+```
+1.2.0_20260828
+```
+
+**올린 값과 다른 값이 보이면 그 자리에서 멈추고 원인을 가려라.** 아래 넷 중 하나다.
+
+**옛 버전 문자열이 보이는 경우는 원인이 두 갈래이고, 조치가 정반대다.** 가르는 방법은
+**4단계를 먼저 보는 것**이다 — [8-4절](#8-4-4단계--자산이-새-url로-요청되는지-확인)에서
+자산 URL의 `?v=`가 새 값인지 확인하고 아래 표로 돌아온다.
+
+| 보이는 것 | 원인 | 조치 |
+|---|---|---|
+| **옛 버전 문자열** + 자산 `?v=`는 **새 값** | **1단계에서 `--version-txt=`를 빼먹었다.** 스크립트가 자산 참조는 갱신했지만 `public/version.txt`는 손대지 않았다(옵션을 주지 않으면 갱신하지 않는다 — 8-1절 `#### 스크립트가 건드리지 않는 것`). **업로드는 성공했다** | **재업로드하지 마라.** `public/version.txt` 한 파일만 새 값으로 고쳐 올린다. 1단계를 다시 돌릴 때는 `--version-txt=` 를 함께 준다. <br>**재업로드가 위험한 이유:** 8-2절 `#### 절대 덮어쓰거나 지우면 안 되는 것`의 3파일(`server/config.php` · `server/.install.lock` · `server/storage/.installed`)을 함께 덮어쓰기 쉽다 |
+| **옛 버전 문자열** + 자산 `?v=`도 **옛 값** | 업로드가 실패했거나, **다른 경로에 올렸다** | FTP 접속 후 실제 디렉토리를 확인하라. 설치 루트 판정은 [1-1절](#1-1-설치-루트란-무엇인가-여기를-틀리면-전부-404다) |
+| `404` | **`public/version.txt` 파일 자체를 올리지 않았다.** 또는 설치 루트를 잘못 보고 있다 — [1-1절](#1-1-설치-루트란-무엇인가-여기를-틀리면-전부-404다) | 파일을 올린다. `--version-txt=` 누락은 404가 아니라 위 첫 행의 증상이다 |
+| 버전 문자열이 아닌 HTML | 호스팅이 `.txt` 요청을 다른 곳으로 보내고 있다 | 브라우저로 같은 주소를 열어 무엇이 오는지 본다 |
+
+> **브라우저 주소창으로 확인해도 되지만 `curl`을 먼저 쓰라.** `curl`은 캐시를 쓰지 않는다.
+> 브라우저로 볼 때는 `.htaccess`의 `no-store`가 걸리지 않는 환경이면 옛 값이 보일 수 있으므로
+> **시크릿 창(새 프로필)** 에서 열어야 한다. 확인 수단이 캐시되면 그 수단이 거짓말을 시작한다.
+
+### 8-4. 4단계 — 자산이 새 URL로 요청되는지 확인
+
+`version.txt`가 새 값이면 파일은 올라갔다. 다음은 **브라우저가 새 HTML을 보고 있는지**다.
+
+1. `{설치루트}/public/login.html`을 연다
+2. `F12` → **Network** 탭 → `Ctrl+R`(일반 새로고침. 강제 새로고침이 아니다)
+3. `style.css` · `api.js` · `ui.js` 요청의 **URL 끝을 본다**
+
+기대하는 모습:
+
+```
+style.css?v=1.2.0
+api.js?v=1.2.0
+ui.js?v=1.2.0
+```
+
+| 보이는 것 | 의미 | 조치 |
+|---|---|---|
+| 새 `?v=` 값 | 정상. 브라우저가 새 HTML을 받았다 | 5단계로 |
+| **옛 `?v=` 값** | 두 갈래다. **일반 새로고침으로 이 값이 새 값으로 바뀌면** — 브라우저가 캐시된 옛 HTML을 보고 있었던 것이다. `.htaccess`의 HTML `no-store`가 걸리지 않는 환경이다. **새로고침해도 옛 값 그대로면** — 서버의 HTML 자체가 옛 것이다(1단계를 안 돌렸거나 HTML을 안 올렸다) | 전자: [7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)의 캐시 헤더 스니펫을 웹서버 설정에 넣어라(그 절의 `##### 이 설정이 없을 때 실제로 깨지는 것은 …` 소절이 이 갈래를 다룬다). 그때까지는 시크릿 창으로 확인한다. <br>후자: 1단계를 다시 돌리고([8-1절](#8-1-1단계--버전-문자열-일괄-치환)) `public/*.html` 8개를 다시 올린다 |
+| `?v=`가 아예 없다 | 1단계에서 그 참조가 빠졌다(종료코드 1이었을 것이다) | 1단계를 다시 돌린다 |
+| `404` | 자산을 올리지 않았거나 경로가 틀렸다 | `public/assets/` 4개 파일을 확인한다 |
+
+> **응답이 `200`인지 `(disk cache)`인지는 판단 근거가 아니다.**
+> 확인할 것은 **요청 URL의 `?v=` 값**이다. 새 값으로 한 번 받은 뒤에는 캐시에서 오는 것이 정상이고,
+> 오히려 그것이 이 방식의 목적이다(같은 버전 안에서는 재요청을 하지 않아 화면이 빠르다).
+
+### 8-5. 5단계 — API가 새 PHP 코드로 도는지 확인
+
+자산과 HTML이 새것이어도 **PHP는 별개다.** 서버가 PHP 코드 캐시(opcache)를 쓰고 있으면
+파일을 새로 올려도 **옛 코드가 계속 실행된다.** 그것을 한 줄로 판별할 수 있다.
+
+```bash
+curl -sS -D - -o /dev/null "https://your-host.com/ulogin/server/api/me/index.php" | grep -i "cache-control\|pragma\|expires"
+```
+
+이 요청은 **로그인 없이 보내도 된다.** 인증이 없으므로 `401 AUTH_REQUIRED`가 돌아오지만,
+확인 대상은 본문이 아니라 헤더다(`-o /dev/null`이 본문을 버리고 `-D -`가 헤더만 출력한다).
+
+기대 출력 — **정확히 3줄**:
+
+```
+Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+Pragma: no-cache
+Expires: 0
+```
+
+| 보이는 것 | 판정 |
+|---|---|
+| 위 3줄 | **v1.2.0 코드가 돌고 있다.** 갱신 완료 |
+| `Cache-Control: no-store` **단독** (`Pragma`·`Expires` 없음) | **v1.1.0 이하의 PHP 코드가 돌고 있다.** 파일은 올라갔는데 PHP가 옛 opcode를 쓰는 것이다 → [8-6절](#8-6-6단계--반영이-안-될-때-opcache-진단) |
+| `Cache-Control`이 아예 없다 | 응답이 이 서버의 JSON 경로를 지나지 않았다. 404(경로 오류) 또는 웹서버 오류 페이지다. `-o /dev/null`을 떼고 본문을 확인하라 |
+| `HTTP/1.1 301` | `FORCE_HTTPS`가 켜져 있고 `http://`로 요청했다. `https://`로 다시 보낸다 |
+
+> **이 3줄이 opcache 판별 수단인 이유:** v1.2.0에서 `server/core/response.php`의 캐시 헤더가
+> `no-store` 한 줄에서 위 3줄로 늘었다. 그 파일은 **모든 JSON 응답이 지나는 단일 지점**이므로,
+> 응답에 `Pragma`가 없다는 것은 곧 그 파일의 옛 버전이 실행되고 있다는 뜻이다.
+> 로그인도, DB도 필요 없는 확인이다.
+
+`curl -I`(HEAD)로도 같은 3줄을 볼 수 있다. 다만 이 엔드포인트는 **`GET`과 `PUT`만 받으므로**
+HEAD 요청에는 `405 METHOD_NOT_ALLOWED`가 돌아온다 — **캐시 헤더 3줄은 같은 함수를 지나므로
+판별에는 문제가 없다**(2026-08-28 실측: 배포물의 `server/` 를 그대로 PHP 빌트인 서버에 올려
+`curl -I` → `HTTP/1.1 405` + **`Allow: GET, PUT`** + 위 3줄).
+
+> **`Allow: GET, PUT`이 정상이다.** 허용 메서드는 `server/api/me/index.php`의
+> `only_method('GET', 'PUT')` 이 그대로 `Allow` 헤더로 나가는 것이고, API 계약서도 `GET`/`PUT`
+> 두 개다. 이 값이 `Allow: GET` 하나로 보이면 오히려 그쪽이 이상하다.
+> 허용 메서드는 다음 명령으로 다시 확인할 수 있다 —
+> `grep -n "only_method" server/api/me/index.php`.
+
+```bash
+curl -sSI "https://your-host.com/ulogin/server/api/me/index.php" | grep -i "cache-control\|pragma\|expires"
+```
+
+### 8-6. 6단계 — 반영이 안 될 때: opcache 진단
+
+**의심 신호는 비대칭이다 — 자산·HTML은 바뀌었는데 API 동작만 그대로다.**
+opcache는 `.php`만 캐시한다. `.html` · `.css` · `.js` · `.txt`는 영향을 받지 않는다.
+그래서 "화면은 새것인데 서버 동작만 옛것"이라는 조합이 나오면 거의 이것이다.
+
+| 증상 | opcache인가 |
+|---|---|
+| `version.txt`는 새 값, 자산 `?v=`도 새 값, **그런데 API 동작·응답이 옛 버전** | **그렇다.** 8-5절의 `Pragma` 유무로 확정하라 |
+| `version.txt`가 옛 값 | 아니다. **업로드가 안 된 것이다**(3단계) |
+| 자산 `?v=`가 옛 값 | 아니다. **브라우저가 옛 HTML을 캐시했다**(4단계) |
+| 전 API가 500 | 아니다. `config.php` 또는 설정 문제다([7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)) |
+
+#### (1) 확정 — 8-5절의 한 줄
+
+`Cache-Control`이 `no-store` 단독으로 보이면 옛 PHP 코드다. 이것이 가장 빠른 확정이다.
+
+#### (2) 설정값 확인 — 임시 진단 파일
+
+호스팅 제어판에 `phpinfo`나 "PHP 정보" 메뉴가 있으면 거기서 `opcache.validate_timestamps`와
+`opcache.revalidate_freq`를 찾는다. 메뉴가 없으면 아래 파일을 만들어 올린다.
+
+> **파일명을 새로 만들어라. 기존 파일을 고쳐서 쓰지 마라.**
+> 옛 opcode가 도는 상황에서 **이미 캐시된 파일을 고치면 그 파일 자체가 옛 코드로 실행된다** —
+> 진단 도구가 진단하려는 문제에 걸리는 것이다. 캐시에 없는 **새 이름**은 항상 새 코드로 돈다.
+> 아래 예시의 `opcheck_v120.php`도 갱신마다 이름을 바꿔 쓰라(`opcheck_v130.php` …).
+
+`server/opcheck_v120.php`로 올린다.
+
+```php
+<?php
+// ulogin 임시 진단 파일 — 확인이 끝나면 반드시 삭제한다.
+header('Content-Type: text/plain; charset=utf-8');
+header('Cache-Control: no-store');
+echo 'PHP            = ' . PHP_VERSION . "\n";
+if (!function_exists('opcache_get_configuration')) {
+    echo "opcache        = 확장이 없다. PHP 코드 캐시는 이 문제의 원인이 아니다.\n";
+    exit;
+}
+$conf = @opcache_get_configuration();
+if ($conf === false) {
+    echo "opcache        = 설정을 읽을 수 없다 (opcache.restrict_api 로 차단됨). 호스팅사에 문의하라.\n";
+    exit;
+}
+$d = $conf['directives'];
+echo 'opcache.enable = ' . var_export($d['opcache.enable'], true) . "\n";
+echo 'validate_timestamps = ' . var_export($d['opcache.validate_timestamps'], true) . "\n";
+echo 'revalidate_freq     = ' . var_export($d['opcache.revalidate_freq'], true) . "  (초)\n";
+$st = @opcache_get_status(false);
+if (is_array($st) && isset($st['opcache_statistics']['num_cached_scripts'])) {
+    echo 'cached_scripts      = ' . $st['opcache_statistics']['num_cached_scripts'] . "\n";
+}
+echo "\n";
+if (empty($d['opcache.enable'])) {
+    echo "판정: opcache 가 꺼져 있다. PHP 반영 지연의 원인이 아니다.\n";
+} elseif (empty($d['opcache.validate_timestamps'])) {
+    echo "판정: validate_timestamps=0 이다. 파일을 새로 올려도 PHP 를 재시작할 때까지\n";
+    echo "      옛 코드가 계속 실행된다. 이것이 원인이다.\n";
+} else {
+    echo '판정: validate_timestamps=1 이다. 파일 변경은 최대 ' . (int) $d['opcache.revalidate_freq'] . "초 뒤 반영된다.\n";
+    echo "      그 시간을 기다린 뒤 다시 확인하라. 계속 옛 동작이면 업로드 자체가 안 된 것이다.\n";
+}
+```
+
+브라우저로 `{설치루트}/server/opcheck_v120.php`를 열면 텍스트 몇 줄이 나온다.
+**확인이 끝나면 이 파일을 삭제하라.** PHP 버전과 캐시 상태를 외부에 알릴 이유가 없다.
+
+> 이 파일은 `server/core/`가 아니라 `server/` 아래에 둔다. `server/.htaccess`가
+> `.php` 실행을 막지 않으므로 그대로 동작한다. 다만 **`server/.htaccess`가 확장자
+> 차단 목록으로 막는 이름을 피하라** — 위 예시처럼 `.php`이고 이름이 `config`·`schema`·
+> `install`로 시작하지 않으면 된다.
+
+#### (3) 해결 — 위에서부터 순서대로
+
+| # | 방법 | 어떤 경우에 듣는가 |
+|---|---|---|
+| 1 | **`revalidate_freq`초 기다린다** | `validate_timestamps=1`. 호스팅이 이 값을 60·300으로 크게 잡아 둔 경우가 흔하다. 기다리면 스스로 반영된다 |
+| 2 | **파일의 수정 시각을 갱신한다**(`touch`) | `validate_timestamps=1`인데 FTP가 mtime을 옛 값으로 보존해 올린 경우. SSH가 있으면 `find {설치루트}/server -name '*.php' -exec touch {} +`. SSH가 없으면 FTP 클라이언트에서 "타임스탬프 보존" 옵션을 끄고 다시 올린다 |
+| 3 | **호스팅 제어판에서 PHP를 재시작한다** | `validate_timestamps=0`. 메뉴 이름은 제공사마다 다르다 — **"PHP 재시작" · "PHP 버전 변경" · "opcache 비우기" · "캐시 비우기" · "Restart PHP" · "Flush OPcache"**. PHP 버전을 다른 값으로 바꿨다 되돌리는 것도 사실상 재시작이다 |
+| 4 | **PHP-FPM을 재시작한다** | 서버를 직접 만질 수 있을 때. `sudo systemctl restart php7.2-fpm` (버전에 맞춰 이름을 바꾼다) |
+| 5 | **파일 이름을 바꿔 확인만 한다** | 원인 확정용. 새 이름은 캐시에 없으므로 항상 새 코드다. **운영 해결책은 아니다** — 엔드포인트 URL이 바뀌면 화면과 연동 앱이 전부 깨진다 |
+| 6 | **호스팅사에 문의한다** | 1~4가 안 되거나 제어판에서 메뉴를 못 찾을 때. 아래 문안을 그대로 쓰라 |
+
+> **`opcache_reset()`을 호출하는 스크립트는 권하지 않는다.** PHP-FPM에서는 요청을 처리한
+> 그 워커 풀에만 적용되어 다른 풀은 옛 코드를 계속 돌릴 수 있고, 공용 호스팅은
+> `opcache.restrict_api`로 이 함수를 막아 두는 경우가 많다. 위 3번(제어판 재시작)이 확실하다.
+
+#### (4) 호스팅사에 보낼 문안 (그대로 복사해 쓰라)
+
+제어판에서 해당 메뉴를 찾지 못했다면 이 문안을 쓴다. 무엇을 물어야 하는지 모르면
+"반영이 안 돼요"만 보내게 되고, 그러면 답이 돌아오지 않는다.
+
+```
+안녕하세요. {도메인} 계정 관련 문의입니다.
+
+PHP 파일을 새로 업로드했는데도 이전 버전의 코드가 계속 실행되고 있습니다.
+정적 파일(.html/.css/.js)은 정상적으로 갱신되었고 .php 파일만 반영되지 않아
+PHP opcode 캐시(opcache) 문제로 보입니다.
+
+아래 3가지를 확인 부탁드립니다.
+
+1) 이 계정에 적용된 opcache.validate_timestamps 와 opcache.revalidate_freq 값을
+   알려주실 수 있을까요.
+2) 이 계정의 PHP opcache를 비워 주시거나 PHP(PHP-FPM)를 재시작해 주실 수 있을까요.
+3) opcache.validate_timestamps 가 0으로 설정되어 있다면, 파일을 갱신해도 반영되지
+   않으므로 1로 변경이 가능한지, 또는 파일 업로드 후 캐시를 비우는 방법이 제어판에
+   있는지 알려주시면 감사합니다.
+
+감사합니다.
+```
+
+### 8-7. 7단계 — `Ctrl+Shift+R`는 해결책이 아니다
+
+강제 새로고침(`Ctrl+Shift+R` / macOS `Cmd+Shift+R`)은 **내 브라우저의 캐시만 무시한다.**
+
+- **방문자에게 요구할 수 없다.** 로그인 화면을 여는 사람 전원에게 "강제 새로고침하세요"를
+  전달할 방법이 없다. 그들은 화면이 깨진 채로 보고 떠난다
+- **원인을 덮는다.** 강제 새로고침으로 정상 동작하면 "고쳤다"고 착각하게 되지만,
+  실제로는 4단계(옛 HTML) 또는 6단계(opcache)의 문제가 그대로 남아 있다
+- **PHP에는 듣지 않는다.** opcache는 서버 쪽 캐시다. 브라우저에서 무엇을 눌러도 바뀌지 않는다
+
+**쓸 곳은 하나다 — 진단이다.** 강제 새로고침으로는 정상인데 일반 새로고침으로는 옛 화면이면
+HTML이 캐시되고 있다는 확정 증거이고, 조치는
+[7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)의 캐시 헤더 스니펫이다.
+
+### 8-8. 갱신 후 점검 체크리스트
+
+| # | 확인 | 어떻게 |
+|---|---|---|
+| 1 | `version.txt`가 새 값 | `curl -sS {설치루트}/public/version.txt` |
+| 2 | 자산 요청 URL에 새 `?v=` | F12 → Network → `login.html` 새로고침 |
+| 3 | API 응답에 `Pragma: no-cache` | 8-5절의 `curl` 한 줄 |
+| 4 | `server/config.php`가 그대로 있다 | FTP로 존재 확인. 브라우저로 열어 **내용이 보이지 않는지**도 함께([3절](#3-설치-후-보안-확인-4항목)) |
+| 5 | `server/.install.lock` · `server/storage/.installed`가 그대로 있다 | FTP로 존재 확인 |
+| 6 | `server/install.php`가 **없다** | 브라우저로 `{설치루트}/server/install.php` → `404` |
+| 7 | 임시 진단 파일을 삭제했다 | `{설치루트}/server/opcheck_*.php` → `404` |
+| 8 | 로그인 1회가 정상 | 로그인 → `payload` 수신 → 로그아웃까지 한 번 종주 |
+
+---
+
+## 부록 — 설치 후 파일 상태 점검표
+
+| 경로 | 있어야 하나 | 권한 | 웹 접근 |
+|---|---|---|---|
+| `server/config.php` | **예** (설치기 생성) | `0600` | **차단** |
+| `server/config.sample.php` | 예 (템플릿) | — | **차단** |
+| `server/install.php` | **아니오 — 삭제** | — | (없음) |
+| `server/.install.lock` | 예 | `0600` | **차단** |
+| `server/schema.sql` | 예 | — | **차단** |
+| `server/.htaccess` | 예 | — | **차단** |
+| `server/core/*.php` | 예 (13개) | — | **차단** (코드 가드 + `.htaccess`) |
+| `server/core/.htaccess` | 예 | — | **차단** |
+| `server/storage/` | 예 | `0700` | **차단** |
+| `server/storage/.installed` | 예 | `0600` | **차단** |
+| `server/storage/mail/` | 예 | `0700` | **차단** |
+| `server/api/**/*.php` | 예 (32개) | — | **공개** (정상 경로) |
+| `public/*.html` | 예 (8개) | — | **공개** |
+| `public/assets/*` | 예 (4개) | — | **공개** |
+| `public/version.txt` | 예 | — | **공개** (버전 문자열 한 줄. [8-3절](#8-3-3단계--업로드가-실제로-됐는지-확인-versiontxt)의 배포 반영 확인 수단) |
+| `public/.htaccess` | 예 | — | **차단** (자기 자신). 화면에 보안 헤더(CSP·`X-Frame-Options`·`Referrer-Policy`)와 **캐시 정책 3종**을 붙인다 |
+| `examples/callback.html` · `examples/local-ai-app.html` · `examples/README.md` | 예 | — | 공개 (데모를 쓰지 않으면 삭제해도 된다) |
+| `examples/.htaccess` | 예 | — | **차단** (자기 자신). 데모 HTML에 `Cache-Control: no-store`를 붙인다. **`callback.html`이 복귀 주소 화이트리스트 기본값이라 이 파일이 필요하다** ([7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)). **점(`.`)으로 시작해 FTP 클라이언트에서 숨김 처리되기 쉽다 — 숨김 파일 표시를 켜고 올라갔는지 확인하라** |
+| `server/opcheck_*.php` | **아니오 — 삭제** | — | (없음) [8-6절](#8-6-6단계--반영이-안-될-때-opcache-진단)의 임시 진단 파일. 남겨 두지 않는다 |
+
+---
+
+## 관련 문서
+
+| 문서 | 내용 |
+|---|---|
+| `README.md` | 아키텍처 개요 · API 요약 · 권한 모델 · 운영 · **알려진 제한** · 미검증 항목 |
+| `AI_INTEGRATION_GUIDE.md` | 다른 AI 에이전트가 이 서버에 연동할 때 읽는 자립형 단일 문서 |
+| `examples/README.md` | 로컬 앱 연동 3분 가이드 |
+| `CHANGELOG.md` | 버전 변경 이력 |
+
+---
+
+## 변경 이력
+
+| 날짜 | 변경 내용 | 사유 |
+|---|---|---|
+| 2026-08-28 (검증 후속) | **5-4절 복붙 코드 2곳의 `<script src>`에 `?v=1.2.0` 추가** + 지우면 안 되는 이유 주석. 8-1절 `#### 스크립트가 건드리지 않는 것` 표에 **연동 앱(제3자 HTML)** 행 신설 | **보안 감사 V12-M-1.** 그 2곳만 `?v=`가 없었고(다른 4개 문서는 올바른 형태였다), v1.2.0이 새로 건 `immutable`이 그 URL에 걸려 **연동 앱이 최대 1년 옛 클라이언트에 고정되고 서버 쪽 철회 수단이 없다.** 이월 M-7(PKCE 난수 폴백)이 바로 그 파일에 있어 고쳐도 도달하지 않는다 |
+| 2026-08-28 (검증 후속) | **7-9절에 `##### 이 설정이 없을 때 실제로 깨지는 것은 "링크·주소창 재진입"뿐이다` 신설.** 8-4절 진단 표의 `옛 ?v= 값` 행도 두 갈래로 분리 | **리더 판정 D-95.** QA가 `mod_headers` 없는 환경을 별도로 만들어 확인했다 — **그 환경에서도 일반 새로고침으로는 반영된다**(최상위 문서를 항상 재검증하기 때문). 이 구분이 문서에 없어서 사용자가 "새로고침해도 안 된다"와 "링크로 들어가면 안 된다"를 구분해 신고할 수 없었다 |
+| 2026-08-28 (검증 후속) | **7-9절 스니펫을 `examples/`까지 확장** — nginx `location ^~ {설치경로}/examples/` · Apache `<Directory ".../examples">` · 호스팅사 문안 1행 · `curl` 확인 4번째 줄. 규칙 표에 `examples/` 의 `*.html` 행 추가 + **보안 헤더 5종을 넣지 않는 이유** | **리더 판정 D-96(3) / QA Q12-1.** 스니펫이 `public/`만 덮어 `.htaccess`가 무시되는 환경의 `examples/`에는 대책이 0이었다. `examples/callback.html`은 복귀 주소 화이트리스트 **기본값**이라 SSO 실참여자다. 정책은 신설된 `{설치루트}/examples/.htaccess`와 같게 맞췄다 |
+| 2026-08-28 (검증 후속) | **8-1절 종료코드 표를 3행 → 4행으로.** `3`(= `--from` 불일치로 치환 0곳) 신설, `1`의 두 원인(버전 쿼리 누락 / 푸터에 박힌 버전 문자열) 명시, `1`과 `3`의 우선순위 | **QA Q12-3.** `--from` 오타로 아무것도 치환되지 않았는데 종료코드가 `0`이었고, 문서가 `$?`만 확인하라고 못박아 **절차대로 하면 조용히 통과했다.** 스크립트가 종료코드 `3`을 내도록 수정됐다(2026-08-28 실측 재확인) |
+| 2026-08-28 (검증 후속) | **8-3절 진단 표를 원인별로 분리.** `옛 버전 문자열`을 자산 `?v=`가 새 값인 경우(= `--version-txt=` 누락, **업로드는 성공**)와 옛 값인 경우(= 업로드 실패)로 갈랐다. `404` 행에서 `--version-txt=` 언급 제거, "셋 중 하나" → "넷 중 하나" | **보안 감사 V12-L-2.** 가장 흔한 원인이 `404` 행에 들어가 있어 **정상 배포를 "업로드 실패"로 오진단**시켰고, 그 오진단이 재업로드로 이어지면 8-2절이 덮어쓰지 말라고 한 3파일을 함께 덮어쓴다 |
+| 2026-08-28 (검증 후속) | **8-5절 정정** — `/api/me`는 `GET` 전용이 아니라 **`GET`·`PUT`** 이고, `curl -I`의 실제 405 응답은 **`Allow: GET, PUT`** 이다 | **QA Q12-2.** 직전 문서 라운드가 **자체 하네스(`only_method('GET')`)로 측정**해 틀린 실측값을 실었다. 이번에는 **배포물의 `server/`를 그대로 올려 실제 파일로 측정했다**(2026-08-28). 코드는 `server/api/me/index.php`의 `only_method('GET', 'PUT')`이고 API 계약서도 `GET`/`PUT` 두 개다 |
+| 2026-08-28 | **`## 8. 새 버전으로 갱신하기` 신설 (7단계 + 갱신 후 점검 체크리스트).** 버전 문자열 일괄 치환(`_workspace/bump_asset_version.php`, 전후 개수·종료코드 확인) → 업로드(**덮어쓰면 안 되는 3종**: `server/config.php` · `server/.install.lock` · `server/storage/.installed`) → `version.txt` 반영 확인 → Network 탭 `?v=` 확인 → `curl`로 API 캐시 헤더 확인 → opcache 진단 → `Ctrl+Shift+R`가 해결책이 아닌 이유 | **리더 판정 D-88.** 이 문서에는 설치 절차만 있고 **갱신 절차가 없었다.** 그래서 "새 버전을 올렸는데 반영이 안 된다"에서 무엇을 확인해야 하는지가 어디에도 없었다. 이번 라운드의 근본 원인은 코드가 아니라 이 공백이었다 |
+| 2026-08-28 | 목차에 8절 추가 + 서두에 "갱신이면 8절로 바로 가라" 안내 | 위와 동일 |
+| 2026-08-28 | **7-9절에 `#### 캐시 헤더 3종` 신설** — HTML `no-store` / 자산 `public, max-age=31536000, immutable` / `version.txt` `no-store`. nginx 합본 스니펫(`include`로 보안 헤더 5종 재삽입) + Apache `<Directory>` 블록 + 호스팅사 요청 문안 + `curl` 확인 3줄. **`add_header`는 상속되지 않는다**는 함정을 명시 | **리더 판정 D-85(4).** `.htaccess`가 무시되면 HTML이 캐시되어 새 자산 URL(`?v=`)을 가리키는 새 HTML조차 도달하지 않는다 — **`?v=` 방식이 무력해지는 유일한 경로이고 프론트 코드로는 닫을 수 없다.** 값의 정본은 `public/.htaccess`. *(같은 날 검증 후속에서 이 서술의 범위가 정정됐다 — 깨지는 것은 링크·주소창 재진입뿐이고 일반 새로고침은 동작한다. 위 D-95 행)* |
+| 2026-08-28 | 8-6절에 **opcache 진단** — 의심 신호(자산·HTML은 바뀌었는데 API 동작만 그대로), `curl` 판별(`Cache-Control`이 `no-store` 단독이면 옛 PHP 코드), 임시 진단 파일(**새 파일명으로 올려야 하는 이유**), 해결 6가지, 호스팅사 문의 문안 | **리더 판정 D-86.** 코드로 해결하지 않고 문서로 진단하게 한다. opcache는 `.php`만 캐시하므로 증상이 비대칭으로 나타난다 |
+| 2026-08-28 | 문서 제목과 업로드·데모 경로 예시를 **`v1.2.0_20260828`** 으로 갱신 | 버전 폴더 변경 |
+| 2026-08-28 | 부록 점검표에 `public/version.txt` · `server/opcheck_*.php` 2행 추가, `public/.htaccess` 행에 캐시 정책 3종 명기 | 신규 파일과 임시 진단 파일이 점검표에 없었다 |
+| 2026-08-26 | 문서 제목과 업로드 경로 예시를 **`v1.1.0_20260826`** 으로 갱신 (3곳) | 버전 폴더 변경 |
+| 2026-08-26 | 0-1절 PHP 요구 버전 **7.4 → 7.2**. 버전 밴드 표(7.1 이하 / 7.2 / 7.3 / 7.4+)와 7.2·7.3 보안 지원 종료 블록 추가 | 리더 판정 D-57 / D-60 / D-61 |
+| 2026-08-26 | 0-1절 `phpcheck.php` 스니펫에 7.2 게이트·EOL 판정·`random_bytes()` 줄 추가 | 위와 동일 |
+| 2026-08-26 | 2-1절 정보성(권고) 항목을 **6 → 7행** 표로 교체. 1번 행이 `PHP 보안 지원 상태` | 설치기 화면 변경 (`install.php:843-858`) |
+| 2026-08-26 | **3절에 항목 5 신설 — [3-4절] 로그인 응답 `Set-Cookie` 속성 육안 확인 절차** (F12 → Network → `login.php` → Response Headers) | `12a_fix72_core_report.md` 권고. 7.2에서 조용히 깨질 수 있었던 유일한 지점 |
+| 2026-08-26 | PHP 7.2에서도 `HttpOnly`·`Secure`·`SameSite`가 정상 적용된다는 사실과 `send_cookie()` 분기 구조를 3-4절에 기재 | 리더 판정 D-59 |
+| 2026-08-26 | 트러블슈팅 **7-19** 신설 — "PHP 버전 실패"는 **7.1 이하에서만** 발생하고, 7.2·7.3은 주황색 "주의"지만 **설치는 진행된다** | `12b_fix72_install_report.md` §8-6. 주의를 실패로 오인하는 것을 막는다 |
+| 2026-08-26 | 트러블슈팅 **7-20** 신설 — 쿠키 속성이 안 보일 때 확인 순서 | 위와 동일 |
+| 2026-08-26 | 부록 점검표: `server/core/*.php` **12 → 13개**, `public/.htaccess` 행 추가 | 실제 파일 수와 불일치했다 |
+| 2026-08-26 | 메일 드라이버 기본값 문구에서 버전 표기 제거 (`v1.0.0 기본값` → `기본값. v1.0.0부터 변경 없다`), `payload_fields` 미사용 서술을 v1.1.0 기준으로 | 현재 버전을 가리키는 표기 정리 |
+| 2026-08-26 | **3-3절 전면 개편 — `TRUST_PROXY`를 `TRUSTED_PROXIES`와 짝으로 다시 썼다.** 두 줄을 함께 바꾸는 코드 블록 + 조합 3가지 동작 표 + "왜 500인가" + 오류 로그 검색어. 7-8절에도 같은 경고 블록 추가 | **`TRUST_PROXY=true` 단독 안내를 그대로 따르면 전 요청이 500이 된다.** `core/bootstrap.php`가 `TRUST_PROXY=true` + `TRUSTED_PROXIES=[]`를 설정 오류로 보고 fail-closed 500을 낸다 (리더 판정 D-67) |
+| 2026-08-26 | **트러블슈팅 7-21 신설** — "설치는 정상이었는데 모든 API가 500이다". 오류 로그 문장으로 원인 3개(`TRUST_PROXY` 짝 불일치 / `config.php` 부재 / `BASE_URL` 미설정)를 구분하는 표 | 위와 동일. 로그 검색어(`TRUST_PROXY is on but TRUSTED_PROXIES is empty`)가 없으면 운영자가 500만 보고 원인을 찾을 수 없다 |
+| 2026-08-26 | 2-5절 비밀번호 규칙에 **200자 상한**과 **NUL 바이트 차단**을 명기 + 이유 블록(bcrypt가 첫 NUL에서 절단되어 정책을 통과한 비밀번호가 앞 몇 글자로 저장된다) | 보안 감사 **V11-L-5** / 리더 판정 D-66 — `validate_password()`가 NUL을 `VALIDATION_FAILED`로 거부하도록 바뀌었다 |
+| 2026-08-26 | 2-8절에 **완료 화면의 번호 없는 안내 2건** 표 신설 — PHP EOL 주의 1행(`PHP_VERSION_ID < 70400`일 때만) / "다음 단계"의 프록시 짝 안내 | 감사 §C-4 조건 1 · 리더 판정 **D-69(a)**. 설치기를 삭제하면 EOL 경고를 다시 볼 수 없다 |
+| 2026-08-26 | 2-8절 2번 항목에 **"설치기 11개 / 콘솔 12개는 정상"** 각주 추가 (`auth_code_ttl`은 시드하지 않고 `AUTH_CODE_TTL` 폴백을 쓴다) | `README.md`가 "전역 설정 12개"라고 적어 두 숫자가 모순처럼 보였다. 다음 작업자가 한쪽을 잘못 "고치는" 것을 막는다 |
+| 2026-08-26 | 7-9절 인용 블록: `core/*.php` 가드 **"나머지 11개" → "정의 1 + 검사 12 = 13"** + 다시 세는 `grep` 3줄 | 실측은 12개였다(`bootstrap.php`가 정의, 나머지 12개가 404 가드). 리더 판정 **D-71** — `README.md`와 **동시 수정** |
+| 2026-08-26 | **7-7절 전면 개편 — 증상이 "조용한 실패"에서 "명시적 500"으로 이동했다.** 제목에 `/ 로그인만 500이다` 추가, 로그 확정 증거(`COOKIE_SECURE is on but the request is not HTTPS`), 두 줄을 함께 바꾸는 이유, **실효 `secure` 값 설명**(`COOKIE_SECURE=false`인데도 `COOKIE_SAMESITE='None'` 때문에 500이 나는 경우), 영향 범위(쿠키를 내보내는 요청만 500 — 경계는 인증 방식이 아니라 `Set-Cookie` 발행 여부다) | 리더 판정 **D-75**. v1.0.0에서는 로그인이 200인데 세션이 안 붙고 서버 로그에 아무것도 남지 않았다. v1.1.0은 `send_cookie()`가 그 자리에서 500으로 멈춘다 (`_workspace/17a_fix_cookie_secure_report.md`) |
+| 2026-08-26 | **7-21절 표에 2행 추가 + 서두 개편.** `COOKIE_SECURE is on but the request is not HTTPS`(D-75) / `invalid "path" cookie option rejected`(D-65) 행 신설, **`범위` 열 추가**(전 요청 / 쿠키 발급 요청만), `invalid COOKIE_SAMESITE`는 500이 아니라 경고라는 인용 블록, `COOKIE_SAMESITE='None'` + 평문이 이 표의 어느 행으로 나타나는지 명시 | 위와 동일. **500 원인을 한 곳에 모아 로그 문장으로 구분**한다 — 새 절을 만들면 원인이 흩어진다 (리더 지시) |
+| 2026-08-26 | 3-4절 서두에 **평문 HTTP 운영 시 선행 확인 블록** 추가 (`COOKIE_SECURE=false` + `COOKIE_SAMESITE='Lax'`가 아니면 이 절차의 로그인 요청 자체가 500이다). 686행 표의 "로그인이 유지되지 않는다" 서술을 500·로그 검색어로 정정. "`Set-Cookie`가 안 보이면 4xx다" → **응답 코드 4xx / 500 분기**로 정정 | 위와 동일. 확인 절차가 500에서 멈추는데 그 이유를 문서가 말하지 않으면 절차 자체가 막힌다 |
+| 2026-08-26 | 6-1절에 v1.1.0의 500 동작과 `COOKIE_SAMESITE='None'` 주의 추가 | 위와 동일. "HTTP 허용"을 고른 배포가 이 절을 가장 먼저 읽는다 |
+| 2026-08-26 | **사실오류 정정 — "`Authorization: Bearer` API는 정상 200"이라는 무조건 단언을 3곳에서 제거했다**(7-7절 본문 · 7-21절 표 `범위` 열 · 이 표의 7-7절 개편 행). 7-7절에 `#### 경계는 인증 방식이 아니라 Set-Cookie 발행 여부다` 소절 신설 — Bearer 경로 7행 표(조회·`exchange`·`refresh` 무영향 / `csrf.php`·`logout`·`withdraw`·현재 세션 `DELETE` 500), `clear_session_cookie()`가 `send_cookie()`를 2회 부른다는 사실, **`logout`·`withdraw` 500에 재시도 루프 금지**(DB 커밋 뒤에 쿠키를 지우므로 이미 완료. 재시도하면 401) | **그 단언은 조회 경로에만 참이었다.** `logout.php:30` · `withdraw.php:113` · `sessions.php:84-89`는 인증 방식과 무관하게 `clear_session_cookie()`(`core/auth.php:223-241`)를 부른다. 방치하면 운영자가 로그아웃 500을 "Bearer가 아니라 브라우저 문제"로 오진한다. `README.md`·`CHANGELOG.md`·`AI_INTEGRATION_GUIDE.md` 3문서가 이미 같은 경계를 쓰고 있어 이 파일만 갈라진 상태였다 (`_workspace/18a`·`18b` 리포트) |
+| 2026-08-26 | **7-7절 재시도 금지 블록에 예외 1건을 명시했다 — 감사 로그 1행이다.** 기존 서술("500을 받아도 세션 회수·탈퇴는 이미 완료되어 있다")은 유지하고, 그 아래에 **DB 상태 변경은 완료되지만 `login_logs`의 `result='logout'` 1행이 누락된다**는 예외 블록을 신설했다. 3파일의 줄 순서 근거 + 실측 수치 + 운영자가 대신 볼 곳(`app_ulogin_sessions.revoke_reason` 확인 SQL) 포함 | **QA 최종 라운드 `Q11-2`.** `log_login()`이 `clear_session_cookie()`의 다음 줄(`api/auth/logout.php:30-31` · `api/me/withdraw.php:113-114` · `api/me/sessions.php:88-89`)이라 500이 그 앞에서 요청을 끊는다. 실측: 500이면 로그 행 3→3, 200이면 3→4. 보안 영향은 없으나 **운영자가 로그인 로그로 로그아웃을 추적하면 로그아웃 기록이 없는 로그인이 남는다.** 4문서(`README.md`·`INSTALL.md`·`CHANGELOG.md`·`AI_INTEGRATION_GUIDE.md`)가 같은 단언을 하고 있었으므로 **한 담당이 4문서를 같은 커밋에서 함께 고쳤다.** 코드 수정은 `README.md` `## v1.2 검토 목록` 5번으로 이월 |
+| 2026-08-25 | 최초 작성 | — |

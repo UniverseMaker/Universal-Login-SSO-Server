@@ -1,0 +1,2707 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>관리자 콘솔 · ulogin</title>
+<!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
+     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
+     처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
+     지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
+     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
+     무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
+     이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
+<meta http-equiv="Cache-Control" content="no-store">
+<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <a class="brand" href="index.html">ulogin</a>
+    <span class="spacer"></span>
+    <span class="who" id="who"></span>
+    <nav class="row">
+      <a class="btn btn-ghost btn-sm" href="mypage.html">마이페이지</a>
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-logout">로그아웃</button>
+    </nav>
+  </header>
+
+  <main class="container wide">
+
+    <!-- 부팅: GET /api/me → role_rank 확인 -->
+    <div id="boot" role="status" aria-live="polite"></div>
+
+    <div id="app" hidden>
+
+      <div class="page-head">
+        <div class="grow">
+          <h1>관리자 콘솔</h1>
+          <p class="sub" id="me-sub"></p>
+        </div>
+        <div id="me-badges"></div>
+      </div>
+
+      <div id="tabbar" class="tabs"></div>
+
+      <!-- ================================================================
+           대시보드
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="dash" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>대시보드</h2>
+            <span class="spacer"></span>
+            <span class="text-sm text-muted" id="d-generated"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="d-reload">새로 고침</button>
+          </div>
+          <div class="card-body" id="d-host"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           회원
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="users" hidden>
+        <div class="card">
+          <div class="card-head"><h2>회원 검색</h2></div>
+          <div class="card-body">
+            <form class="toolbar" id="u-filter" novalidate>
+              <div class="field grow">
+                <label for="u-q">검색어</label>
+                <input type="search" id="u-q" name="q" maxlength="190"
+                       placeholder="아이디 · 이메일 · 이름 · 닉네임">
+              </div>
+              <div class="field">
+                <label for="u-status">상태</label>
+                <select id="u-status" name="status">
+                  <option value="">전체</option>
+                  <option value="active">활성</option>
+                  <option value="pending">대기</option>
+                  <option value="suspended">정지</option>
+                  <option value="dormant">휴면</option>
+                  <option value="withdrawn">탈퇴</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="u-role">역할</label>
+                <select id="u-role" name="role">
+                  <option value="">전체</option>
+                  <option value="user">사용자</option>
+                  <option value="manager">매니저</option>
+                  <option value="admin">관리자</option>
+                  <option value="superadmin">최고관리자</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="u-level">계정등급</label>
+                <select id="u-level" name="account_level">
+                  <option value="">전체</option>
+                  <option value="guest">게스트</option>
+                  <option value="basic">일반</option>
+                  <option value="verified">인증</option>
+                  <option value="vip">VIP</option>
+                  <option value="staff">스태프</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="u-tier">결제등급</label>
+                <select id="u-tier" name="billing_tier">
+                  <option value="">전체</option>
+                  <option value="free">무료</option>
+                  <option value="lite">라이트</option>
+                  <option value="pro">프로</option>
+                  <option value="enterprise">엔터프라이즈</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="u-sort">정렬 기준</label>
+                <select id="u-sort" name="sort">
+                  <option value="created_at">가입일</option>
+                  <option value="last_login_at">최근 로그인</option>
+                  <option value="username">아이디</option>
+                  <option value="points">포인트</option>
+                  <option value="login_count">로그인 수</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="u-order">정렬 방향</label>
+                <select id="u-order" name="order">
+                  <option value="desc">내림차순</option>
+                  <option value="asc">오름차순</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="u-per">표시 수</label>
+                <select id="u-per" name="per_page">
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+              <div class="row">
+                <button type="submit" class="btn btn-primary">검색</button>
+                <button type="button" class="btn btn-ghost" id="u-reset">초기화</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>회원 목록</h2>
+            <span class="spacer"></span>
+            <span class="text-sm text-muted" id="u-meta"></span>
+          </div>
+          <div class="card-body">
+            <div id="u-host"></div>
+            <div id="u-pager"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           서비스
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="services" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>서비스</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-primary btn-sm" id="sv-new">새 서비스</button>
+          </div>
+          <div class="card-body">
+            <form class="toolbar" id="sv-filter" novalidate>
+              <div class="field grow">
+                <label for="sv-q">검색어</label>
+                <input type="search" id="sv-q" name="q" maxlength="100"
+                       placeholder="서비스 ID · 이름 · 설명">
+              </div>
+              <div class="field">
+                <label for="sv-status">상태</label>
+                <select id="sv-status" name="status">
+                  <option value="">전체</option>
+                  <option value="active">활성</option>
+                  <option value="disabled">비활성</option>
+                </select>
+              </div>
+              <div class="row">
+                <button type="submit" class="btn btn-primary">검색</button>
+                <button type="button" class="btn btn-ghost" id="sv-reset">초기화</button>
+              </div>
+            </form>
+            <div id="sv-host"></div>
+            <div id="sv-pager"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           시크릿
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="secrets" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>서비스 시크릿</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-primary btn-sm" id="sc-new" disabled>새 시크릿</button>
+          </div>
+          <div class="card-body">
+            <form class="toolbar" id="sc-filter" novalidate>
+              <div class="field grow">
+                <label for="sc-service">서비스</label>
+                <select id="sc-service" name="service_id"></select>
+              </div>
+              <div class="row">
+                <button type="button" class="btn btn-secondary" id="sc-reload">불러오기</button>
+              </div>
+            </form>
+            <div class="alert alert-info" role="note">
+              <div class="alert-body">
+                <strong class="alert-title">값 수정 규칙</strong>
+                수정 창의 <em>값</em> 입력을 <strong>비워 두면 기존 값이 그대로 유지</strong>됩니다(서버에 값 키를 보내지 않음).
+                값을 정말로 비우려면 <strong>“값을 빈 문자열로 비우기”</strong>를 체크하세요.
+                목록의 값은 <strong>등급 설정과 무관하게 항상</strong> <span class="masked">****</span> 로 표시됩니다(리더 판정 D-32).
+                평문은 최고관리자의 <strong>“값 보기”</strong> 에서만 확인할 수 있고 그 조회는 감사 로그에 기록됩니다.
+                <span class="masked">****</span> 문자열을 그대로 저장하지 마세요.
+              </div>
+            </div>
+            <div id="sc-host"></div>
+            <div id="sc-pager"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           로그
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="logs" hidden>
+        <div class="card">
+          <div class="card-head"><h2>로그</h2></div>
+          <div class="card-body">
+            <div id="log-tabbar" class="tabs"></div>
+
+            <!-- 로그인 로그 -->
+            <div class="tab-panel" data-tab-panel="loglogin" hidden>
+              <form class="toolbar" id="ll-filter" novalidate>
+                <div class="field grow">
+                  <label for="ll-q">아이디 검색</label>
+                  <input type="search" id="ll-q" name="q" maxlength="190" placeholder="입력된 아이디 · 실제 아이디">
+                </div>
+                <div class="field">
+                  <label for="ll-result">결과</label>
+                  <select id="ll-result" name="result">
+                    <option value="">전체</option>
+                    <option value="success">성공</option>
+                    <option value="fail_credential">실패 · 자격증명</option>
+                    <option value="fail_locked">실패 · 락아웃</option>
+                    <option value="fail_status">실패 · 계정 상태</option>
+                    <option value="fail_ratelimit">실패 · 레이트리밋</option>
+                    <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
+                    <option value="logout">로그아웃</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="ll-uuid">회원 UUID</label>
+                  <input type="text" id="ll-uuid" name="uuid" maxlength="64" spellcheck="false"
+                         placeholder="8-4-4-4-12">
+                </div>
+                <div class="field">
+                  <label for="ll-service">서비스 ID</label>
+                  <input type="text" id="ll-service" name="service_id" maxlength="64" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="ll-ip">IP</label>
+                  <input type="text" id="ll-ip" name="ip" maxlength="45" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="ll-from">시작일 (UTC)</label>
+                  <input type="date" id="ll-from" name="from">
+                </div>
+                <div class="field">
+                  <label for="ll-to">종료일 (UTC)</label>
+                  <input type="date" id="ll-to" name="to">
+                </div>
+                <div class="field">
+                  <label for="ll-per">표시 수</label>
+                  <select id="ll-per" name="per_page">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+                <div class="row">
+                  <button type="submit" class="btn btn-primary">검색</button>
+                  <button type="button" class="btn btn-ghost" id="ll-reset">초기화</button>
+                </div>
+              </form>
+              <div id="ll-summary"></div>
+              <div id="ll-host"></div>
+              <div id="ll-pager"></div>
+            </div>
+
+            <!-- 관리자 조작 로그 -->
+            <div class="tab-panel" data-tab-panel="logadmin" hidden>
+              <form class="toolbar" id="la-filter" novalidate>
+                <div class="field">
+                  <label for="la-admin">관리자 UUID</label>
+                  <input type="text" id="la-admin" name="admin_uuid" maxlength="64" spellcheck="false"
+                         placeholder="8-4-4-4-12">
+                </div>
+                <div class="field grow">
+                  <label for="la-action">조작</label>
+                  <input type="text" id="la-action" name="action" maxlength="60" list="la-action-list" spellcheck="false">
+                  <datalist id="la-action-list">
+                    <option value="user.update"></option>
+                    <option value="user.delete"></option>
+                    <option value="user.points.adjust"></option>
+                    <option value="user.suspend"></option>
+                    <option value="user.restore"></option>
+                    <option value="user.reset_password"></option>
+                    <option value="user.sessions.revoke"></option>
+                    <option value="service.create"></option>
+                    <option value="service.update"></option>
+                    <option value="service.delete"></option>
+                    <option value="secret.create"></option>
+                    <option value="secret.update"></option>
+                    <option value="secret.delete"></option>
+                    <option value="secret.reveal"></option>
+                    <option value="setting.update"></option>
+                  </datalist>
+                </div>
+                <div class="field">
+                  <label for="la-ttype">대상 종류</label>
+                  <select id="la-ttype" name="target_type">
+                    <option value="">전체</option>
+                    <option value="user">회원</option>
+                    <option value="service">서비스</option>
+                    <option value="secret">시크릿</option>
+                    <option value="setting">설정</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="la-tid">대상 식별자</label>
+                  <input type="text" id="la-tid" name="target_id" maxlength="64" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="la-from">시작일 (UTC)</label>
+                  <input type="date" id="la-from" name="from">
+                </div>
+                <div class="field">
+                  <label for="la-to">종료일 (UTC)</label>
+                  <input type="date" id="la-to" name="to">
+                </div>
+                <div class="field">
+                  <label for="la-per">표시 수</label>
+                  <select id="la-per" name="per_page">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+                <div class="row">
+                  <button type="submit" class="btn btn-primary">검색</button>
+                  <button type="button" class="btn btn-ghost" id="la-reset">초기화</button>
+                </div>
+              </form>
+              <div id="la-host"></div>
+              <div id="la-pager"></div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           설정
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="settings" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>전역 설정</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="st-reload">되돌리기</button>
+          </div>
+          <div class="card-body">
+            <p class="text-sm text-muted">
+              정의된 키만 저장할 수 있습니다. 정의되지 않은 키를 보내면 서버가 <code>NOT_FOUND</code> 로 거부합니다.
+            </p>
+            <form class="form" id="st-form" novalidate>
+              <div id="st-fields"></div>
+              <div class="field">
+                <label for="st-reason">변경 사유 (선택)</label>
+                <input type="text" id="st-reason" name="reason" maxlength="255">
+                <span class="field-error"></span>
+                <span class="hint">감사 로그(<code>admin_logs.memo</code>)에 남습니다</span>
+              </div>
+              <div class="row end">
+                <button type="submit" class="btn btn-primary" id="st-save">저장</button>
+              </div>
+            </form>
+            <div id="st-result"></div>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /#app -->
+  </main>
+
+  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+</div>
+
+<script src="assets/api.js?v=1.3.0"></script>
+<script src="assets/ui.js?v=1.3.0"></script>
+<script>
+/* ============================================================================
+ * admin.html — 관리자 콘솔 (탭: 대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정)
+ *
+ * 구속 문서
+ *   _workspace/01b_leader_decisions_round1.md  ← 수정 라운드 1
+ *     D-36 진입 기준 role_rank >= 10 (manager). manager 에게는
+ *          대시보드 / 회원(읽기 전용) / 로그(로그인 로그만) 만 노출하고
+ *          서비스 · 시크릿 · 설정 탭 · 관리자 조작 로그 서브탭 · 회원 조작 버튼은 **숨긴다**
+ *   _workspace/01_leader_decisions.md      ← 최우선
+ *     D-0  동적 세그먼트 금지. 관리자 API 는 전부 쿼리 파라미터
+ *     D-4  user_services.points 는 UI 에 노출하지 않는다
+ *     D-7  시크릿 평문 조회(reveal)는 superadmin + 확인 모달 1회
+ *     D-11 session.auth_type 으로 분기하지 않는다 (표시만)
+ *   _workspace/03_frontend_report.md       ← api.js / ui.js 공개 함수만 사용
+ *   _workspace/02c_backend_admin_report.md ← 응답 최상위 키 + 주의사항 20개
+ *   server/api/admin/*.php                 ← 실제 요청 필드·응답 키 (최종 근거)
+ *
+ * 규칙
+ *   - fetch 직접 호출 금지. api / apiGet / apiPost / apiPut / apiDelete 만 쓴다
+ *   - innerHTML 금지. 서버 데이터는 el() / text() / textContent 로만 그린다
+ *     (관리자 콘솔은 공격자가 심은 닉네임·메모를 관리자가 열어보는 XSS 경로다)
+ *   - 세션 만료 이동은 api.js 안에 있다. 여기서 login.html 로 다시 보내지 않는다
+ *   - 데이터 로드는 tabs() 의 isFirstLoad === true 일 때만
+ *   - admin_log_id 는 null 일 수 있다 (02c 2-14). 성공 분기에 쓰지 않는다
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  /* ======================================================================
+   * 0. 상수 / 상태
+   * ==================================================================== */
+
+  /** 계약 §3-1 의 RANK 값. 자기방어 UI 판정에만 쓴다(실제 방어는 서버). */
+  var RANK = {
+    account_level: { guest: 0, basic: 10, verified: 20, vip: 30, staff: 90 },
+    role: { user: 0, manager: 10, admin: 20, superadmin: 30 },
+    billing_tier: { free: 0, lite: 10, pro: 20, enterprise: 30 }
+  };
+
+  var ENUMS = {
+    status: ['active', 'pending', 'suspended', 'dormant', 'withdrawn'],
+    role: ['user', 'manager', 'admin', 'superadmin'],
+    account_level: ['guest', 'basic', 'verified', 'vip', 'staff'],
+    billing_tier: ['free', 'lite', 'pro', 'enterprise']
+  };
+
+  /**
+   * D-36 / Q-8 — 기능별 최소 role_rank.
+   *
+   * 값의 근거는 리포트가 아니라 **`server/api/admin/*.php` 의 `require_role()` 인자를 직접 읽은 것**이다.
+   *   stats.php:19            require_role($ctx, 'manager')
+   *   users.php:23            require_role($ctx, 'manager')
+   *   user_detail.php:185     GET    require_role($ctx, 'manager')
+   *   user_detail.php:252     PUT    require_role($ctx, 'admin')
+   *   user_detail.php:484     DELETE require_role($ctx, 'superadmin')
+   *   user_points.php:101     require_role($ctx, 'admin')
+   *   user_status.php:176     require_role($ctx, 'admin')   ← suspend/restore/reset-password 공통
+   *   user_sessions.php:97    require_role($ctx, 'admin')
+   *   services.php:165        require_role($ctx, 'admin')
+   *   secrets.php:121         require_role($ctx, 'admin')
+   *   secrets.php:153         action=reveal → role_gte(..., 'superadmin')
+   *   settings.php:111        require_role($ctx, 'admin')
+   *   logs.php:57             type=login → require_role($ctx, 'manager')
+   *   logs.php:154            type=admin → role_gte(..., 'admin')
+   *
+   * 화면 차단은 편의일 뿐 실제 방어는 서버다. 서버가 403 을 주면 화면은 깨지지 않고
+   * showError() 로 안내만 표시한다.
+   */
+  var MIN_RANK = {
+    /* 메인 탭 */
+    dash: RANK.role.manager,
+    users: RANK.role.manager,
+    services: RANK.role.admin,
+    secrets: RANK.role.admin,
+    logs: RANK.role.manager,          // 로그 탭 자체는 로그인 로그(manager)로 진입 가능
+    settings: RANK.role.admin,
+    /* 로그 서브탭 */
+    logLogin: RANK.role.manager,
+    logAdmin: RANK.role.admin,
+    /* 회원 조작 */
+    userRead: RANK.role.manager,
+    userWrite: RANK.role.admin,       // 수정 · 포인트 · 정지 · 복구 · 비번초기화 · 세션종료
+    userDelete: RANK.role.superadmin, // 하드 삭제
+    /* 시크릿 평문 조회 */
+    secretReveal: RANK.role.superadmin,
+    /* 콘솔 진입 */
+    console: RANK.role.manager
+  };
+
+  /**
+   * logs.php 의 $results 화이트리스트 + D-46 의 신규 값.
+   * 맵에 없는 값이 와도 화면은 깨지지 않는다 — 표시부는 전부
+   * `LOGIN_RESULT_LABELS[x] || nz(x)` / `|| k` 폴백을 쓴다(원문 표시).
+   */
+  var LOGIN_RESULT_LABELS = {
+    success: '성공',
+    fail_credential: '실패 · 자격증명',
+    fail_locked: '실패 · 락아웃',
+    fail_status: '실패 · 계정 상태',
+    /* D-46 — D-31(차단 회원 로그인 거부). 계정은 정상이고 그 서비스만 막힌 경우다.
+       `fail_status`(계정 자체가 정지/휴면/탈퇴)와 원인이 다르므로 문구를 분리한다. */
+    fail_service_blocked: '실패 · 서비스 이용 제한',
+    fail_ratelimit: '실패 · 레이트리밋',
+    logout: '로그아웃'
+  };
+
+  var SERVICE_STATUS_LABELS = { active: '활성', disabled: '비활성' };
+  var SECRET_STATUS_LABELS = { active: '활성', disabled: '비활성' };
+  var VALUE_TYPES = ['string', 'json', 'url'];
+
+  var state = {
+    me: null,
+    ctl: null,
+    logCtl: null,
+    users: {
+      page: 1, per: 20, sort: 'created_at', order: 'desc',
+      q: '', status: '', role: '', account_level: '', billing_tier: ''
+    },
+    services: { page: 1, per: 20, q: '', status: '' },
+    serviceOptions: [],            // 시크릿 탭 드롭다운용 [{service_id, service_name}]
+    secrets: { service_id: '', page: 1, per: 20 },
+    logLogin: { page: 1, per: 20 },
+    logAdmin: { page: 1, per: 20 },
+    loaded: {}                     // 탭 key → 최초 로드 완료 여부
+  };
+
+  var _uid = 0;
+  function uid(prefix) { _uid += 1; return (prefix || 'f') + '-' + _uid; }
+
+  /* ======================================================================
+   * 1. 공통 유틸 (ui.js 에 없는 것만 둔다)
+   * ==================================================================== */
+
+  function showLoading(host, message) {
+    clear(host);
+    host.appendChild(loadingNode(message));
+  }
+
+  function showError(host, err, title) {
+    clear(host);
+    /* 화면 차단은 편의일 뿐 실제 방어는 서버다(D-36).
+       서버가 403 을 주면 화면이 깨지지 않고 권한 안내를 보여준다. */
+    if (err && err.code === 'FORBIDDEN') {
+      host.appendChild(alertNode(errorMessage(err), 'warn',
+        '이 기능을 사용할 권한이 없습니다'));
+      return;
+    }
+    host.appendChild(alertNode(errorMessage(err), 'danger', title || '불러올 수 없습니다'));
+  }
+
+  /** 긴 문자열 축약. 값 자체는 textContent 로 들어가므로 안전하다. */
+  function truncate(s, n) {
+    var v = (s === null || s === undefined) ? '' : String(s);
+    return v.length > n ? v.slice(0, n) + '…' : v;
+  }
+
+  function nz(v) { return (v === null || v === undefined || v === '') ? '-' : String(v); }
+
+  function boolText(v) { return v ? '예' : '아니오'; }
+
+  function rankOf(kind, value) {
+    var m = RANK[kind];
+    return (m && Object.prototype.hasOwnProperty.call(m, value)) ? m[value] : -1;
+  }
+
+  function myRoleRank() { return (state.me && typeof state.me.role_rank === 'number') ? state.me.role_rank : -1; }
+  function isSuperadmin() { return myRoleRank() >= RANK.role.superadmin; }
+
+  /** MIN_RANK 판정 단축. 근거는 MIN_RANK 주석의 require_role() 목록. */
+  function allowed(minRank) { return myRoleRank() >= minRank; }
+
+  /** 회원 정보를 바꿀 수 있는가 (PUT user_detail · user_points · user_status · user_sessions). */
+  function canWriteUsers() { return allowed(MIN_RANK.userWrite); }
+
+  /** enum 값 배열 → <option> 목록. labelOf() 로 한글 라벨을 붙인다. */
+  function enumOptions(kind, allLabel) {
+    var out = [];
+    if (allLabel) { out.push({ v: '', label: allLabel }); }
+    ENUMS[kind].forEach(function (v) { out.push({ v: v, label: labelOf(kind, v) }); });
+    return out;
+  }
+
+  /** <select> 생성. options: [{v,label,disabled}] */
+  function selectNode(id, name, options, value) {
+    var sel = el('select', { id: id, name: name });
+    var cur = (value === null || value === undefined) ? '' : String(value);
+    options.forEach(function (o) {
+      var op = el('option', { value: o.v, disabled: o.disabled ? true : null }, o.label);
+      if (String(o.v) === cur) { op.selected = true; }
+      sel.appendChild(op);
+    });
+    return sel;
+  }
+
+  /** .field 래퍼. inputNode.id 가 필요하다. */
+  function fieldNode(labelText, inputNode, hint) {
+    var wrap = el('div', { class: 'field' }, [
+      el('label', { for: inputNode.id }, labelText),
+      inputNode,
+      el('span', { class: 'field-error' })
+    ]);
+    if (hint) { wrap.appendChild(el('span', { class: 'hint' }, hint)); }
+    return wrap;
+  }
+
+  function textInput(id, name, value, attrs) {
+    var a = { type: 'text', id: id, name: name, value: (value === null || value === undefined) ? '' : String(value) };
+    Object.keys(attrs || {}).forEach(function (k) { a[k] = attrs[k]; });
+    return el('input', a);
+  }
+
+  function textareaNode(id, name, value, attrs) {
+    var a = { id: id, name: name, rows: 4 };
+    Object.keys(attrs || {}).forEach(function (k) { a[k] = attrs[k]; });
+    return el('textarea', a, (value === null || value === undefined) ? '' : String(value));
+  }
+
+  function checkNode(id, name, labelText, checked, hint) {
+    var input = el('input', { type: 'checkbox', id: id, name: name });
+    input.checked = !!checked;
+    var lab = el('label', { class: 'check', for: id }, [input, el('span', null, labelText)]);
+    var wrap = el('div', { class: 'field' }, lab);
+    if (hint) { wrap.appendChild(el('span', { class: 'hint' }, hint)); }
+    return { wrap: wrap, input: input };
+  }
+
+  /** key-value 상세 표. rows: [[label, valueNodeOrString], ...] */
+  function kvNode(rows) {
+    var table = el('table', { class: 'kv' });
+    var tbody = el('tbody');
+    rows.forEach(function (r) {
+      if (!r) { return; }
+      tbody.appendChild(el('tr', null, [
+        el('th', { scope: 'row' }, String(r[0])),
+        el('td', null, (r[1] === null || r[1] === undefined) ? '-' : r[1])
+      ]));
+    });
+    table.appendChild(tbody);
+    return el('div', { class: 'table-wrap' }, table);
+  }
+
+  /** 복사 가능한 값 박스. 1회성 평문(임시 비밀번호 · 서비스 시크릿 · reveal)용. */
+  function copyBox(value) {
+    var input = el('input', {
+      type: 'text', class: 'mono', readonly: true, spellcheck: 'false',
+      value: (value === null || value === undefined) ? '' : String(value),
+      style: { flex: '1 1 240px', minWidth: '0' },
+      'aria-label': '값'
+    });
+    var btn = el('button', { type: 'button', class: 'btn btn-secondary btn-sm' }, '복사');
+    btn.addEventListener('click', function () {
+      var done = function () { toast('복사했습니다.', 'success'); };
+      var fail = function () { toast('복사에 실패했습니다. 직접 선택해 복사해 주세요.', 'warn'); };
+      try { input.select(); } catch (e) { /* noop */ }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(input.value).then(done, function () {
+          try { document.execCommand('copy') ? done() : fail(); } catch (e2) { fail(); }
+        });
+        return;
+      }
+      try { document.execCommand('copy') ? done() : fail(); } catch (e3) { fail(); }
+    });
+    return el('div', { class: 'row' }, [input, btn]);
+  }
+
+  /** 다시 볼 수 없는 1회성 평문을 모달로 보여준다. */
+  function showOnceModal(title, label, value, note) {
+    return modal({
+      title: title,
+      hideCancel: true,
+      confirmText: '확인했습니다',
+      body: function (b) {
+        b.appendChild(alertNode(
+          note || '이 값은 다시 볼 수 없습니다. 지금 안전한 곳에 옮겨 두세요.',
+          'warn', '1회만 표시됩니다'
+        ));
+        b.appendChild(el('div', { class: 'field' }, [
+          el('label', null, label),
+          copyBox(value)
+        ]));
+      }
+    });
+  }
+
+  /** 상세 모달 안에서 호스트 모달을 닫는다(닫기 버튼을 눌러 준다). */
+  function closeHostModal(node) {
+    var box = node && node.closest ? node.closest('.modal') : null;
+    if (!box) { return; }
+    var btn = box.querySelector('.modal-close');
+    if (btn) { btn.click(); }
+  }
+
+  /** 줄바꿈 텍스트 ↔ JSON 배열 */
+  function linesToArray(s) {
+    return String(s === null || s === undefined ? '' : s)
+      .split(/\r?\n/)
+      .map(function (x) { return x.trim(); })
+      .filter(function (x) { return x !== ''; });
+  }
+  function arrayToLines(arr) { return (arr && arr.length) ? arr.join('\n') : ''; }
+
+  /** 값을 비교 가능한 문자열로. null/undefined → '' */
+  function cmp(v) { return (v === null || v === undefined) ? '' : String(v); }
+
+  /** 분포 막대(CSS 만. 라이브러리 없음) */
+  function distNode(kind, map) {
+    var keys = Object.keys(map || {});
+    var total = 0;
+    keys.forEach(function (k) { total += Number(map[k]) || 0; });
+    var box = el('div', { class: 'dist' });
+    keys.forEach(function (k) {
+      var n = Number(map[k]) || 0;
+      var pct = total > 0 ? (n / total * 100) : 0;
+      var bar = el('i', { style: { width: pct.toFixed(2) + '%' } });
+      box.appendChild(el('div', {
+        class: 'dist-row',
+        title: labelOf(kind, k) + ' · ' + fmtNum(n) + '명 (' + pct.toFixed(1) + '%)'
+      }, [
+        el('span', { class: 'dist-label' }, labelOf(kind, k)),
+        el('span', { class: 'dist-track' }, bar),
+        el('span', { class: 'dist-count' }, fmtNum(n))
+      ]));
+    });
+    if (keys.length === 0) { box.appendChild(el('div', { class: 'text-muted text-sm' }, '데이터가 없습니다.')); }
+    return box;
+  }
+
+  /* ======================================================================
+   * 2. 헤더 / 로그아웃 / 진입 권한
+   * ==================================================================== */
+
+  function renderMe() {
+    var u = state.me;
+    var who = $('#who');
+    clear(who);
+    who.appendChild(text(u.username + ' · ' + labelOf('role', u.role)));
+
+    var sub = $('#me-sub');
+    clear(sub);
+    sub.appendChild(text('로그인: ' + u.username + ' (' + u.email + ') · UUID ' + u.uuid));
+
+    var badges = $('#me-badges');
+    clear(badges);
+    mount(badges, userBadges(u));
+  }
+
+  function doLogout() {
+    return apiPost('/api/auth/logout', { all_devices: false })
+      .then(function () {
+        clearToken();
+        clearCsrf();
+        navigate('login.html', true);
+        return true;
+      })
+      .catch(function (err) {
+        /* 이미 만료된 세션이면 api.js 가 login.html 로 보낸다. 여기서 다시 보내지 않는다. */
+        if (err.code === 'AUTH_REQUIRED' || err.code === 'AUTH_SESSION_EXPIRED') { return true; }
+        throw err;
+      });
+  }
+
+  $('#btn-logout').addEventListener('click', function () {
+    var btn = this;
+    setBusy(btn, true);
+    doLogout().catch(function (err) {
+      setBusy(btn, false);
+      toast(errorMessage(err), 'danger');
+    });
+  });
+
+  /* ======================================================================
+   * 3. 탭
+   * ==================================================================== */
+
+  var TABS = [
+    { key: 'dash', label: '대시보드', minRank: MIN_RANK.dash },
+    { key: 'users', label: '회원', minRank: MIN_RANK.users },
+    { key: 'services', label: '서비스', minRank: MIN_RANK.services },
+    { key: 'secrets', label: '시크릿', minRank: MIN_RANK.secrets },
+    { key: 'logs', label: '로그', minRank: MIN_RANK.logs },
+    { key: 'settings', label: '설정', minRank: MIN_RANK.settings }
+  ];
+
+  /** 내 랭크로 볼 수 있는 탭만. tabs() 에 이 목록만 넘기면 버튼 자체가 생기지 않는다. */
+  function visibleTabs() {
+    return TABS.filter(function (t) { return allowed(t.minRank); });
+  }
+
+  /**
+   * D-36 — 권한이 없는 탭 패널을 DOM 에서 **제거**한다.
+   * "비활성이 아니라 아예 숨김"이 지시다. tabs() 에 넘기지 않으면 버튼이 없어 열 수도 없지만,
+   * 패널 노드가 남아 있으면 hash 조작·개발자도구로 드러나므로 노드째 지운다.
+   *
+   * 반드시 boot() 안(= 최상위 이벤트 리스너 등록이 끝난 뒤)에서 부른다.
+   * 최상위에서 `$('#sv-new')` 등을 이미 붙여 두었으므로 노드 제거는 안전하다.
+   */
+  function prunePanels() {
+    TABS.forEach(function (t) {
+      if (allowed(t.minRank)) { return; }
+      var p = $('[data-tab-panel="' + t.key + '"]');
+      if (p && p.parentNode) { p.parentNode.removeChild(p); }
+    });
+    if (!allowed(MIN_RANK.logAdmin)) {
+      var la = $('[data-tab-panel="logadmin"]');
+      if (la && la.parentNode) { la.parentNode.removeChild(la); }
+    }
+  }
+
+  function onTab(key, panel, isFirstLoad) {
+    if (!isFirstLoad) { return; }        // 재진입 시 재조회하지 않는다
+    state.loaded[key] = true;
+    if (key === 'dash') { loadStats(); return; }
+    if (key === 'users') { loadUsers(); return; }
+    if (key === 'services') { loadServices(); return; }
+    if (key === 'secrets') { initSecretsTab(); return; }
+    if (key === 'logs') { initLogsTab(); return; }
+    if (key === 'settings') { loadSettings(); return; }
+  }
+
+  /* ======================================================================
+   * 4. 대시보드 — GET /api/admin/stats
+   *    응답 키: users, logins, points, by_billing_tier, by_account_level,
+   *             by_role, services, sessions, generated_at
+   * ==================================================================== */
+
+  function loadStats() {
+    var host = $('#d-host');
+    showLoading(host, '통계를 불러오는 중…');
+    apiGet('/api/admin/stats')
+      .then(function (d) { renderStats(d); })
+      .catch(function (err) { showError(host, err, '통계를 불러올 수 없습니다'); });
+  }
+
+  function renderStats(d) {
+    var host = $('#d-host');
+    clear(host);
+
+    var u = d.users || {};
+    var lg = d.logins || {};
+    var pt = d.points || {};
+    var sv = d.services || {};
+    var ss = d.sessions || {};
+
+    clear($('#d-generated'));
+    $('#d-generated').appendChild(text('기준 ' + fmtDate(d.generated_at)));
+
+    host.appendChild(el('h3', null, '회원'));
+    host.appendChild(el('div', { class: 'stat-grid' }, [
+      statNode('전체 회원', fmtNum(u.total), null, 'primary'),
+      statNode('활성', fmtNum(u.active), null, 'success'),
+      statNode('대기', fmtNum(u.pending)),
+      statNode('정지', fmtNum(u.suspended), null, 'danger'),
+      statNode('휴면', fmtNum(u.dormant), null, 'warn'),
+      statNode('탈퇴', fmtNum(u.withdrawn)),
+      statNode('오늘 신규', fmtNum(u.new_today), 'UTC 자정 기준'),
+      statNode('7일 신규', fmtNum(u.new_7d)),
+      statNode('30일 신규', fmtNum(u.new_30d))
+    ]));
+
+    host.appendChild(el('h3', null, '로그인'));
+    host.appendChild(el('div', { class: 'stat-grid' }, [
+      statNode('오늘 로그(전체)', fmtNum(lg.today), 'UTC 자정 기준'),
+      statNode('7일 성공', fmtNum(lg.success_7d), null, 'success'),
+      statNode('7일 실패', fmtNum(lg.fail_7d), null, 'danger'),
+      statNode('7일 순 사용자', fmtNum(lg.unique_users_7d))
+    ]));
+
+    host.appendChild(el('h3', null, '포인트'));
+    host.appendChild(el('div', { class: 'stat-grid' }, [
+      statNode('총 잔액', fmtNum(pt.total_balance), null, 'primary'),
+      statNode('7일 적립', fmtNum(pt.earned_7d), null, 'success'),
+      statNode('7일 사용', fmtNum(pt.spent_7d), null, 'warn')
+    ]));
+
+    host.appendChild(el('h3', null, '서비스 · 세션'));
+    host.appendChild(el('div', { class: 'stat-grid' }, [
+      statNode('서비스', fmtNum(sv.total)),
+      statNode('활성 서비스', fmtNum(sv.active), null, 'success'),
+      statNode('비활성 서비스', fmtNum(sv.disabled)),
+      statNode('유효 세션', fmtNum(ss.active), null, 'primary')
+    ]));
+
+    host.appendChild(el('h3', null, '등급 분포'));
+    host.appendChild(el('div', { class: 'grid-2' }, [
+      el('div', { class: 'card' }, [
+        el('div', { class: 'card-head' }, el('h4', null, '계정등급')),
+        el('div', { class: 'card-body' }, distNode('account_level', d.by_account_level))
+      ]),
+      el('div', { class: 'card' }, [
+        el('div', { class: 'card-head' }, el('h4', null, '역할')),
+        el('div', { class: 'card-body' }, distNode('role', d.by_role))
+      ]),
+      el('div', { class: 'card' }, [
+        el('div', { class: 'card-head' }, el('h4', null, '결제등급')),
+        el('div', { class: 'card-body' }, [
+          distNode('billing_tier', d.by_billing_tier),
+          el('p', { class: 'hint' }, '만료된 결제등급은 free 로 강등해서 집계됩니다.')
+        ])
+      ])
+    ]));
+  }
+
+  $('#d-reload').addEventListener('click', loadStats);
+
+  /* ======================================================================
+   * 5. 회원 탭 — GET /api/admin/users
+   *    응답 키: items, total, page, per_page, filters_applied
+   * ==================================================================== */
+
+  function readUserFilter() {
+    var f = state.users;
+    f.q = $('#u-q').value.trim();
+    f.status = $('#u-status').value;
+    f.role = $('#u-role').value;
+    f.account_level = $('#u-level').value;
+    f.billing_tier = $('#u-tier').value;
+    f.sort = $('#u-sort').value;
+    f.order = $('#u-order').value;
+    f.per = parseInt($('#u-per').value, 10) || 20;
+  }
+
+  function syncUserFilterUI() {
+    var f = state.users;
+    $('#u-sort').value = f.sort;
+    $('#u-order').value = f.order;
+  }
+
+  function loadUsers() {
+    var host = $('#u-host');
+    var f = state.users;
+    showLoading(host, '회원 목록을 불러오는 중…');
+    clear($('#u-pager'));
+
+    apiGet('/api/admin/users', {
+      q: f.q, status: f.status, role: f.role,
+      account_level: f.account_level, billing_tier: f.billing_tier,
+      page: f.page, per_page: f.per, sort: f.sort, order: f.order
+    }).then(function (d) {
+      renderUsers(d);
+    }).catch(function (err) {
+      showError(host, err, '회원 목록을 불러올 수 없습니다');
+    });
+  }
+
+  function renderUsers(d) {
+    var host = $('#u-host');
+    clear(host);
+
+    var meta = $('#u-meta');
+    clear(meta);
+    var appliedKeys = Object.keys(d.filters_applied || {});
+    meta.appendChild(text(
+      '전체 ' + fmtNum(d.total) + '건'
+      + (appliedKeys.length ? ' · 필터 ' + appliedKeys.join(', ') : '')
+    ));
+
+    if (!d.items || d.items.length === 0) {
+      host.appendChild(emptyNode('조건에 맞는 회원이 없습니다.', '검색어나 필터를 바꿔 보세요.'));
+      pager($('#u-pager'), d, function (p) { state.users.page = p; loadUsers(); });
+      return;
+    }
+
+    var t = tableNode([
+      '아이디', '이름 · 닉네임', '이메일', '등급 (계정/역할/결제)',
+      { label: '포인트', className: 'num' }, { label: '세션', className: 'num' },
+      { label: '로그인 수', className: 'num' },
+      '최근 로그인', '가입일', '상태', '상세'
+    ]);
+
+    d.items.forEach(function (u) {
+      var openBtn = el('button', { type: 'button', class: 'btn btn-sm btn-secondary' }, '상세');
+      openBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        openUserDetail(u.uuid);
+      });
+
+      var tr = el('tr', { tabindex: '0', style: { cursor: 'pointer' } }, [
+        el('td', { class: 'nowrap' }, el('span', { class: 'mono' }, u.username)),
+        el('td', null, [
+          el('div', null, nz(u.name)),
+          el('div', { class: 'text-sm text-muted' }, nz(u.nickname))
+        ]),
+        el('td', null, [
+          el('div', null, nz(u.email)),
+          el('div', { class: 'text-sm text-muted' }, u.email_verified ? '이메일 인증됨' : '미인증')
+        ]),
+        el('td', null, userBadges(u)),
+        el('td', { class: 'num' }, fmtNum(u.points)),
+        el('td', { class: 'num' }, fmtNum(u.session_count)),
+        el('td', { class: 'num' }, fmtNum(u.login_count)),
+        el('td', { class: 'nowrap' }, fmtDate(u.last_login_at)),
+        el('td', { class: 'nowrap' }, fmtDate(u.created_at, true)),
+        el('td', null, badge('status', u.status)),
+        el('td', { class: 'actions' }, openBtn)
+      ]);
+      tr.addEventListener('click', function () { openUserDetail(u.uuid); });
+      tr.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); openUserDetail(u.uuid); }
+      });
+      t.tbody.appendChild(tr);
+    });
+
+    /* 정렬 가능한 헤더 — 서버 화이트리스트와 동일한 5개만 */
+    makeSortable(t.table, { 0: 'username', 4: 'points', 6: 'login_count', 7: 'last_login_at', 8: 'created_at' });
+
+    host.appendChild(t.wrap);
+    pager($('#u-pager'), d, function (p) { state.users.page = p; loadUsers(); });
+  }
+
+  function makeSortable(table, map) {
+    var ths = $$('thead th', table);
+    Object.keys(map).forEach(function (idxStr) {
+      var th = ths[Number(idxStr)];
+      if (!th) { return; }
+      var key = map[idxStr];
+      th.classList.add('sortable');
+      th.setAttribute('tabindex', '0');
+      th.setAttribute('role', 'button');
+      if (state.users.sort === key) {
+        th.setAttribute('aria-sort', state.users.order === 'asc' ? 'ascending' : 'descending');
+      }
+      var act = function () {
+        if (state.users.sort === key) {
+          state.users.order = (state.users.order === 'asc') ? 'desc' : 'asc';
+        } else {
+          state.users.sort = key;
+          state.users.order = 'desc';
+        }
+        state.users.page = 1;
+        syncUserFilterUI();
+        loadUsers();
+      };
+      th.addEventListener('click', act);
+      th.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); act(); }
+      });
+    });
+  }
+
+  $('#u-filter').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    readUserFilter();
+    state.users.page = 1;
+    loadUsers();
+  });
+
+  $('#u-reset').addEventListener('click', function () {
+    $('#u-q').value = '';
+    $('#u-status').value = '';
+    $('#u-role').value = '';
+    $('#u-level').value = '';
+    $('#u-tier').value = '';
+    $('#u-sort').value = 'created_at';
+    $('#u-order').value = 'desc';
+    $('#u-per').value = '20';
+    readUserFilter();
+    state.users.page = 1;
+    loadUsers();
+  });
+
+  /* ----------------------------------------------------------------------
+   * 5-1. 회원 상세 모달 — GET /api/admin/user_detail?uuid=
+   *      응답 키: user, recent_logins, recent_points, active_sessions
+   * -------------------------------------------------------------------- */
+
+  function openUserDetail(uuid) {
+    modal({
+      title: '회원 상세',
+      large: true,
+      hideCancel: true,
+      confirmText: '닫기',
+      body: function (b) {
+        var host = el('div');
+        b.appendChild(host);
+        loadUserDetail(host, uuid);
+      }
+    });
+  }
+
+  function loadUserDetail(host, uuid) {
+    showLoading(host, '회원 정보를 불러오는 중…');
+    apiGet('/api/admin/user_detail', { uuid: uuid })
+      .then(function (d) {
+        clear(host);
+        renderUserDetail(host, d, uuid);
+      })
+      .catch(function (err) { showError(host, err, '회원 정보를 불러올 수 없습니다'); });
+  }
+
+  /** 위험 조작 차단 사유. null 이면 허용. 서버도 같은 규칙으로 막는다. */
+  function guardReason(u, verb) {
+    if (!state.me || !u) { return null; }
+    if (u.uuid === state.me.uuid) {
+      return '자신의 계정은 ' + verb + '할 수 없습니다.';
+    }
+    if ((u.role_rank | 0) >= myRoleRank()) {
+      return '자신과 같거나 높은 권한(' + labelOf('role', u.role) + ')의 계정은 ' + verb + '할 수 없습니다.';
+    }
+    return null;
+  }
+
+  function actionButton(label, cls, reason, onClick) {
+    var btn = el('button', {
+      type: 'button',
+      class: 'btn btn-sm ' + cls,
+      disabled: reason ? true : null,
+      title: reason || null,
+      'aria-disabled': reason ? 'true' : null
+    }, label);
+    if (!reason) { btn.addEventListener('click', onClick); }
+    return btn;
+  }
+
+  function renderUserDetail(host, d, uuid) {
+    var u = d.user || {};
+
+    /* --- 요약 --- */
+    host.appendChild(el('div', { class: 'page-head' }, [
+      el('div', { class: 'grow' }, [
+        el('h3', null, u.username + (u.nickname ? ' (' + u.nickname + ')' : '')),
+        el('div', { class: 'sub mono' }, u.uuid)
+      ]),
+      el('div', { class: 'stack' }, [
+        userBadges(u),
+        el('div', { class: 'badge-row' }, badge('status', u.status))
+      ])
+    ]));
+
+    /* --- 기본 정보 --- */
+    host.appendChild(el('h4', null, '기본 정보'));
+    host.appendChild(kvNode([
+      ['UUID', el('span', { class: 'mono' }, u.uuid)],
+      ['아이디', u.username],
+      ['이메일', el('span', null, [
+        text(nz(u.email)),
+        el('span', { class: 'text-sm text-muted' },
+          u.email_verified ? '  · 인증 ' + fmtDate(u.email_verified_at) : '  · 미인증')
+      ])],
+      ['이름', nz(u.name)],
+      ['닉네임', nz(u.nickname)],
+      ['연락처', nz(u.phone)],
+      ['프로필 이미지', nz(u.avatar_url)],
+      ['상태', badge('status', u.status)],
+      ['포인트', fmtNum(u.points) + ' (누적 적립 ' + fmtNum(u.total_points_earned) + ' · 누적 사용 ' + fmtNum(u.total_points_spent) + ')'],
+      ['계정등급', labelOf('account_level', u.account_level) + ' (rank ' + nz(u.account_level_rank) + ')'],
+      ['역할', labelOf('role', u.role) + ' (rank ' + nz(u.role_rank) + ')'],
+      ['결제등급', labelOf('billing_tier', u.billing_tier) + ' (rank ' + nz(u.billing_tier_rank) + ')'
+        + (u.billing_active === false ? ' · 만료됨' : '')],
+      ['결제 시작', fmtDate(u.billing_started_at)],
+      ['결제 만료', u.billing_expires_at ? fmtDate(u.billing_expires_at) : '무기한(null)'],
+      ['전역 계정등급', labelOf('account_level', u.global_account_level)],
+      ['전역 역할', labelOf('role', u.global_role)],
+      ['전역 결제등급', labelOf('billing_tier', u.global_billing_tier)],
+      ['서비스 컨텍스트', nz(u.service_id) + (u.service_joined_at ? ' · 가입 ' + fmtDate(u.service_joined_at) : '')],
+      ['유효 세션 수', fmtNum(u.session_count)],
+      ['2단계 인증', boolText(u.two_factor_enabled) + ' (v1.0.0 미구현)'],
+      ['타임존 · 언어', nz(u.timezone) + ' · ' + nz(u.locale)],
+      ['마케팅 동의', boolText(u.marketing_agreed)],
+      ['가입일', fmtDate(u.created_at)],
+      ['수정일', fmtDate(u.updated_at)],
+      ['최근 로그인', fmtDate(u.last_login_at) + ' · ' + fmtNum(u.login_count) + '회'],
+      ['최근 로그인 IP', el('span', { class: 'mono' }, nz(u.last_login_ip))],
+      ['로그인 실패 횟수', fmtNum(u.failed_login_count)],
+      ['잠금 해제 시각', fmtDate(u.locked_until)],
+      ['탈퇴 시각', fmtDate(u.withdrawn_at)],
+      ['탈퇴 사유', nz(u.withdraw_reason)],
+      ['관리자 메모', el('span', { style: { whiteSpace: 'pre-wrap' } }, nz(u.memo))],
+      ['meta', el('pre', { class: 'mono text-sm', style: { whiteSpace: 'pre-wrap', margin: '0' } },
+        JSON.stringify(u.meta || {}, null, 2))],
+      ['관리자 뷰', boolText(u.admin_view)]
+    ]));
+
+    /* --- 서비스 오버라이드 (D-4: points 는 표시하지 않는다) --- */
+    host.appendChild(el('h4', null, '서비스별 오버라이드'));
+    var ov = u.service_overrides || [];
+    if (ov.length === 0) {
+      host.appendChild(el('p', { class: 'text-sm text-muted' }, '오버라이드가 없습니다.'));
+    } else {
+      var ot = tableNode(['서비스 ID', '서비스명', '계정등급', '역할', '결제등급', '결제 만료', '상태', '가입', '최근 사용']);
+      ov.forEach(function (o) {
+        ot.tbody.appendChild(el('tr', null, [
+          el('td', { class: 'mono nowrap' }, nz(o.service_id)),
+          el('td', null, nz(o.service_name)),
+          el('td', null, o.account_level ? labelOf('account_level', o.account_level) : '-'),
+          el('td', null, o.role ? labelOf('role', o.role) : '-'),
+          el('td', null, o.billing_tier ? labelOf('billing_tier', o.billing_tier) : '-'),
+          el('td', { class: 'nowrap' }, fmtDate(o.billing_expires_at)),
+          el('td', null, nz(o.status)),
+          el('td', { class: 'nowrap' }, fmtDate(o.joined_at)),
+          el('td', { class: 'nowrap' }, fmtDate(o.last_used_at))
+        ]));
+      });
+      host.appendChild(ot.wrap);
+    }
+
+    /* --- 조작 영역 (D-36) ------------------------------------------------
+       수정 폼 · 포인트 조정 · 계정 조작은 전부 admin 이상 엔드포인트다
+       (user_detail.php:252 PUT / user_points.php:101 / user_status.php:176 /
+        user_sessions.php:97 / user_detail.php:484 DELETE).
+       manager 는 GET user_detail(:185) 만 허용되므로 조작 UI 를 **아예 그리지 않는다**
+       — 비활성 버튼을 보여 주면 없는 기능을 있는 것처럼 오해하게 만든다. */
+    if (!canWriteUsers()) {
+      host.appendChild(el('h4', null, '계정 조작'));
+      host.appendChild(alertNode(
+        '이 화면은 읽기 전용입니다. 회원 정보 수정 · 포인트 조정 · 정지 · 복구 · 비밀번호 초기화 · '
+        + '세션 종료 · 하드 삭제는 관리자(admin) 이상 권한이 필요합니다.',
+        'info', '읽기 전용 (' + labelOf('role', state.me ? state.me.role : null) + ')'
+      ));
+      renderUserDetailHistory(host, d);
+      return;
+    }
+
+    /* --- 수정 폼 --- */
+    host.appendChild(el('h4', null, '정보 수정'));
+    host.appendChild(buildUserEditForm(host, u, uuid));
+
+    /* --- 포인트 조정 --- */
+    host.appendChild(el('h4', null, '포인트 조정'));
+    host.appendChild(buildPointForm(host, u, uuid));
+
+    /* --- 위험 조작 --- */
+    host.appendChild(el('h4', null, '계정 조작'));
+    var suspendReason = guardReason(u, '정지');
+    if (!suspendReason && u.status === 'suspended') { suspendReason = '이미 정지된 계정입니다.'; }
+    if (!suspendReason && u.status === 'withdrawn') { suspendReason = '탈퇴한 계정은 정지할 수 없습니다.'; }
+
+    var restoreReason = null;
+    if (u.status === 'active') { restoreReason = '이미 활성 상태입니다.'; }
+    else if (u.status === 'withdrawn' && !isSuperadmin()) { restoreReason = '탈퇴 계정 복구는 최고관리자만 가능합니다.'; }
+
+    var resetReason = guardReason(u, '비밀번호를 초기화');
+
+    /* 서버는 자기 자신의 세션 종료를 허용하지만, 지시(자기방어 UI)에 따라 콘솔에서는 막는다. */
+    var revokeReason = null;
+    if (state.me && u.uuid === state.me.uuid) {
+      revokeReason = '자신의 세션은 마이페이지 → 세션 탭에서 종료하세요.';
+    } else if ((u.role_rank | 0) >= myRoleRank()) {
+      revokeReason = '자신과 같거나 높은 권한의 계정은 세션을 종료할 수 없습니다.';
+    } else if (!u.session_count) {
+      revokeReason = '유효한 세션이 없습니다.';
+    }
+
+    var deleteReason = guardReason(u, '삭제');
+    if (!deleteReason && !isSuperadmin()) { deleteReason = '하드 삭제는 최고관리자만 가능합니다.'; }
+
+    host.appendChild(el('div', { class: 'row' }, [
+      actionButton('정지', 'btn-danger', suspendReason, function () { openStatusAction(host, u, uuid, 'suspend'); }),
+      actionButton('복구', 'btn-secondary', restoreReason, function () { openStatusAction(host, u, uuid, 'restore'); }),
+      actionButton('비밀번호 초기화', 'btn-secondary', resetReason, function () { openStatusAction(host, u, uuid, 'reset-password'); }),
+      actionButton('세션 전체 종료', 'btn-secondary', revokeReason, function () { openRevokeSessions(host, u, uuid); }),
+      actionButton('하드 삭제', 'btn-danger', deleteReason, function (ev) { openHardDelete(ev.target, u, uuid); })
+    ]));
+    host.appendChild(el('p', { class: 'hint' },
+      '비활성 버튼의 사유는 마우스를 올리면 표시됩니다. 화면 차단은 편의일 뿐 실제 방어는 서버가 합니다.'));
+
+    renderUserDetailHistory(host, d);
+  }
+
+  /**
+   * 상세 모달의 읽기 전용 이력 3표.
+   * GET user_detail(manager) 응답만 쓰므로 manager 도 그대로 볼 수 있다.
+   */
+  function renderUserDetailHistory(host, d) {
+    /* --- 최근 로그인 --- */
+    host.appendChild(el('h4', null, '최근 로그인 10건'));
+    var rl = d.recent_logins || [];
+    if (rl.length === 0) {
+      host.appendChild(el('p', { class: 'text-sm text-muted' }, '기록이 없습니다.'));
+    } else {
+      var lt = tableNode([{ label: 'ID', className: 'num' }, '결과', '서비스', 'IP', '시각']);
+      rl.forEach(function (r) {
+        lt.tbody.appendChild(el('tr', null, [
+          el('td', { class: 'num' }, String(r.id)),
+          el('td', null, LOGIN_RESULT_LABELS[r.result] || nz(r.result)),
+          el('td', { class: 'mono' }, nz(r.service_id)),
+          el('td', { class: 'mono nowrap' }, nz(r.ip)),
+          el('td', { class: 'nowrap' }, fmtDate(r.created_at))
+        ]));
+      });
+      host.appendChild(lt.wrap);
+    }
+
+    /* --- 최근 포인트 --- */
+    host.appendChild(el('h4', null, '최근 포인트 10건'));
+    var rp = d.recent_points || [];
+    if (rp.length === 0) {
+      host.appendChild(el('p', { class: 'text-sm text-muted' }, '기록이 없습니다.'));
+    } else {
+      var pt = tableNode([
+        { label: 'ID', className: 'num' }, { label: '증감', className: 'num' },
+        { label: '잔액', className: 'num' }, '사유', '서비스', '메모', '조작 관리자(UUID)', '시각'
+      ]);
+      rp.forEach(function (r) {
+        pt.tbody.appendChild(el('tr', null, [
+          el('td', { class: 'num' }, String(r.id)),
+          el('td', { class: 'num' }, (r.delta > 0 ? '+' : '') + fmtNum(r.delta)),
+          el('td', { class: 'num' }, fmtNum(r.balance_after)),
+          el('td', null, nz(r.reason)),
+          el('td', { class: 'mono' }, nz(r.service_id)),
+          el('td', null, nz(r.memo)),
+          el('td', { class: 'mono' }, truncate(nz(r.admin_id), 10)),
+          el('td', { class: 'nowrap' }, fmtDate(r.created_at))
+        ]));
+      });
+      host.appendChild(pt.wrap);
+    }
+
+    /* --- 유효 세션 --- */
+    host.appendChild(el('h4', null, '유효 세션'));
+    var as = d.active_sessions || [];
+    if (as.length === 0) {
+      host.appendChild(el('p', { class: 'text-sm text-muted' }, '유효한 세션이 없습니다.'));
+    } else {
+      var st = tableNode(['세션 ID', '인증 방식', '서비스', '기기', 'IP', 'User-Agent',
+        '발급', 'access 만료', 'refresh 만료', '최근 활동', '현재']);
+      as.forEach(function (s) {
+        st.tbody.appendChild(el('tr', null, [
+          el('td', { class: 'mono nowrap', title: nz(s.session_id) }, truncate(nz(s.session_id), 12)),
+          el('td', null, nz(s.auth_type)),
+          el('td', { class: 'mono' }, nz(s.service_id)),
+          el('td', null, nz(s.device_label)),
+          el('td', { class: 'mono nowrap' }, nz(s.ip)),
+          el('td', { title: nz(s.user_agent) }, truncate(nz(s.user_agent), 40)),
+          el('td', { class: 'nowrap' }, fmtDate(s.issued_at)),
+          el('td', { class: 'nowrap' }, fmtDate(s.expires_at)),
+          el('td', { class: 'nowrap' }, fmtDate(s.refresh_expires_at)),
+          el('td', { class: 'nowrap' }, fmtDate(s.last_seen_at)),
+          el('td', null, s.is_current ? '현재 기기' : '')
+        ]));
+      });
+      host.appendChild(st.wrap);
+    }
+  }
+
+  /* --- 수정 폼 (PUT /api/admin/user_detail?uuid=) ---------------------- */
+
+  function buildUserEditForm(host, u, uuid) {
+    var form = el('form', { class: 'form', novalidate: true });
+
+    /* 부여 가능한 역할은 자신의 랭크 이하로 제한한다(규칙 4). */
+    var roleOpts = ENUMS.role.map(function (r) {
+      return { v: r, label: labelOf('role', r), disabled: rankOf('role', r) > myRoleRank() };
+    });
+
+    var idLevel = uid('ud-level');
+    var idRole = uid('ud-role');
+    var idTier = uid('ud-tier');
+    var idStart = uid('ud-start');
+    var idExp = uid('ud-exp');
+    var idStatus = uid('ud-status');
+    var idName = uid('ud-name');
+    var idNick = uid('ud-nick');
+    var idPhone = uid('ud-phone');
+    var idEmail = uid('ud-email');
+    var idMemo = uid('ud-memo');
+    var idReason = uid('ud-reason');
+
+    var selLevel = selectNode(idLevel, 'account_level', enumOptions('account_level'), u.global_account_level);
+    var selRole = selectNode(idRole, 'role', roleOpts, u.global_role);
+    var selTier = selectNode(idTier, 'billing_tier', enumOptions('billing_tier'), u.global_billing_tier);
+    var selStatus = selectNode(idStatus, 'status', enumOptions('status'), u.status);
+
+    /* 역할 변경 차단 (규칙 1 · 확장 b) */
+    var roleBlock = null;
+    if (state.me && u.uuid === state.me.uuid) {
+      roleBlock = '자신의 역할은 이 화면에서 변경할 수 없습니다(낮출 수 없음).';
+    } else if ((u.role_rank | 0) >= myRoleRank()) {
+      roleBlock = '자신과 같거나 높은 권한의 계정은 역할을 변경할 수 없습니다.';
+    }
+    if (roleBlock) {
+      selRole.disabled = true;
+      selRole.title = roleBlock;
+    }
+
+    /* 상태 변경 차단 (로그인 차단 상태로의 전이는 정지와 동일한 방어) */
+    var statusBlock = guardReason(u, '정지');
+    if (statusBlock) {
+      selStatus.title = statusBlock + ' (활성/대기로의 변경만 가능)';
+      ENUMS.status.forEach(function (s, i) {
+        if (s === 'suspended' || s === 'dormant' || s === 'withdrawn') {
+          if (s !== u.status) { selStatus.options[i].disabled = true; }
+        }
+      });
+    }
+
+    var inStart = textInput(idStart, 'billing_started_at', u.billing_started_at, { spellcheck: 'false', maxlength: '30' });
+    var inExp = textInput(idExp, 'billing_expires_at', u.billing_expires_at, { spellcheck: 'false', maxlength: '30' });
+    var inName = textInput(idName, 'name', u.name, { maxlength: '80' });
+    var inNick = textInput(idNick, 'nickname', u.nickname, { maxlength: '50' });
+    var inPhone = textInput(idPhone, 'phone', u.phone, { maxlength: '30' });
+    var inEmail = textInput(idEmail, 'email', u.email, { type: 'email', maxlength: '190', spellcheck: 'false' });
+    var taMemo = textareaNode(idMemo, 'memo', u.memo, { maxlength: '2000' });
+    var inReason = textInput(idReason, 'reason', '', { maxlength: '255' });
+
+    form.appendChild(el('div', { class: 'grid-2' }, [
+      fieldNode('계정등급', selLevel, '전역값을 바꿉니다. 서비스 오버라이드가 있으면 유효값은 다를 수 있습니다'),
+      fieldNode('역할', selRole, roleBlock || '자신의 랭크보다 높은 역할은 선택할 수 없습니다'),
+      fieldNode('결제등급', selTier),
+      fieldNode('상태', selStatus, '정지/휴면/탈퇴로 바꾸면 전 세션이 즉시 회수됩니다'),
+      fieldNode('결제 시작(UTC)', inStart, 'YYYY-MM-DD 또는 YYYY-MM-DD HH:MM:SS · 비우면 없음'),
+      fieldNode('결제 만료(UTC)', inExp, '비우면 무기한(null)'),
+      fieldNode('이름', inName, '비우면 삭제됩니다'),
+      fieldNode('닉네임', inNick, '비우면 삭제됩니다'),
+      fieldNode('연락처', inPhone, '비우면 삭제됩니다'),
+      fieldNode('이메일', inEmail, '변경하면 이메일 인증 상태가 초기화됩니다')
+    ]));
+    form.appendChild(fieldNode('관리자 메모', taMemo, '회원에게는 보이지 않습니다. 비우면 삭제됩니다'));
+    form.appendChild(fieldNode('변경 사유 (선택)', inReason, '감사 로그에 남습니다'));
+    form.appendChild(el('p', { class: 'hint' },
+      '변경된 항목만 전송합니다. 포인트와 비밀번호는 이 폼으로 바꿀 수 없습니다(서버가 거부).'));
+
+    var save = el('button', { type: 'submit', class: 'btn btn-primary' }, '수정 저장');
+    form.appendChild(el('div', { class: 'row end' }, save));
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      clearFormErrors(form);
+
+      var body = {};
+      /* 서버 자기방어 규칙은 "키가 존재하는지"로도 발동한다(role).
+         따라서 실제로 바뀐 값만 담는다. */
+      if (!selRole.disabled && selRole.value !== cmp(u.global_role)) { body.role = selRole.value; }
+      if (selLevel.value !== cmp(u.global_account_level)) { body.account_level = selLevel.value; }
+      if (selTier.value !== cmp(u.global_billing_tier)) { body.billing_tier = selTier.value; }
+      if (selStatus.value !== cmp(u.status)) { body.status = selStatus.value; }
+      if (inStart.value.trim() !== cmp(u.billing_started_at)) { body.billing_started_at = inStart.value.trim(); }
+      if (inExp.value.trim() !== cmp(u.billing_expires_at)) { body.billing_expires_at = inExp.value.trim(); }
+      if (inName.value.trim() !== cmp(u.name)) { body.name = inName.value.trim(); }
+      if (inNick.value.trim() !== cmp(u.nickname)) { body.nickname = inNick.value.trim(); }
+      if (inPhone.value.trim() !== cmp(u.phone)) { body.phone = inPhone.value.trim(); }
+      if (taMemo.value !== cmp(u.memo)) { body.memo = taMemo.value; }
+
+      var emailV = inEmail.value.trim();
+      if (emailV !== cmp(u.email)) {
+        if (emailV === '') {
+          formErrors(form, { field: 'email', message: '이메일은 비울 수 없습니다.' });
+          return;
+        }
+        body.email = emailV;
+      }
+
+      if (Object.keys(body).length === 0) {
+        toast('변경된 항목이 없습니다.', 'info');
+        return;
+      }
+      if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+
+      setBusy(save, true);
+      apiPut('/api/admin/user_detail', body, { query: { uuid: uuid } })
+        .then(function (res) {
+          setBusy(save, false);
+          /* admin_log_id 는 null 일 수 있다(02c 2-14). 성공 분기에 쓰지 않는다. */
+          var n = (res.changed_fields || []).length;
+          toast(n > 0 ? (n + '개 항목을 저장했습니다.') : '변경된 항목이 없습니다.', 'success');
+          loadUserDetail(host, uuid);
+          loadUsers();
+        })
+        .catch(function (err) {
+          setBusy(save, false);
+          formErrors(form, err);
+          toast(errorMessage(err), 'danger');
+        });
+    });
+
+    return form;
+  }
+
+  /* --- 포인트 조정 (POST /api/admin/user_points?uuid=) ---------------- */
+
+  function buildPointForm(host, u, uuid) {
+    var form = el('form', { class: 'form', novalidate: true });
+    var idDelta = uid('pt-delta');
+    var idReason = uid('pt-reason');
+    var idMemo = uid('pt-memo');
+
+    var inDelta = el('input', {
+      type: 'number', id: idDelta, name: 'delta', step: '1',
+      min: '-1000000000', max: '1000000000', placeholder: '예: 100 또는 -50'
+    });
+    var inReason = textInput(idReason, 'reason', '', { maxlength: '100', placeholder: 'admin_adjust' });
+    var inMemo = textInput(idMemo, 'memo', '', { maxlength: '255' });
+
+    form.appendChild(el('div', { class: 'grid-2' }, [
+      fieldNode('증감(delta)', inDelta, '부호 포함. 0 은 허용되지 않습니다. 현재 잔액 ' + fmtNum(u.points)),
+      fieldNode('사유(reason)', inReason, '비우면 admin_adjust'),
+      fieldNode('메모(memo)', inMemo, '감사 로그와 포인트 원장에 남습니다')
+    ]));
+
+    var save = el('button', { type: 'submit', class: 'btn btn-primary' }, '포인트 조정');
+    form.appendChild(el('div', { class: 'row end' }, save));
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      clearFormErrors(form);
+
+      var raw = inDelta.value.trim();
+      var delta = parseInt(raw, 10);
+      if (raw === '' || isNaN(delta) || delta === 0) {
+        formErrors(form, { field: 'delta', message: '0 이 아닌 정수를 입력해 주세요.' });
+        return;
+      }
+      var body = { delta: delta };
+      if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+      if (inMemo.value.trim() !== '') { body.memo = inMemo.value.trim(); }
+
+      setBusy(save, true);
+      apiPost('/api/admin/user_points', body, { query: { uuid: uuid } })
+        .then(function (res) {
+          setBusy(save, false);
+          toast('포인트를 조정했습니다. 잔액 ' + fmtNum(res.balance_after)
+            + ' (적립 누계 ' + fmtNum(res.total_points_earned)
+            + ' · 사용 누계 ' + fmtNum(res.total_points_spent) + ')', 'success');
+          loadUserDetail(host, uuid);
+          loadUsers();
+        })
+        .catch(function (err) {
+          setBusy(save, false);
+          formErrors(form, err);
+          /* POINT_INSUFFICIENT 는 err.data 에 {points, required} 가 실려 온다 */
+          if (err.code === 'POINT_INSUFFICIENT' && err.data) {
+            toast('잔액 ' + fmtNum(err.data.points) + ' / 필요 ' + fmtNum(err.data.required), 'danger');
+          } else {
+            toast(errorMessage(err), 'danger');
+          }
+        });
+    });
+
+    return form;
+  }
+
+  /* --- 정지 / 복구 / 비밀번호 초기화 (POST user_status?uuid=) --------- */
+
+  function openStatusAction(host, u, uuid, action) {
+    var titles = {
+      'suspend': '계정 정지',
+      'restore': '계정 복구',
+      'reset-password': '비밀번호 초기화'
+    };
+    var descs = {
+      'suspend': '이 계정을 정지하고 모든 세션을 즉시 회수합니다.',
+      'restore': '이 계정을 활성 상태로 되돌리고 락아웃을 해제합니다.',
+      'reset-password': '임시 비밀번호를 발급하고 모든 세션을 회수합니다. 임시 비밀번호는 1회만 표시됩니다.'
+    };
+
+    var inReason = textInput(uid('sa-reason'), 'reason', '', { maxlength: '255' });
+    var inMemo = textInput(uid('sa-memo'), 'memo', '', { maxlength: '255' });
+    var inUser = textInput(uid('sa-user'), 'new_username', '', { maxlength: '50', spellcheck: 'false' });
+    var inEmail = textInput(uid('sa-email'), 'new_email', '', { type: 'email', maxlength: '190', spellcheck: 'false' });
+    var chkMail = checkNode(uid('sa-mail'), 'send_email', '임시 비밀번호를 회원 이메일로 발송', false,
+      '발송에 성공하면 응답의 temp_password 가 마스킹됩니다(그때는 화면에 표시되지 않습니다)');
+
+    modal({
+      title: titles[action],
+      danger: (action !== 'restore'),
+      confirmText: titles[action],
+      body: function (b) {
+        b.appendChild(alertNode(descs[action], action === 'restore' ? 'info' : 'warn',
+          u.username + ' (' + u.email + ')'));
+        if (action === 'restore') {
+          b.appendChild(el('p', { class: 'hint' },
+            '탈퇴 계정은 wd_{id}_ 접두사를 떼어 원래 아이디·이메일로 되돌립니다. 충돌하면 아래 값으로 지정하세요.'));
+          b.appendChild(fieldNode('새 아이디 (선택)', inUser, '비우면 원래 아이디를 그대로 씁니다'));
+          b.appendChild(fieldNode('새 이메일 (선택)', inEmail, '비우면 원래 이메일을 그대로 씁니다'));
+        }
+        if (action === 'reset-password') {
+          b.appendChild(chkMail.wrap);
+        }
+        b.appendChild(fieldNode('사유 (선택)', inReason));
+        b.appendChild(fieldNode('메모 (선택)', inMemo));
+      },
+      onConfirm: function () {
+        var body = { action: action };
+        if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+        if (inMemo.value.trim() !== '') { body.memo = inMemo.value.trim(); }
+        if (action === 'restore') {
+          if (inUser.value.trim() !== '') { body.new_username = inUser.value.trim(); }
+          if (inEmail.value.trim() !== '') { body.new_email = inEmail.value.trim(); }
+        }
+        if (action === 'reset-password') { body.send_email = !!chkMail.input.checked; }
+
+        return apiPost('/api/admin/user_status', body, { query: { uuid: uuid } });
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      if (action === 'suspend') {
+        toast('정지했습니다. 세션 ' + fmtNum(res.revoked_count) + '건 회수 · '
+          + fmtDate(res.suspended_at), 'success');
+      } else if (action === 'restore') {
+        toast('복구했습니다. 아이디 ' + res.username + ' · ' + res.email, 'success');
+      } else {
+        /* 02c 2-3: 발송 성공 시에만 마스킹된다. 마스킹이 아니면 화면에 1회 표시한다. */
+        if (res.temp_password === '********') {
+          alertModal('비밀번호 초기화 완료',
+            '임시 비밀번호를 회원 이메일로 발송했습니다. 값은 화면에 표시되지 않습니다. 세션 '
+            + fmtNum(res.revoked_count) + '건을 회수했습니다.');
+        } else {
+          showOnceModal('임시 비밀번호', '임시 비밀번호',
+            res.temp_password,
+            '이 값은 다시 볼 수 없습니다.'
+            + (res.email_sent ? '' : ' 메일이 발송되지 않았으므로 관리자가 직접 전달해야 합니다.')
+            + ' 회원에게 전달 후 즉시 변경하도록 안내하세요.');
+        }
+      }
+      loadUserDetail(host, uuid);
+      loadUsers();
+    });
+  }
+
+  /* --- 세션 전체 종료 (DELETE user_sessions?uuid=) -------------------- */
+
+  function openRevokeSessions(host, u, uuid) {
+    var inReason = textInput(uid('rv-reason'), 'reason', '', { maxlength: '255' });
+    modal({
+      title: '세션 전체 종료',
+      danger: true,
+      confirmText: '전체 종료',
+      body: function (b) {
+        b.appendChild(alertNode(
+          '이 회원의 모든 기기에서 즉시 로그아웃됩니다. 유효 세션 ' + fmtNum(u.session_count) + '건.',
+          'warn', u.username
+        ));
+        b.appendChild(fieldNode('사유 (선택)', inReason));
+      },
+      onConfirm: function () {
+        var q = { uuid: uuid };
+        if (inReason.value.trim() !== '') { q.reason = inReason.value.trim(); }
+        return apiDelete('/api/admin/user_sessions', q);
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      toast('세션 ' + fmtNum(res.revoked_count) + '건을 종료했습니다. (' + fmtDate(res.revoked_at) + ')', 'success');
+      loadUserDetail(host, uuid);
+      loadUsers();
+    });
+  }
+
+  /* --- 하드 삭제 (DELETE user_detail?uuid=&confirm=) ------------------ */
+
+  function openHardDelete(originNode, u, uuid) {
+    var inReason = textInput(uid('hd-reason'), 'reason', '', { maxlength: '255' });
+    modal({
+      title: '회원 하드 삭제',
+      danger: true,
+      confirmText: '영구 삭제',
+      confirmPhrase: u.username,
+      confirmPhraseLabel: '되돌릴 수 없습니다. 계속하려면 대상 아이디를 그대로 입력하세요: ',
+      body: function (b) {
+        b.appendChild(alertNode(
+          '회원 행과 세션 · 서비스 가입 · 동의 · 인증 토큰이 영구 삭제됩니다. '
+          + '로그인 로그는 익명화되고, 포인트 원장과 관리자 로그는 보존됩니다.',
+          'danger', u.username + ' (' + u.email + ')'
+        ));
+        b.appendChild(fieldNode('사유 (선택)', inReason));
+      },
+      onConfirm: function () {
+        var q = { uuid: uuid, confirm: u.username };
+        if (inReason.value.trim() !== '') { q.reason = inReason.value.trim(); }
+        return apiDelete('/api/admin/user_detail', q);
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      var p = res.purged || {};
+      var a = res.anonymized || {};
+      toast('삭제했습니다: ' + res.username, 'success');
+      alertModal('삭제 완료', '세션 ' + fmtNum(p.sessions) + ' · 서비스가입 ' + fmtNum(p.user_services)
+        + ' · 동의 ' + fmtNum(p.user_consents) + ' · 인증코드 ' + fmtNum(p.auth_codes)
+        + ' · 비번재설정 ' + fmtNum(p.password_resets) + ' · 이메일인증 ' + fmtNum(p.email_verifications)
+        + ' 건 삭제 / 로그인로그 ' + fmtNum(a.login_logs) + '건 익명화 · 포인트원장 '
+        + fmtNum(a.point_logs) + '건 · 관리자로그 ' + fmtNum(a.admin_logs) + '건 보존');
+      closeHostModal(originNode);
+      loadUsers();
+    });
+  }
+
+  /* ======================================================================
+   * 6. 서비스 탭 — /api/admin/services
+   *    GET  응답 키: items, total, page, per_page
+   *    POST 응답 키: service, service_secret_plain, admin_log_id (201)
+   *    PUT  응답 키: service, service_secret_plain, changed_fields, admin_log_id
+   *    DEL  응답 키: deleted, service_id, purged, admin_log_id
+   * ==================================================================== */
+
+  function loadServices() {
+    var host = $('#sv-host');
+    var f = state.services;
+    showLoading(host, '서비스 목록을 불러오는 중…');
+    clear($('#sv-pager'));
+
+    apiGet('/api/admin/services', { q: f.q, status: f.status, page: f.page, per_page: f.per })
+      .then(function (d) { renderServices(d); })
+      .catch(function (err) { showError(host, err, '서비스 목록을 불러올 수 없습니다'); });
+  }
+
+  function renderServices(d) {
+    var host = $('#sv-host');
+    clear(host);
+
+    if (!d.items || d.items.length === 0) {
+      host.appendChild(emptyNode('등록된 서비스가 없습니다.', '“새 서비스”로 추가하세요.'));
+      pager($('#sv-pager'), d, function (p) { state.services.page = p; loadServices(); });
+      return;
+    }
+
+    var t = tableNode([
+      '서비스 ID', '이름', '상태', '기밀', '시크릿', '자동가입', '가입허용',
+      '기본 계정등급', { label: 'session_ttl', className: 'num' }, { label: 'refresh_ttl', className: 'num' },
+      /* payload_fields 는 v1.0.0 에서 동작하지 않는 통제다 (문서라운드 F-7).
+         core/payload.php 의 build_payload() 가 이 값을 읽지 않는다 — 저장·반환만 된다.
+         목록 헤더에서부터 '미적용' 을 달아 둔다. 표에서 값만 보면
+         "이 서비스는 이 필드만 받는다" 로 읽히기 때문이다. */
+      '복귀 주소', '허용 출처', 'payload_fields (미적용)',
+      { label: '시크릿 수', className: 'num' }, { label: '가입자', className: 'num' },
+      '생성', '수정', '조작'
+    ]);
+
+    d.items.forEach(function (s) {
+      var editBtn = el('button', { type: 'button', class: 'btn btn-sm btn-secondary' }, '수정');
+      editBtn.addEventListener('click', function () { openServiceForm('edit', s); });
+      var delBtn = el('button', { type: 'button', class: 'btn btn-sm btn-danger' }, '삭제');
+      delBtn.addEventListener('click', function () { openServiceDelete(s); });
+      var secBtn = el('button', { type: 'button', class: 'btn btn-sm btn-ghost' }, '시크릿');
+      secBtn.addEventListener('click', function () {
+        state.secrets.service_id = s.service_id;
+        state.secrets.page = 1;
+        /* 시크릿 탭이 이미 로드됐으면 show() 가 onChange 를 부르지 않으므로 직접 갱신한다 */
+        var wasLoaded = !!state.loaded.secrets;
+        state.ctl.show('secrets');
+        if (wasLoaded) {
+          if (state.serviceOptions.length > 0) { fillServiceSelect(); }
+          else { initSecretsTab(); }
+        }
+      });
+
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'mono nowrap' }, s.service_id),
+        el('td', null, nz(s.service_name)),
+        el('td', null, SERVICE_STATUS_LABELS[s.status] || nz(s.status)),
+        el('td', null, boolText(s.is_confidential)),
+        el('td', null, s.has_secret ? '설정됨' : '없음'),
+        el('td', null, boolText(s.auto_join)),
+        el('td', null, boolText(s.allow_register)),
+        el('td', null, s.default_account_level ? labelOf('account_level', s.default_account_level) : '-'),
+        el('td', { class: 'num' }, fmtNum(s.session_ttl)),
+        el('td', { class: 'num' }, fmtNum(s.refresh_ttl)),
+        el('td', { title: (s.redirect_whitelist || []).join('\n') },
+          fmtNum((s.redirect_whitelist || []).length) + '건'),
+        el('td', { title: (s.allowed_origins || []).join('\n') },
+          fmtNum((s.allowed_origins || []).length) + '건'),
+        el('td', {
+          title: (s.payload_fields ? s.payload_fields.join('\n') : '기본셋(null)')
+            + '\n\n※ v1.0.0 에서는 적용되지 않습니다. 이 값과 무관하게 기본 필드셋이 전달됩니다.'
+        }, s.payload_fields ? (fmtNum(s.payload_fields.length) + '개 (미적용)') : '기본셋'),
+        el('td', { class: 'num' }, fmtNum(s.secret_count)),
+        el('td', { class: 'num' }, fmtNum(s.user_count)),
+        el('td', { class: 'nowrap' }, fmtDate(s.created_at, true)),
+        el('td', { class: 'nowrap' }, fmtDate(s.updated_at, true)),
+        el('td', { class: 'actions' }, [secBtn, editBtn, delBtn])
+      ]));
+    });
+
+    host.appendChild(t.wrap);
+    pager($('#sv-pager'), d, function (p) { state.services.page = p; loadServices(); });
+  }
+
+  $('#sv-filter').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    state.services.q = $('#sv-q').value.trim();
+    state.services.status = $('#sv-status').value;
+    state.services.page = 1;
+    loadServices();
+  });
+  $('#sv-reset').addEventListener('click', function () {
+    $('#sv-q').value = '';
+    $('#sv-status').value = '';
+    state.services.q = '';
+    state.services.status = '';
+    state.services.page = 1;
+    loadServices();
+  });
+  $('#sv-new').addEventListener('click', function () { openServiceForm('create', null); });
+
+  function openServiceForm(mode, s) {
+    s = s || {};
+    var isCreate = (mode === 'create');
+
+    var inId = textInput(uid('sf-id'), 'service_id', s.service_id, { maxlength: '64', spellcheck: 'false' });
+    if (!isCreate) { inId.readOnly = true; inId.title = '서비스 ID 는 변경할 수 없습니다.'; }
+    var inName = textInput(uid('sf-name'), 'service_name', s.service_name, { maxlength: '100' });
+    var inDesc = textInput(uid('sf-desc'), 'description', s.description, { maxlength: '255' });
+    var selStatus = selectNode(uid('sf-status'), 'status', [
+      { v: 'active', label: '활성' }, { v: 'disabled', label: '비활성' }
+    ], s.status || 'active');
+    var selLevel = selectNode(uid('sf-level'), 'default_account_level',
+      [{ v: '', label: '지정하지 않음(null)' }].concat(enumOptions('account_level')),
+      s.default_account_level || '');
+    var inSession = el('input', {
+      type: 'number', id: uid('sf-sttl'), name: 'session_ttl', min: '60', max: '604800',
+      value: String(s.session_ttl === undefined ? 3600 : s.session_ttl)
+    });
+    var inRefresh = el('input', {
+      type: 'number', id: uid('sf-rttl'), name: 'refresh_ttl', min: '300', max: '31536000',
+      value: String(s.refresh_ttl === undefined ? 1209600 : s.refresh_ttl)
+    });
+    var taRedirect = textareaNode(uid('sf-redir'), 'redirect_whitelist', arrayToLines(s.redirect_whitelist), { rows: 4 });
+    var taOrigins = textareaNode(uid('sf-origin'), 'allowed_origins', arrayToLines(s.allowed_origins), { rows: 3 });
+    /* payload_fields — v1.0.0 에서는 동작하지 않는 통제다 (문서라운드 F-7).
+       core/payload.php:build_payload() 가 이 값을 읽지 않는다(grep 0건). 즉 값을 채워도
+       payload 의 user 필드가 걸러지지 않는다. 동작하는 줄 알고 채워 두면 무통제보다 나쁘다.
+
+       D-2(2FA 를 disabled + "준비 중" 배지로 표시) 와 같은 방식으로 **비활성**으로 막는다.
+       읽기 전용이 아니라 비활성인 이유: 저장을 허용하면 v1.1 에서 필터링을 켜는 순간
+       예전에 무심코 넣어 둔 값이 갑자기 효력을 갖는다. 그때 payload 가 조용히
+       줄어들면 연동 앱이 원인 불명으로 깨진다. 값이 아예 들어가지 않게 막는 편이 안전하다.
+
+       기존 값은 그대로 채워 보여 준다 — 비우면 아래 diff 비교에서 '변경됨' 으로 잡혀
+       payload_fields: null 이 전송되고, API 로 넣어 둔 값이 수정 저장 때마다 지워진다. */
+    var taPayload = textareaNode(uid('sf-pf'), 'payload_fields',
+      s.payload_fields ? arrayToLines(s.payload_fields) : '', { rows: 3, disabled: true });
+    var chkAuto = checkNode(uid('sf-auto'), 'auto_join', '첫 로그인 시 서비스에 자동 가입',
+      isCreate ? true : !!s.auto_join);
+    var chkReg = checkNode(uid('sf-reg'), 'allow_register', '이 서비스에서 회원가입 허용',
+      isCreate ? true : !!s.allow_register);
+    var chkConf = checkNode(uid('sf-conf'), 'is_confidential', 'confidential 서비스 (코드 교환 시 서비스 시크릿 필요)',
+      !!s.is_confidential);
+    var inSecret = textInput(uid('sf-secret'), 'service_secret', '', { maxlength: '255', spellcheck: 'false' });
+    var chkRegen = checkNode(uid('sf-regen'), 'regenerate_secret', '서비스 시크릿을 서버에서 새로 생성', false);
+    var inReason = textInput(uid('sf-reason'), 'reason', '', { maxlength: '255' });
+
+    var form = el('form', { class: 'form', novalidate: true });
+
+    modal({
+      title: isCreate ? '새 서비스' : '서비스 수정 · ' + s.service_id,
+      large: true,
+      confirmText: isCreate ? '생성' : '저장',
+      body: function (b) {
+        form.appendChild(el('div', { class: 'grid-2' }, [
+          fieldNode('서비스 ID', inId, '소문자·숫자로 시작, 소문자·숫자·-·_ 3~64자. 생성 후 변경 불가'),
+          fieldNode('서비스명', inName, '1~100자'),
+          fieldNode('설명', inDesc, '255자 이내'),
+          fieldNode('상태', selStatus),
+          fieldNode('기본 계정등급', selLevel, '자동 가입 시 부여할 등급'),
+          fieldNode('session_ttl (초)', inSession, '60 ~ 604800'),
+          fieldNode('refresh_ttl (초)', inRefresh, '300 ~ 31536000')
+        ]));
+        form.appendChild(fieldNode('redirect_whitelist', taRedirect,
+          '한 줄에 하나. 절대 URL(http/https), 쿼리스트링·프래그먼트 금지. 최대 50개'));
+        form.appendChild(fieldNode('allowed_origins', taOrigins,
+          '한 줄에 하나. scheme://host[:port] 형태만. file:// 앱은 null 한 줄로'));
+        /* 라벨에 "준비 중" 배지 — mypage.html 의 2FA 표시(D-2)와 같은 형태다.
+           배지는 장식이므로 aria-hidden 으로 빼고, 실제 설명은 hint 가 한다.
+           hint 는 fieldNode 가 <span class="hint"> 로 붙이며 textContent 로만 들어간다. */
+        form.appendChild(fieldNode(
+          [text('payload_fields '), el('span', { class: 'badge', 'aria-hidden': 'true' }, '준비 중')],
+          taPayload,
+          'v1.0.0에서는 적용되지 않습니다. 이 값은 payload 의 사용자 필드를 실제로 제한하지 않으며,'
+          + ' 서비스는 이 값과 무관하게 기본 필드셋을 받습니다. 그래서 콘솔에서는 입력을 막아 둡니다'
+          + ' — 저장해 두면 다음 버전에서 필터링이 켜질 때 예상하지 못한 값이 갑자기 효력을 갖습니다.'
+          + ' 사용자 필드 제한은 다음 버전에 구현될 예정입니다.'));
+        form.appendChild(chkAuto.wrap);
+        form.appendChild(chkReg.wrap);
+        form.appendChild(chkConf.wrap);
+        if (!isCreate) { form.appendChild(chkRegen.wrap); }
+        form.appendChild(fieldNode('서비스 시크릿', inSecret,
+          isCreate
+            ? 'confidential 서비스는 필수. 8~255자. 생성 응답에서 1회만 확인할 수 있습니다'
+            : '값을 입력하면 시크릿을 이 값으로 교체합니다. 비우면 그대로 유지됩니다'));
+        form.appendChild(fieldNode('변경 사유 (선택)', inReason));
+        if (!isCreate) {
+          form.appendChild(el('p', { class: 'hint' },
+            '현재 시크릿 설정 여부: ' + (s.has_secret ? '설정됨' : '없음')
+            + ' · 가입자 ' + fmtNum(s.user_count) + '명 · 시크릿 ' + fmtNum(s.secret_count) + '개'));
+        }
+        b.appendChild(form);
+      },
+      onConfirm: function () {
+        clearFormErrors(form);
+
+        var body = {};
+        var redirect = linesToArray(taRedirect.value);
+        var origins = linesToArray(taOrigins.value);
+        /* payload_fields 는 body 에 넣지 않는다 (F-7).
+           서버는 키가 없으면 기존 값을 건드리지 않는다 — 이미 API 로 넣어 둔 값은
+           수정 저장을 반복해도 그대로 남고, 콘솔에서 새로 만들어지지도 않는다.
+           의도가 확실한 운영자는 D-55(allow_public)와 같이 API 직접 호출로 도달할 수 있다. */
+
+        if (isCreate) {
+          body.service_id = inId.value.trim();
+          body.service_name = inName.value.trim();
+          body.description = inDesc.value.trim();
+          body.status = selStatus.value;
+          body.default_account_level = selLevel.value === '' ? null : selLevel.value;
+          body.session_ttl = parseInt(inSession.value, 10);
+          body.refresh_ttl = parseInt(inRefresh.value, 10);
+          body.redirect_whitelist = redirect;
+          body.allowed_origins = origins;
+          body.auto_join = !!chkAuto.input.checked;
+          body.allow_register = !!chkReg.input.checked;
+          body.is_confidential = !!chkConf.input.checked;
+          if (inSecret.value.trim() !== '') { body.service_secret = inSecret.value.trim(); }
+          if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+          return apiPost('/api/admin/services', body);
+        }
+
+        /* 수정 — 바뀐 키만 보낸다 */
+        if (inName.value.trim() !== cmp(s.service_name)) { body.service_name = inName.value.trim(); }
+        if (inDesc.value.trim() !== cmp(s.description)) { body.description = inDesc.value.trim(); }
+        if (selStatus.value !== cmp(s.status)) { body.status = selStatus.value; }
+        var lvl = selLevel.value === '' ? null : selLevel.value;
+        if (cmp(lvl) !== cmp(s.default_account_level)) { body.default_account_level = lvl; }
+        if (parseInt(inSession.value, 10) !== Number(s.session_ttl)) { body.session_ttl = parseInt(inSession.value, 10); }
+        if (parseInt(inRefresh.value, 10) !== Number(s.refresh_ttl)) { body.refresh_ttl = parseInt(inRefresh.value, 10); }
+        if (redirect.join('\n') !== arrayToLines(s.redirect_whitelist)) { body.redirect_whitelist = redirect; }
+        if (origins.join('\n') !== arrayToLines(s.allowed_origins)) { body.allowed_origins = origins; }
+        /* payload_fields 는 diff 대상에서 제외한다 (F-7). 위 주석 참조. */
+        if (!!chkAuto.input.checked !== !!s.auto_join) { body.auto_join = !!chkAuto.input.checked; }
+        if (!!chkReg.input.checked !== !!s.allow_register) { body.allow_register = !!chkReg.input.checked; }
+        if (!!chkConf.input.checked !== !!s.is_confidential) { body.is_confidential = !!chkConf.input.checked; }
+        if (chkRegen.input.checked) { body.regenerate_secret = true; }
+        if (inSecret.value.trim() !== '') { body.service_secret = inSecret.value.trim(); }
+        if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+
+        if (Object.keys(body).length === 0) {
+          return Promise.reject(new Error('변경된 항목이 없습니다.'));
+        }
+        return apiPut('/api/admin/services', body, { query: { service_id: s.service_id } });
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      toast(isCreate ? '서비스를 생성했습니다.' : '서비스를 저장했습니다.', 'success');
+      /* service_secret_plain 은 1회성이다. null 이면 시크릿을 만들거나 바꾸지 않은 것이다. */
+      if (res.service_secret_plain) {
+        showOnceModal('서비스 시크릿', (res.service && res.service.service_id) + ' 의 서비스 시크릿',
+          res.service_secret_plain,
+          '이 값은 다시 볼 수 없습니다. 서비스 서버(코드 교환)에만 저장하고 브라우저 코드에는 두지 마세요.');
+      }
+      loadServices();
+      state.serviceOptions = [];      // 시크릿 탭 드롭다운 캐시 무효화
+    }).catch(function (err) {
+      /* onConfirm 이 reject 하면 modal 이 자체 오류 배너를 띄운다. 여기는 그 뒤 흐름만 정리한다. */
+      if (err) { /* noop */ }
+    });
+  }
+
+  function openServiceDelete(s) {
+    var inReason = textInput(uid('sd-reason'), 'reason', '', { maxlength: '255' });
+    modal({
+      title: '서비스 삭제 · ' + s.service_id,
+      danger: true,
+      confirmText: '영구 삭제',
+      confirmPhrase: s.service_id,
+      confirmPhraseLabel: '되돌릴 수 없습니다. 계속하려면 서비스 ID 를 그대로 입력하세요: ',
+      body: function (b) {
+        b.appendChild(alertNode(
+          '시크릿 ' + fmtNum(s.secret_count) + '개와 가입 정보 ' + fmtNum(s.user_count)
+          + '건, 유효 세션과 인증 코드가 함께 삭제됩니다.'
+          + (s.user_count > 0 ? ' 가입자가 있어 force 옵션으로 삭제합니다.' : ''),
+          'danger', s.service_name
+        ));
+        b.appendChild(fieldNode('사유 (선택)', inReason));
+      },
+      onConfirm: function () {
+        var q = { service_id: s.service_id, confirm: s.service_id };
+        if (s.user_count > 0) { q.force = true; }
+        if (inReason.value.trim() !== '') { q.reason = inReason.value.trim(); }
+        return apiDelete('/api/admin/services', q);
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      var p = res.purged || {};
+      toast('삭제했습니다: ' + res.service_id + ' (시크릿 ' + fmtNum(p.service_secrets)
+        + ' · 가입 ' + fmtNum(p.user_services) + ' · 세션 ' + fmtNum(p.sessions)
+        + ' · 코드 ' + fmtNum(p.auth_codes) + ')', 'success');
+      loadServices();
+      state.serviceOptions = [];
+      if (state.secrets.service_id === res.service_id) { state.secrets.service_id = ''; }
+    });
+  }
+
+  /* ======================================================================
+   * 7. 시크릿 탭 — /api/admin/secrets?service_id=
+   *    GET 목록 응답 키: service_id, items, total, page, per_page
+   *    reveal  응답 키: id, secret_key, secret_value, value_type, revealed_at, admin_log_id
+   *    POST    응답 키: secret, admin_log_id (201)
+   *    PUT     응답 키: secret, changed_fields, value_changed, admin_log_id
+   *    DELETE  응답 키: deleted, id, secret_key, service_id, admin_log_id
+   * ==================================================================== */
+
+  function initSecretsTab() {
+    var sel = $('#sc-service');
+    if (state.serviceOptions.length > 0) {
+      fillServiceSelect();
+      return;
+    }
+    clear(sel);
+    sel.appendChild(el('option', { value: '' }, '불러오는 중…'));
+    /* 드롭다운용 목록. per_page 는 서버가 100 으로 clamp 한다. */
+    apiGet('/api/admin/services', { page: 1, per_page: 100 })
+      .then(function (d) {
+        state.serviceOptions = (d.items || []).map(function (s) {
+          return { service_id: s.service_id, service_name: s.service_name, status: s.status };
+        });
+        fillServiceSelect();
+      })
+      .catch(function (err) {
+        clear(sel);
+        sel.appendChild(el('option', { value: '' }, '서비스 목록을 불러올 수 없습니다'));
+        showError($('#sc-host'), err, '서비스 목록을 불러올 수 없습니다');
+      });
+  }
+
+  function fillServiceSelect() {
+    var sel = $('#sc-service');
+    clear(sel);
+    if (state.serviceOptions.length === 0) {
+      sel.appendChild(el('option', { value: '' }, '등록된 서비스가 없습니다'));
+      $('#sc-new').disabled = true;
+      clear($('#sc-host'));
+      $('#sc-host').appendChild(emptyNode('서비스를 먼저 등록하세요.'));
+      return;
+    }
+    sel.appendChild(el('option', { value: '' }, '서비스를 선택하세요'));
+    state.serviceOptions.forEach(function (s) {
+      var op = el('option', { value: s.service_id },
+        s.service_name + ' (' + s.service_id + ')' + (s.status === 'disabled' ? ' · 비활성' : ''));
+      if (s.service_id === state.secrets.service_id) { op.selected = true; }
+      sel.appendChild(op);
+    });
+    if (state.secrets.service_id) { loadSecrets(); }
+    else {
+      $('#sc-new').disabled = true;
+      clear($('#sc-host'));
+      $('#sc-host').appendChild(emptyNode('서비스를 선택하면 시크릿 목록이 표시됩니다.'));
+    }
+  }
+
+  function loadSecrets() {
+    var host = $('#sc-host');
+    var sid = state.secrets.service_id;
+    clear($('#sc-pager'));
+    if (!sid) {
+      clear(host);
+      host.appendChild(emptyNode('서비스를 선택하세요.'));
+      $('#sc-new').disabled = true;
+      return;
+    }
+    $('#sc-new').disabled = false;
+    showLoading(host, '시크릿을 불러오는 중…');
+    apiGet('/api/admin/secrets', { service_id: sid, page: state.secrets.page, per_page: state.secrets.per })
+      .then(function (d) { renderSecrets(d); })
+      .catch(function (err) { showError(host, err, '시크릿을 불러올 수 없습니다'); });
+  }
+
+  function renderSecrets(d) {
+    var host = $('#sc-host');
+    clear(host);
+
+    if (!d.items || d.items.length === 0) {
+      host.appendChild(emptyNode('이 서비스에 등록된 시크릿이 없습니다.', '“새 시크릿”으로 추가하세요.'));
+      pager($('#sc-pager'), d, function (p) { state.secrets.page = p; loadSecrets(); });
+      return;
+    }
+
+    var t = tableNode([
+      { label: 'ID', className: 'num' }, '키', '타입', '값', '마스킹',
+      '최소 계정등급', '최소 결제등급', '최소 역할',
+      { label: '정렬', className: 'num' }, '설명', '상태', '생성', '수정', '조작'
+    ]);
+
+    d.items.forEach(function (s) {
+      var editBtn = el('button', { type: 'button', class: 'btn btn-sm btn-secondary' }, '수정');
+      editBtn.addEventListener('click', function () { openSecretForm('edit', s); });
+      var delBtn = el('button', { type: 'button', class: 'btn btn-sm btn-danger' }, '삭제');
+      delBtn.addEventListener('click', function () { openSecretDelete(s); });
+
+      var actions = [];
+      /* D-7: 값 보기는 superadmin 에게만 노출한다 */
+      if (isSuperadmin()) {
+        var revBtn = el('button', { type: 'button', class: 'btn btn-sm btn-ghost' }, '값 보기');
+        revBtn.addEventListener('click', function () { openSecretReveal(s); });
+        actions.push(revBtn);
+      }
+      actions.push(editBtn, delBtn);
+
+      /* D-32: 서버는 is_masked 와 무관하게 목록·상세 응답을 항상 '****' 로 내려준다.
+         평문은 superadmin 의 'reveal' 경로에서만 나온다(감사 로그 기록됨).
+         여기서 평문을 기대하는 분기를 두면, 서버가 다시 평문을 흘릴 때 화면이 그것을
+         조용히 표시해 버린다. 서버가 준 값을 그대로 쓰고 축약만 한다. */
+      var shown = truncate(nz(s.secret_value), 24);
+
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'num' }, String(s.id)),
+        el('td', { class: 'mono nowrap' }, s.secret_key),
+        el('td', null, nz(s.value_type)),
+        el('td', { class: s.is_masked ? 'masked' : 'mono' }, shown),
+        el('td', null, boolText(s.is_masked)),
+        el('td', null, s.min_account_level ? labelOf('account_level', s.min_account_level) : '-'),
+        el('td', null, s.min_billing_tier ? labelOf('billing_tier', s.min_billing_tier) : '-'),
+        el('td', null, s.min_role ? labelOf('role', s.min_role) : '-'),
+        el('td', { class: 'num' }, String(s.sort_order)),
+        el('td', null, nz(s.description)),
+        el('td', null, SECRET_STATUS_LABELS[s.status] || nz(s.status)),
+        el('td', { class: 'nowrap' }, fmtDate(s.created_at, true)),
+        el('td', { class: 'nowrap' }, fmtDate(s.updated_at, true)),
+        el('td', { class: 'actions' }, actions)
+      ]));
+    });
+
+    host.appendChild(t.wrap);
+    if (!isSuperadmin()) {
+      host.appendChild(el('p', { class: 'hint' }, '값 평문 조회(reveal)는 최고관리자만 가능합니다.'));
+    }
+    pager($('#sc-pager'), d, function (p) { state.secrets.page = p; loadSecrets(); });
+  }
+
+  $('#sc-service').addEventListener('change', function () {
+    state.secrets.service_id = this.value;
+    state.secrets.page = 1;
+    loadSecrets();
+  });
+  $('#sc-reload').addEventListener('click', function () {
+    state.serviceOptions = [];
+    initSecretsTab();
+  });
+  $('#sc-filter').addEventListener('submit', function (ev) { ev.preventDefault(); loadSecrets(); });
+  $('#sc-new').addEventListener('click', function () { openSecretForm('create', null); });
+
+  function openSecretForm(mode, s) {
+    s = s || {};
+    var isCreate = (mode === 'create');
+    var sid = state.secrets.service_id;
+
+    var inKey = textInput(uid('kf-key'), 'secret_key', s.secret_key, { maxlength: '100', spellcheck: 'false' });
+    var selType = selectNode(uid('kf-type'), 'value_type',
+      VALUE_TYPES.map(function (v) { return { v: v, label: v }; }), s.value_type || 'string');
+    var taValue = textareaNode(uid('kf-val'), 'secret_value', '', { rows: 3, spellcheck: 'false' });
+    var chkClear = checkNode(uid('kf-clear'), 'clear_value', '값을 빈 문자열로 비우기', false,
+      '체크하면 값 입력을 무시하고 빈 문자열("")을 저장합니다');
+    var selLevel = selectNode(uid('kf-lv'), 'min_account_level',
+      [{ v: '', label: '제한 없음(null)' }].concat(enumOptions('account_level')), s.min_account_level || '');
+    var selTier = selectNode(uid('kf-tr'), 'min_billing_tier',
+      [{ v: '', label: '제한 없음(null)' }].concat(enumOptions('billing_tier')), s.min_billing_tier || '');
+    var selRole = selectNode(uid('kf-rl'), 'min_role',
+      [{ v: '', label: '제한 없음(null)' }].concat(enumOptions('role')), s.min_role || '');
+    var chkMask = checkNode(uid('kf-mask'), 'is_masked', '목록·응답에서 값을 **** 로 마스킹',
+      isCreate ? true : !!s.is_masked);
+    var inSort = el('input', {
+      type: 'number', id: uid('kf-sort'), name: 'sort_order', min: '-9999', max: '9999',
+      value: String(s.sort_order === undefined ? 0 : s.sort_order)
+    });
+    var inDesc = textInput(uid('kf-desc'), 'description', s.description, { maxlength: '255' });
+    var selStatus = selectNode(uid('kf-st'), 'status', [
+      { v: 'active', label: '활성' }, { v: 'disabled', label: '비활성' }
+    ], s.status || 'active');
+    var inReason = textInput(uid('kf-reason'), 'reason', '', { maxlength: '255' });
+
+    var form = el('form', { class: 'form', novalidate: true });
+
+    modal({
+      title: isCreate ? '새 시크릿 · ' + sid : '시크릿 수정 · ' + s.secret_key,
+      large: true,
+      confirmText: isCreate ? '생성' : '저장',
+      body: function (b) {
+        if (!isCreate) {
+          b.appendChild(alertNode(
+            '값 입력을 비워 두면 기존 값이 유지됩니다(서버에 secret_value 키를 보내지 않습니다). '
+            + '표에 보이는 **** 를 그대로 저장하면 안 됩니다.',
+            'info', '값 수정 규칙'
+          ));
+        }
+        form.appendChild(el('div', { class: 'grid-2' }, [
+          fieldNode('시크릿 키', inKey, '소문자·숫자로 시작, 소문자·숫자·밑줄 2~100자'),
+          fieldNode('값 타입', selType, 'json 이면 유효한 JSON, url 이면 http(s) 절대 URL 이어야 합니다'),
+          fieldNode('최소 계정등급', selLevel),
+          fieldNode('최소 결제등급', selTier),
+          fieldNode('최소 역할', selRole),
+          fieldNode('정렬 순서', inSort, '-9999 ~ 9999'),
+          fieldNode('설명', inDesc),
+          fieldNode('상태', selStatus)
+        ]));
+        form.appendChild(fieldNode('값', taValue,
+          isCreate ? '필수. 저장 시 암호화됩니다' : '비우면 기존 값 유지'));
+        if (!isCreate) { form.appendChild(chkClear.wrap); }
+        form.appendChild(chkMask.wrap);
+        form.appendChild(fieldNode('변경 사유 (선택)', inReason));
+        b.appendChild(form);
+      },
+      onConfirm: function () {
+        clearFormErrors(form);
+        var body = {};
+
+        if (isCreate) {
+          if (taValue.value === '') {
+            return Promise.reject(new Error('값을 입력해 주세요. (생성 시 필수)'));
+          }
+          body.secret_key = inKey.value.trim();
+          body.value_type = selType.value;
+          body.secret_value = taValue.value;
+          body.min_account_level = selLevel.value === '' ? null : selLevel.value;
+          body.min_billing_tier = selTier.value === '' ? null : selTier.value;
+          body.min_role = selRole.value === '' ? null : selRole.value;
+          body.is_masked = !!chkMask.input.checked;
+          body.sort_order = parseInt(inSort.value, 10) || 0;
+          body.description = inDesc.value.trim();
+          body.status = selStatus.value;
+          if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+          return apiPost('/api/admin/secrets', body, { query: { service_id: sid } });
+        }
+
+        if (inKey.value.trim() !== cmp(s.secret_key)) { body.secret_key = inKey.value.trim(); }
+        if (selType.value !== cmp(s.value_type)) { body.value_type = selType.value; }
+        /* 서버 규칙: 키 미포함 = 유지 / "" = 비움 / null = VALIDATION_FAILED */
+        if (chkClear.input.checked) { body.secret_value = ''; }
+        else if (taValue.value !== '') { body.secret_value = taValue.value; }
+        var lv = selLevel.value === '' ? null : selLevel.value;
+        var tr = selTier.value === '' ? null : selTier.value;
+        var rl = selRole.value === '' ? null : selRole.value;
+        if (cmp(lv) !== cmp(s.min_account_level)) { body.min_account_level = lv; }
+        if (cmp(tr) !== cmp(s.min_billing_tier)) { body.min_billing_tier = tr; }
+        if (cmp(rl) !== cmp(s.min_role)) { body.min_role = rl; }
+        if (!!chkMask.input.checked !== !!s.is_masked) { body.is_masked = !!chkMask.input.checked; }
+        if ((parseInt(inSort.value, 10) || 0) !== Number(s.sort_order)) { body.sort_order = parseInt(inSort.value, 10) || 0; }
+        if (inDesc.value.trim() !== cmp(s.description)) { body.description = inDesc.value.trim(); }
+        if (selStatus.value !== cmp(s.status)) { body.status = selStatus.value; }
+        if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
+
+        if (Object.keys(body).length === 0) {
+          return Promise.reject(new Error('변경된 항목이 없습니다.'));
+        }
+        return apiPut('/api/admin/secrets', body, { query: { service_id: sid, id: s.id } });
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      if (isCreate) {
+        toast('시크릿을 생성했습니다: ' + (res.secret && res.secret.secret_key), 'success');
+      } else {
+        toast('저장했습니다. 변경 ' + ((res.changed_fields || []).length) + '개'
+          + (res.value_changed ? ' · 값 교체됨' : ' · 값 유지'), 'success');
+      }
+      loadSecrets();
+    });
+  }
+
+  function openSecretDelete(s) {
+    var inReason = textInput(uid('kd-reason'), 'reason', '', { maxlength: '255' });
+    modal({
+      title: '시크릿 삭제',
+      danger: true,
+      confirmText: '삭제',
+      confirmPhrase: s.secret_key,
+      confirmPhraseLabel: '되돌릴 수 없습니다. 계속하려면 시크릿 키를 그대로 입력하세요: ',
+      body: function (b) {
+        b.appendChild(alertNode(
+          '이 시크릿을 사용하는 앱은 즉시 값을 받지 못하게 됩니다.',
+          'danger', s.secret_key + ' (' + state.secrets.service_id + ')'
+        ));
+        b.appendChild(fieldNode('사유 (선택)', inReason));
+      },
+      onConfirm: function () {
+        var q = { service_id: state.secrets.service_id, id: s.id };
+        if (inReason.value.trim() !== '') { q.reason = inReason.value.trim(); }
+        return apiDelete('/api/admin/secrets', q);
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      toast('삭제했습니다: ' + res.secret_key, 'success');
+      loadSecrets();
+    });
+  }
+
+  /**
+   * D-7 — 값 보기. superadmin 전용. 확인 모달 1회 후 조회하고,
+   * 조회된 평문은 복사 가능하게 보여준 뒤 모달을 닫으면 화면에서 사라진다.
+   * (평문을 변수·전역에 남기지 않는다)
+   */
+  function openSecretReveal(s) {
+    confirmModal('시크릿 평문 조회', null, {
+      danger: true,
+      confirmText: '조회',
+      body: function (b) {
+        b.appendChild(alertNode(
+          '평문을 화면에 표시합니다. 이 조회 사실은 관리자 감사 로그(secret.reveal)에 기록됩니다(값은 기록되지 않습니다).',
+          'warn', s.secret_key + ' (' + state.secrets.service_id + ')'
+        ));
+      },
+      onConfirm: function () {
+        return apiGet('/api/admin/secrets', {
+          service_id: state.secrets.service_id, action: 'reveal', id: s.id
+        });
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      modal({
+        title: '시크릿 평문 · ' + res.secret_key,
+        hideCancel: true,
+        confirmText: '닫고 화면에서 지우기',
+        body: function (b) {
+          b.appendChild(alertNode(
+            '이 창을 닫으면 값이 화면에서 사라집니다. 다시 보려면 조회를 반복해야 하며 그때마다 감사 로그가 남습니다.',
+            'warn', '조회 시각 ' + fmtDate(res.revealed_at)
+          ));
+          b.appendChild(kvNode([
+            ['시크릿 ID', String(res.id)],
+            ['키', el('span', { class: 'mono' }, res.secret_key)],
+            ['타입', nz(res.value_type)]
+          ]));
+          b.appendChild(el('div', { class: 'field' }, [
+            el('label', null, '평문 값'),
+            copyBox(res.secret_value)
+          ]));
+        }
+      });
+    });
+  }
+
+  /* ======================================================================
+   * 8. 로그 탭 — /api/admin/logs?type=login|admin
+   * ==================================================================== */
+
+  function initLogsTab() {
+    if (state.logCtl) { return; }
+
+    /* D-36 — 관리자 조작 로그 서브탭은 admin 이상(logs.php:154 role_gte 'admin')에게만.
+       manager 에게는 서브탭 버튼과 패널이 아예 없다(패널은 prunePanels() 가 제거). */
+    var subs = [{ key: 'loglogin', label: '로그인 로그' }];
+    if (allowed(MIN_RANK.logAdmin)) {
+      subs.push({ key: 'logadmin', label: '관리자 조작 로그' });
+    }
+
+    /* 메인 탭이 location.hash 를 쓰므로 서브탭은 hash 동기화를 끈다. */
+    state.logCtl = tabs($('#log-tabbar'), subs, function (key, panel, isFirstLoad) {
+      if (!isFirstLoad) { return; }
+      if (key === 'loglogin') { loadLoginLogs(); }
+      else { loadAdminLogs(); }
+    }, { hash: false });
+  }
+
+  /* --- 로그인 로그 --------------------------------------------------- */
+
+  function loadLoginLogs() {
+    var host = $('#ll-host');
+    showLoading(host, '로그인 로그를 불러오는 중…');
+    clear($('#ll-pager'));
+    clear($('#ll-summary'));
+
+    state.logLogin.per = parseInt($('#ll-per').value, 10) || 20;
+
+    apiGet('/api/admin/logs', {
+      type: 'login',
+      q: $('#ll-q').value.trim(),
+      result: $('#ll-result').value,
+      uuid: $('#ll-uuid').value.trim(),
+      service_id: $('#ll-service').value.trim(),
+      ip: $('#ll-ip').value.trim(),
+      from: $('#ll-from').value,
+      to: $('#ll-to').value,
+      page: state.logLogin.page,
+      per_page: state.logLogin.per
+    }).then(function (d) { renderLoginLogs(d); })
+      .catch(function (err) { showError(host, err, '로그인 로그를 불러올 수 없습니다'); });
+  }
+
+  function renderLoginLogs(d) {
+    var host = $('#ll-host');
+    clear(host);
+
+    /* summary — 값이 0인 키도 전부 온다 */
+    var sm = d.summary || {};
+    var tiles = Object.keys(sm).map(function (k) {
+      return statNode(LOGIN_RESULT_LABELS[k] || k, fmtNum(sm[k]), null,
+        k === 'success' ? 'success' : (k.indexOf('fail') === 0 ? 'danger' : null));
+    });
+    var sumHost = $('#ll-summary');
+    clear(sumHost);
+    if (tiles.length) { sumHost.appendChild(el('div', { class: 'stat-grid' }, tiles)); }
+
+    if (!d.items || d.items.length === 0) {
+      host.appendChild(emptyNode('조건에 맞는 로그가 없습니다.'));
+      pager($('#ll-pager'), d, function (p) { state.logLogin.page = p; loadLoginLogs(); });
+      return;
+    }
+
+    var t = tableNode([
+      { label: 'ID', className: 'num' }, '결과', '아이디(실제)', '입력된 아이디',
+      '회원 UUID', '서비스', 'IP', 'User-Agent', '시각'
+    ]);
+    d.items.forEach(function (r) {
+      var uuidCell;
+      if (r.user_uuid) {
+        var link = el('button', { type: 'button', class: 'btn btn-link btn-sm mono' }, truncate(r.user_uuid, 10));
+        link.addEventListener('click', function () { openUserDetail(r.user_uuid); });
+        uuidCell = el('td', { class: 'nowrap', title: r.user_uuid }, link);
+      } else {
+        uuidCell = el('td', { class: 'text-muted' }, '없는 계정');
+      }
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'num' }, String(r.id)),
+        el('td', null, LOGIN_RESULT_LABELS[r.result] || nz(r.result)),
+        el('td', { class: 'mono' }, nz(r.username)),
+        el('td', { class: 'mono' }, nz(r.username_input)),
+        uuidCell,
+        el('td', { class: 'mono' }, nz(r.service_id)),
+        el('td', { class: 'mono nowrap' }, nz(r.ip)),
+        el('td', { title: nz(r.user_agent) }, truncate(nz(r.user_agent), 40)),
+        el('td', { class: 'nowrap' }, fmtDate(r.created_at))
+      ]));
+    });
+    host.appendChild(t.wrap);
+    pager($('#ll-pager'), d, function (p) { state.logLogin.page = p; loadLoginLogs(); });
+  }
+
+  $('#ll-filter').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    state.logLogin.page = 1;
+    loadLoginLogs();
+  });
+  $('#ll-reset').addEventListener('click', function () {
+    ['#ll-q', '#ll-uuid', '#ll-service', '#ll-ip', '#ll-from', '#ll-to'].forEach(function (s) { $(s).value = ''; });
+    $('#ll-result').value = '';
+    $('#ll-per').value = '20';
+    state.logLogin.page = 1;
+    loadLoginLogs();
+  });
+
+  /* --- 관리자 조작 로그 ---------------------------------------------- */
+
+  function loadAdminLogs() {
+    var host = $('#la-host');
+    showLoading(host, '관리자 조작 로그를 불러오는 중…');
+    clear($('#la-pager'));
+
+    state.logAdmin.per = parseInt($('#la-per').value, 10) || 20;
+
+    apiGet('/api/admin/logs', {
+      type: 'admin',
+      admin_uuid: $('#la-admin').value.trim(),
+      action: $('#la-action').value.trim(),
+      target_type: $('#la-ttype').value,
+      target_id: $('#la-tid').value.trim(),
+      from: $('#la-from').value,
+      to: $('#la-to').value,
+      page: state.logAdmin.page,
+      per_page: state.logAdmin.per
+    }).then(function (d) { renderAdminLogs(d); })
+      .catch(function (err) { showError(host, err, '관리자 조작 로그를 불러올 수 없습니다'); });
+  }
+
+  /** before/after 는 파싱된 객체다(문자열 아님). null 일 수 있다. */
+  function jsonDetails(label, obj) {
+    if (obj === null || obj === undefined) { return el('span', { class: 'text-muted' }, '-'); }
+    var det = el('details');
+    det.appendChild(el('summary', null, label));
+    det.appendChild(el('pre', {
+      class: 'mono text-sm',
+      style: { whiteSpace: 'pre-wrap', margin: '0', maxWidth: '360px', overflowX: 'auto' }
+    }, JSON.stringify(obj, null, 2)));
+    return det;
+  }
+
+  function renderAdminLogs(d) {
+    var host = $('#la-host');
+    clear(host);
+
+    if (!d.items || d.items.length === 0) {
+      host.appendChild(emptyNode('조건에 맞는 로그가 없습니다.'));
+      pager($('#la-pager'), d, function (p) { state.logAdmin.page = p; loadAdminLogs(); });
+      return;
+    }
+
+    var t = tableNode([
+      { label: 'ID', className: 'num' }, '관리자', '관리자 UUID', '조작',
+      '대상 종류', '대상 식별자', '대상 이름', '변경 전', '변경 후', '메모', 'IP', '시각'
+    ]);
+    d.items.forEach(function (r) {
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'num' }, String(r.id)),
+        el('td', { class: 'mono' }, nz(r.admin_username)),
+        el('td', { class: 'mono nowrap', title: nz(r.admin_uuid) }, truncate(nz(r.admin_uuid), 10)),
+        el('td', { class: 'mono nowrap' }, nz(r.action)),
+        el('td', null, nz(r.target_type)),
+        el('td', { class: 'mono', title: nz(r.target_id) }, truncate(nz(r.target_id), 12)),
+        el('td', null, nz(r.target_label)),
+        el('td', null, jsonDetails('before', r.before)),
+        el('td', null, jsonDetails('after', r.after)),
+        el('td', null, nz(r.memo)),
+        el('td', { class: 'mono nowrap' }, nz(r.ip)),
+        el('td', { class: 'nowrap' }, fmtDate(r.created_at))
+      ]));
+    });
+    host.appendChild(t.wrap);
+    pager($('#la-pager'), d, function (p) { state.logAdmin.page = p; loadAdminLogs(); });
+  }
+
+  $('#la-filter').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    state.logAdmin.page = 1;
+    loadAdminLogs();
+  });
+  $('#la-reset').addEventListener('click', function () {
+    ['#la-admin', '#la-action', '#la-tid', '#la-from', '#la-to'].forEach(function (s) { $(s).value = ''; });
+    $('#la-ttype').value = '';
+    $('#la-per').value = '20';
+    state.logAdmin.page = 1;
+    loadAdminLogs();
+  });
+
+  /* ======================================================================
+   * 9. 설정 탭 — /api/admin/settings
+   *    GET 응답 키: items, total, map
+   *    PUT 응답 키: updated, unchanged, map, admin_log_id
+   * ==================================================================== */
+
+  var settingInputs = {};      // skey → { input, vtype }
+
+  function loadSettings() {
+    var host = $('#st-fields');
+    showLoading(host, '설정을 불러오는 중…');
+    /* #st-result 는 여기서 지우지 않는다 — 저장 직후 재조회가 결과 배너를 지워 버린다. */
+    apiGet('/api/admin/settings')
+      .then(function (d) { renderSettings(d); })
+      .catch(function (err) { showError(host, err, '설정을 불러올 수 없습니다'); });
+  }
+
+  function renderSettings(d) {
+    var host = $('#st-fields');
+    clear(host);
+    settingInputs = {};
+
+    var grid = el('div', { class: 'grid-2' });
+    (d.items || []).forEach(function (it) {
+      var id = uid('st-' + it.skey);
+      var node;
+      if (it.vtype === 'bool') {
+        var c = checkNode(id, it.skey, it.label + ' (' + it.skey + ')', !!it.svalue,
+          '최근 수정 ' + fmtDate(it.updated_at));
+        node = c.wrap;
+        settingInputs[it.skey] = { input: c.input, vtype: 'bool' };
+      } else if (it.vtype === 'int') {
+        var ni = el('input', { type: 'number', id: id, name: it.skey, step: '1', value: String(it.svalue) });
+        node = fieldNode(it.label + ' (' + it.skey + ')', ni,
+          '정수 · 최근 수정 ' + fmtDate(it.updated_at));
+        settingInputs[it.skey] = { input: ni, vtype: 'int' };
+      } else if (it.skey === 'mail_driver') {
+        var sd = selectNode(id, it.skey, [
+          { v: 'log', label: 'log (storage/mail 에 파일로 저장)' },
+          { v: 'mail', label: 'mail (PHP mail() 로 발송)' }
+        ], it.svalue);
+        node = fieldNode(it.label + ' (' + it.skey + ')', sd,
+          'v1.0.0 기본값은 log · 최근 수정 ' + fmtDate(it.updated_at));
+        settingInputs[it.skey] = { input: sd, vtype: 'string' };
+      } else {
+        var ti = textInput(id, it.skey, it.svalue, { maxlength: '100' });
+        node = fieldNode(it.label + ' (' + it.skey + ')', ti,
+          '1~100자 · 최근 수정 ' + fmtDate(it.updated_at));
+        settingInputs[it.skey] = { input: ti, vtype: 'string' };
+      }
+      grid.appendChild(node);
+    });
+    host.appendChild(grid);
+    host.appendChild(el('p', { class: 'hint' }, '총 ' + fmtNum(d.total) + '개 키'));
+  }
+
+  $('#st-reload').addEventListener('click', function () {
+    clear($('#st-result'));
+    loadSettings();
+  });
+
+  $('#st-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var form = this;
+    var save = $('#st-save');
+    clearFormErrors(form);
+    clear($('#st-result'));
+
+    var settings = {};
+    var bad = null;
+    Object.keys(settingInputs).forEach(function (k) {
+      var s = settingInputs[k];
+      if (s.vtype === 'bool') { settings[k] = !!s.input.checked; return; }
+      var raw = String(s.input.value).trim();
+      if (raw === '') { bad = bad || k; return; }
+      settings[k] = (s.vtype === 'int') ? (parseInt(raw, 10)) : raw;
+      if (s.vtype === 'int' && isNaN(settings[k])) { bad = bad || k; }
+    });
+    if (bad) {
+      formErrors(form, { field: bad, message: '값을 입력해 주세요.' });
+      return;
+    }
+
+    var body = { settings: settings };
+    var reason = $('#st-reason').value.trim();
+    if (reason !== '') { body.reason = reason; }
+
+    setBusy(save, true);
+    apiPut('/api/admin/settings', body)
+      .then(function (res) {
+        setBusy(save, false);
+        var up = res.updated || [];
+        var un = res.unchanged || [];
+        toast(up.length ? (up.length + '개 설정을 저장했습니다.') : '변경된 설정이 없습니다.', 'success');
+        loadSettings();      // 먼저 재조회(동기적으로 필드만 비운다)
+        var box = $('#st-result');
+        clear(box);
+        box.appendChild(alertNode(
+          '저장: ' + (up.length ? up.join(', ') : '없음')
+          + ' / 변경 없음: ' + (un.length ? un.join(', ') : '없음'),
+          up.length ? 'success' : 'info', '결과'
+        ));
+      })
+      .catch(function (err) {
+        setBusy(save, false);
+        /* 정의되지 않은 키는 NOT_FOUND(404) + error.field 에 문제 키 */
+        formErrors(form, err);
+        toast(errorMessage(err), 'danger');
+      });
+  });
+
+  /* ======================================================================
+   * 10. 부팅 — GET /api/me → role_rank >= 10 (manager) 확인
+   *
+   * D-36 / Q-8: 예전 기준은 20(admin)이어서 서버가 manager 에게 허용하는
+   * stats · users 목록 · logs?type=login 이 UI 에서 전부 막혀 있었다.
+   * 기준을 10 으로 낮추고, 탭·버튼은 MIN_RANK 로 개별 판정한다.
+   * ==================================================================== */
+
+  /** manager 에게 이 콘솔이 무엇을 할 수 있는 화면인지 한 번 알려 준다. */
+  function renderScopeNotice() {
+    if (canWriteUsers()) { return; }
+    var bar = $('#tabbar');
+    if (!bar || !bar.parentNode) { return; }
+    bar.parentNode.insertBefore(alertNode(
+      '매니저 역할은 대시보드 · 회원 조회 · 로그인 로그만 사용할 수 있습니다. '
+      + '회원 정보 변경과 서비스 · 시크릿 · 설정 · 관리자 조작 로그는 관리자(admin) 이상 권한이 필요합니다.',
+      'info', '읽기 전용 권한 (' + labelOf('role', state.me ? state.me.role : null) + ')'
+    ), bar);
+  }
+
+  function boot() {
+    var host = $('#boot');
+    showLoading(host, '관리자 권한을 확인하는 중…');
+
+    apiGet('/api/me')
+      .then(function (d) {
+        state.me = d.user;
+
+        var rank = (state.me && typeof state.me.role_rank === 'number') ? state.me.role_rank : -1;
+        if (rank < MIN_RANK.console) {
+          clear(host);
+          host.appendChild(alertNode(
+            '관리자 콘솔은 매니저(manager) 이상만 사용할 수 있습니다. 마이페이지로 이동합니다.',
+            'warn', '접근 권한이 없습니다'
+          ));
+          alertModal('접근 권한이 없습니다',
+            '관리자 콘솔은 매니저(manager) 이상만 사용할 수 있습니다. 현재 역할: '
+            + labelOf('role', state.me ? state.me.role : null))
+            .then(function () { navigate('mypage.html', true); });
+          return;
+        }
+
+        clear(host);
+        host.hidden = true;
+        $('#app').hidden = false;
+
+        renderMe();
+        syncUserFilterUI();
+        prunePanels();          // 권한 없는 패널은 노드째 제거 (D-36)
+        renderScopeNotice();
+        state.ctl = tabs($('#tabbar'), visibleTabs(), onTab);
+      })
+      .catch(function (err) {
+        /* AUTH_REQUIRED / AUTH_SESSION_EXPIRED 는 api.js 가 login.html 로 보낸다.
+           여기서는 문구만 남긴다(이중 이동 금지). */
+        clear(host);
+        mount(host, [
+          alertNode(errorMessage(err), 'danger', '관리자 콘솔을 열 수 없습니다'),
+          el('div', { class: 'row' }, [
+            el('button', {
+              type: 'button', class: 'btn btn-secondary',
+              on: { click: function () { location.reload(); } }
+            }, '다시 시도'),
+            el('a', { class: 'btn btn-ghost', href: 'login.html' }, '로그인 화면으로')
+          ])
+        ]);
+      });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
