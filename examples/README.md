@@ -10,15 +10,17 @@
 | `../public/assets/ulogin-client.js` | 앱이 가져다 쓰는 연동 클라이언트. 의존성 0, `<script src>` 하나 |
 | `.htaccess` | 위 두 HTML 에 `Cache-Control: no-store` 를 붙인다. **점(`.`)으로 시작해 FTP 에서 숨겨지기 쉬우니 업로드 시 확인하라** (`## 운영 배포 시 체크리스트`) |
 
-> 두 데모 HTML 의 `<script src>` 에는 **`?v=1.2.0`** 이 붙어 있다. 캐시 무효화용이며 지우면 안 된다.
+> 두 데모 HTML 의 `<script src>` 에는 **`?v=` 버전 쿼리**가 붙어 있다. 캐시 무효화용이며 지우면 안 된다.
+> 실제 값은 배포본마다 다르므로 파일을 열어 확인하라 — 이 문서의 예시에서는 `?v={버전}` 으로 적는다.
 > 아래 [자산 버전과 배포 반영 확인](#자산-버전과-배포-반영-확인) 을 보라.
 
 ---
 
 ## 0-A. 배포 레이아웃과 "설치 루트" — 여기만 틀리면 전부 404다
 
-버전 폴더(`v1.2.0_20260828/`)의 **내용을 그대로** 업로드한다. 그 위치를 **설치 루트**라고 부른다.
-이 문서에서 `{설치루트}`는 항상 그 주소다.
+**저장소 루트의 `server/` · `public/` · `examples/` 세 디렉토리를 그대로** 업로드한다.
+그 위치를 **설치 루트**라고 부르고, 이 문서에서 `{설치루트}`는 항상 그 주소다.
+(`README.md` · `docs/` · `LICENSE` 같은 문서는 서버에 올릴 필요가 없다.)
 
 ```
 {설치루트}/                      ← 예: https://example.com/ulogin   (도메인 루트여도 되고 서브디렉토리여도 된다)
@@ -56,7 +58,7 @@ loginUrl = server + '/public/login.html'
 | 로그인 서버 API 호출 | `file://`의 origin은 `null`이라 CORS가 통과되지 않는다 |
 | AI 서버 호출 | 같은 이유로 막힌다 |
 
-**반드시 로컬 웹서버로 열어라.** 버전 폴더(`v1.2.0_20260828/`)에서:
+**반드시 로컬 웹서버로 열어라.** 저장소 루트(`server/` · `public/` · `examples/` 가 보이는 자리)에서:
 
 ```bash
 php -S localhost:5173 -t .
@@ -167,7 +169,9 @@ php -S localhost:5173 -t .
 ## 3단계 — 클라이언트 4줄 초기화
 
 ```html
-<script src="https://your-host.com/ulogin/public/assets/ulogin-client.js?v=1.2.0"></script>
+<!-- {버전} 은 자리표시자다. 실제 값은 {설치루트}/public/version.txt 첫 줄의 _ 앞부분이다
+     — 아래 "자산 버전과 배포 반영 확인" 절 참조. -->
+<script src="https://your-host.com/ulogin/public/assets/ulogin-client.js?v={버전}"></script>
 <script>
 const ulogin = new UloginClient({
   server: 'https://your-host.com/ulogin',              // ★ 설치 루트 한 칸 (끝 슬래시 없이)
@@ -224,8 +228,9 @@ ulogin.onExpire(() => { /* 재로그인 유도 */ });
 
 ## 4단계 — 로컬 웹서버로 열기
 
+**저장소 루트**(`server/` · `public/` · `examples/` 가 보이는 자리)에서 실행한다.
+
 ```bash
-cd v1.2.0_20260828
 php -S localhost:5173 -t .
 ```
 
@@ -292,8 +297,11 @@ php -S localhost:5173 -t .
 로그인 서버를 **새 버전으로 갱신할 때마다** 자산 URL 의 `?v=` 값이 바뀐다.
 
 ```html
-<script src="{설치루트}/public/assets/ulogin-client.js?v=1.2.0"></script>
+<script src="{설치루트}/public/assets/ulogin-client.js?v={버전}"></script>
 ```
+
+`{버전}` 은 자리표시자다. 넣을 값은 `{설치루트}/public/version.txt` 첫 줄의 `_` 앞부분이며,
+확인 방법은 바로 아래 [서버에 지금 어느 버전이 올라가 있는지 확인](#서버에-지금-어느-버전이-올라가-있는지-확인) 에 있다.
 
 - 이 쿼리가 **캐시 무효화의 주 수단이다.** 값이 바뀌면 브라우저에게는 처음 보는 URL 이므로
   무조건 새로 받는다. 서버의 `mod_headers`·`.htaccess`·프록시 설정에 의존하지 않는다.

@@ -796,6 +796,45 @@ function ins_render_config($v)
 // 화면
 // =====================================================================
 
+/**
+ * 이 패키지의 버전 문자열. 손으로 박아 두지 않는다 (리더 판정 D-99 · D-125).
+ *
+ * 여기에는 '범용 로그인 서비스 v1.1.0' 이 하드코딩되어 있었고, v1.2.0·v1.3.0 을
+ * 지나도록 그대로 남아 설치기 첫 화면이 낡은 버전을 주장했다.
+ * public/index.html 푸터에서 같은 결함을 없앤 D-99 와 같은 종류다.
+ *
+ * 버전의 단일 출처는 {설치루트}/public/version.txt 다 (D-84).
+ * 경로는 install.php 자신이 이미 요구하는 배치에 의존한다 — 4단계 BASE_URL 안내가
+ * "이 주소 아래에 /server/ 와 /public/ 가 있어야 합니다" 라고 명시한다(D-28).
+ * 즉 dirname(INS_DIR) 아래의 public/ 은 설치기가 이미 전제하는 자리이고,
+ * 새로운 가정을 들이지 않는다.
+ *
+ * **읽기 실패는 설치를 막지 않는다.** 설치기는 배포 초기에 도는 물건이라
+ * 버전 표시 때문에 설치가 중단되면 본말전도다. 파일이 없든 권한이 없든 값이
+ * 이상하든 빈 문자열을 돌려주고, 부제는 버전 없이 인쇄된다.
+ *
+ * @return string 예: '1.3.0_20260828' / 읽지 못하면 ''
+ */
+function ins_package_version()
+{
+    $path = dirname(INS_DIR) . '/public/version.txt';
+    if (!@is_file($path) || !@is_readable($path)) {
+        return '';
+    }
+    $raw = @file_get_contents($path, false, null, 0, 256);
+    if ($raw === false || $raw === '') {
+        return '';
+    }
+    // 첫 줄만 쓴다. 파일이 무엇이든 화면에 나가는 것은 짧은 안전 문자열뿐이다.
+    // (strtok 은 전역 토큰 상태를 남기므로 쓰지 않는다)
+    $parts = preg_split('/\r\n|\r|\n/', $raw, 2);
+    $line  = trim($parts[0]);
+    if ($line === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/', $line)) {
+        return '';
+    }
+    return $line;
+}
+
 function ins_page_start($title, $step)
 {
     global $INS_STEP_NAMES;
@@ -852,7 +891,10 @@ pre{background:#1e2530;color:#e7edf5;padding:14px 16px;border-radius:8px;overflo
 .radio b{display:inline-block}
 .foot{color:var(--mut);font-size:12px;text-align:center;margin-top:26px}
 </style></head><body><div class="wrap">';
-    echo '<h1>ulogin 설치</h1><p class="sub">범용 로그인 서비스 v1.1.0 — ' . ins_h($title) . '</p>';
+    $pkgVer = ins_package_version();
+    echo '<h1>ulogin 설치</h1><p class="sub">범용 로그인 서비스'
+       . ($pkgVer === '' ? '' : ' v' . ins_h($pkgVer))
+       . ' — ' . ins_h($title) . '</p>';
     echo '<div class="steps">';
     foreach ($INS_STEP_NAMES as $n => $label) {
         $cls = $n === $step ? 'on' : ($n < $step ? 'done' : '');

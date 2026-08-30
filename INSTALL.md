@@ -1,4 +1,4 @@
-# ulogin 설치 가이드 — v1.2.0_20260828
+# ulogin 설치 가이드 — v1.3.0_20260828
 
 이 문서 하나만 보고 끝까지 따라 하면 설치가 완료된다. **위에서부터 순서대로** 진행하라.
 PHP를 몰라도 된다. 코드를 손으로 고칠 일은 없다(단, 6절·7절의 예외 상황 제외).
@@ -14,7 +14,7 @@ PHP를 몰라도 된다. 코드를 손으로 고칠 일은 없다(단, 6절·7�
 
 ## 목차
 
-- [0. 준비물](#0-준비물)
+- [0. 준비물](#0-준비물) — 호스팅 요구사항 · DB 정보 · **[7.2에서 무엇이 안전하고 무엇이 그렇지 않은가](#72에서-무엇이-안전하고-무엇이-그렇지-않은가)**
 - [1. 파일 업로드](#1-파일-업로드)
 - [2. 웹 설치기 실행 (8단계)](#2-웹-설치기-실행-8단계)
 - [3. 설치 후 보안 확인 (4항목)](#3-설치-후-보안-확인-4항목) — **+ 5번 항목: 쿠키 속성 확인**
@@ -81,7 +81,7 @@ echo '7.2 이상: ' . (version_compare(PHP_VERSION, '7.2.0', '>=') ? 'OK' : 'TOO
 echo '보안 지원: ' . (version_compare(PHP_VERSION, '7.4.0', '>=') ? '유지되는 버전대' : 'EOL (동작은 함)') . "<br>";
 // 실행 모드(SAPI). EOL 버전을 쓸 수밖에 없다면 이 값이 위험 판정을 가른다.
 //   fpm-fcgi = php-fpm / cgi-fcgi = FastCGI / apache2handler = mod_php / litespeed = LiteSpeed
-//   해석은 README.md 의 "7.2에서 무엇이 안전하고 무엇이 그렇지 않은가" 절 참조
+//   해석은 이 스니펫 바로 다음의 "7.2에서 무엇이 안전하고 무엇이 그렇지 않은가" 절 참조
 echo '실행 모드(SAPI): ' . PHP_SAPI . "<br>";
 foreach (['pdo_mysql', 'openssl', 'mbstring', 'json'] as $e) {
     echo $e . ': ' . (extension_loaded($e) ? 'OK' : 'MISSING') . "<br>";
@@ -89,6 +89,102 @@ foreach (['pdo_mysql', 'openssl', 'mbstring', 'json'] as $e) {
 echo 'random_bytes(): ' . (function_exists('random_bytes') ? 'OK' : 'MISSING') . "<br>";
 echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
 ```
+
+#### 7.2에서 무엇이 안전하고 무엇이 그렇지 않은가
+
+**위의 `PHP 버전 — 최소 7.2, 다만 7.2·7.3은 보안 지원이 끝났다` 인용 블록은 왜 7.4 이상으로
+올려야 하는가를 말한다.** 이 절은 **올리지 않고 쓰는 동안 정확히 무엇이 위험한가**를 층으로 나눠
+적는다. 두 개는 다른 질문이다. 근거는 v1.1.0 라운드의 **내부 보안 감사 기록 §C**의 실측이다.
+
+**결론부터 — 위험은 애플리케이션 층이 아니라 인터프리터 층에 있다.**
+
+##### 애플리케이션 층 — 7.2에서도 동작이 달라지지 않는다 (함수별 실측)
+
+| 이 코드가 의존하는 것 | 7.2 대비 |
+|---|---|
+| `password_hash` / `password_verify` / `password_needs_rehash` | `PASSWORD_DEFAULT`는 7.2도 8.1도 **bcrypt cost 10**이다(실측: `password_get_info` → `{"algo":"2y","cost":10}`, `password_needs_rehash` → `false`). 7.2에서 만든 `$2y$10$…` 해시가 7.4·8.x에서 그대로 검증되고 재해시도 발생하지 않는다 — **7.2 ↔ 7.4 양방향 이관에서 비밀번호가 그대로 동작한다** |
+| `PASSWORD_DEFAULT` 상수의 **타입** (7.2는 `int 1`, 7.4+는 `string "2y"`) | 코드는 이 값을 `password_hash`·`password_needs_rehash`에 **넘기기만** 하고 저장·비교하지 않는다(전수 확인) → 무영향 |
+| `random_bytes` / `random_int` | 7.0+. CSPRNG 소스 동일 |
+| `openssl_encrypt` / `openssl_decrypt` + `aes-256-cbc` + `OPENSSL_RAW_DATA` | 5.4+부터 동일 시그니처·동일 결과. **시크릿 암호화가 7.2에서 약해지지 않는다** |
+| `PDO` / `pdo_mysql` + `ATTR_EMULATE_PREPARES=false` | 7.2 존재. 서버측 prepare 동작 동일 |
+| `hash_equals` / `hash('sha256')` | 동일 |
+| `json_encode` / `json_decode` | 5.2+. `JSON_THROW_ON_ERROR`(7.3)는 **쓰지 않는다** |
+| `preg_*` | **7.3에서 정규식 엔진이 PCRE1(8.x) → PCRE2로 교체됐다.** 실제로 확인한 것은 **PCRE2 전용 문법에 대한 의존이 0건**이라는 것이다 — `server/` 전수에서 `/u` 플래그 · 룩비하인드 `(?<…)` · `\p{…}` · 소유 수량자 **0건**(재확인 실측). 쓰이는 것은 ASCII 문자클래스 + `{n,m}` 상한 있는 수량자뿐이다(`/^[a-z0-9_]{4,20}$/`, `/^[\x20-\x7E]*$/`, UUID·날짜 패턴, `/\r\n\|\r\|\n/` 같은 개행 분리 등). **두 엔진이 동일하게 해석하는 부분집합만 쓴다** → 엔진 교체의 영향을 받지 않는다 |
+| `mb_strlen` / `mb_substr` / `mb_strtolower` / `mb_internal_encoding` | 전부 4.x·5.x. `mb_str_split`(7.4)은 쓰지 않는다 |
+| `filter_var` | `FILTER_VALIDATE_IP` · `FILTER_VALIDATE_EMAIL`만 쓴다(5.2+). `FILTER_VALIDATE_URL`은 **쓰지 않는다** — 7.x에 남아 있는 URL 검증 우회 계열과 무관하다 |
+| 쿠키 보호 속성 (`HttpOnly` · `Secure` · `SameSite`) | v1.1.0이 넣은 `send_cookie()` 래퍼로 **7.2에서도 같은 헤더가 나간다.** 배포 후 확인 절차는 [3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인)에 있다 |
+
+**따라서 "7.2라서 이 시스템의 인증·암호화가 약해진다"는 명제는 이 코드에서 성립하지 않는다.**
+7.4로 올려서 얻는 것은 애플리케이션 동작의 개선이 아니라 **인터프리터 패치**다.
+
+##### 인터프리터 층 — 여기가 실제 위험이고, 애플리케이션 코드로는 막을 수 없다
+
+7.2의 마지막 릴리스는 **7.2.34 (2020-10)**이다. 그 이후 발견된 인터프리터·확장 모듈 결함에는
+**어떤 패치도 나오지 않는다.** 위험의 본질은 특정 CVE 번호가 아니라 이 사실이다.
+
+이 시스템의 구성에서 **가장 현실적인 것은 하나**다.
+
+> **공용 호스팅의 php-fpm 권한 상승 계열** (CVE-2021-21703 계열 — 7.3.33 / 7.4.26에서 수정됐고 **7.2에는 패치가 없다**).
+>
+> 성립 조건: 호스팅이 PHP를 **php-fpm으로 실행**하고, **같은 서버에 다른 고객 계정이 함께 올라가 있는** 것.
+> 공용 호스팅에서는 그 구성이 흔하다.
+>
+> 성공하면 공격자가 `server/config.php`를 읽고 그 안의 **`SECRET_ENC_KEY`와 DB 자격증명**을 얻는다.
+> 그 두 개가 함께 있으면 **DB에 저장된 AI 키가 전량 복호화된다.** 이 시스템이 다루는 자산이
+> 곧 그 키이므로, 일반 웹앱보다 실패의 대가가 크다.
+>
+> **이것은 환경 위험이다.** 애플리케이션에서 방어할 수단이 없다 — `SECRET_ENC_KEY`는 복호화에
+> 반드시 필요하므로 서버 프로세스가 읽을 수 있는 곳에 있어야 한다.
+
+반대로, 7.2.34 이후 공개된 권고 중 **이 시스템에서는 성립하지 않는 것들**도 구분해 둔다.
+"7.2는 전부 위험하다"는 식의 뭉갠 서술은 판단에 도움이 되지 않는다.
+
+| 사안 | 이 시스템에서의 판정 |
+|---|---|
+| `pdo_mysql` / mysqlnd 버퍼 오버플로우 (CVE-2022-31626 계열) | **성립하지 않는다.** 공격자가 **DB 접속 비밀번호를 통제**해야 하는데, 여기서는 `config.php`에 관리자가 넣는 값이다 |
+| PHP-CGI 인자 주입 RCE (CVE-2024-4577) | **조건 미충족(추정).** PHP를 **CGI 모드로, Windows에서** 특정 코드페이지로 돌릴 때만 성립한다. 대상 호스팅이 리눅스면 무관하다 — 그래도 아래 실행 모드 확인에 포함시켰다 |
+| `password_verify('', $hash)` 우회 (CVE-2024-3096) | **도달 불가.** 저장된 해시가 **NUL로 시작하는** 비밀번호에서 만들어졌을 때만 성립하는데, `v_string()`의 `trim()`이 PHP 기본 문자셋(`" \t\n\r\0\x0B"`)에 NUL을 포함하므로 선행 NUL이 저장 전에 제거된다. **다만 이것은 우연한 방어였다** — v1.1.0에서 `validate_password()`에 NUL **명시 차단**을 넣어 우연에 의존하지 않게 했다(내부 감사 V11-L-5 / 리더 판정 D-66) |
+| `__Host-` / `__Secure-` 쿠키 접두사 우회 (CVE-2024-2756) | **무관.** 이 시스템은 두 접두사를 쓰지 않는다. **다만 "7.2에서 `__Host-` 접두사를 붙여 강화하자"는 시도는 하지 마라** — 7.2에는 이 CVE의 패치가 없어서 **거짓 안심**이 된다 |
+
+> 위 CVE 식별자는 7.2.34 이후 공개된 권고 중 이 코드가 쓰는 확장에 해당하는 것을 정리한 것이며,
+> **실제 7.2 빌드로 대조 검증하지는 못했다**(실 호스팅 PHP 7.2 런타임은 지금도 미검증 항목이다).
+> 결론은 식별자의 정확성에 의존하지 않는다 — **7.2에는 어떤 인터프리터 결함에도 패치가 나오지
+> 않는다**는 것이 위험의 본질이다.
+
+##### 그래서 배포 전에 할 일 — 호스팅의 PHP 실행 모드를 확인하라
+
+위 판정이 갈리는 지점이 **실행 모드(SAPI)** 하나다. 7.2를 계속 쓸 수밖에 없다면, 최소한
+자기가 어느 구성에 있는지는 알고 있어야 한다.
+
+**방법 1 — 호스팅 제어판.** "PHP 버전" / "PHP 핸들러" / "PHP 실행 방식" 메뉴에 보통
+`PHP-FPM` · `FastCGI(CGI)` · `mod_php` · `LiteSpeed` 중 하나가 표시된다.
+
+**방법 2 — 직접 확인 (30초).** **바로 위의 `phpcheck.php` 스니펫이 `실행 모드(SAPI)` 행을
+이미 출력한다.** 그것을 쓰면 된다. 그 파일을 아직 안 만들었다면 아래 한 줄만으로도 충분하다 —
+설치 루트에 올리고 브라우저로 열어 본 뒤 **즉시 삭제한다.**
+
+```php
+<?php echo PHP_SAPI, ' / ', PHP_VERSION;
+```
+
+출력 해석:
+
+| 출력 | 실행 모드 | 위 표의 의미 |
+|---|---|---|
+| `fpm-fcgi` | **php-fpm** | 위 권한 상승 계열의 성립 조건에 해당한다. 같은 서버에 다른 테넌트가 있는지까지 확인하라 |
+| `cgi-fcgi` | FastCGI / CGI | CVE-2024-4577은 **Windows + 특정 코드페이지**에서만 성립한다. 리눅스면 무관 |
+| `apache2handler` | mod_php | 위 두 계열과 무관. `php_flag engine off`가 동작하는 구성이다(**실 호스팅에서는 미검증**) |
+| `litespeed` | LiteSpeed SAPI | php-fpm이 아니다. 다만 자체 SAPI도 7.2 대상 패치는 없다 |
+
+**방법 3 — 호스팅사에 물어볼 문장.** 그대로 복사해 쓰면 된다.
+
+```
+1. PHP를 php-fpm / FastCGI(CGI) / mod_php / LiteSpeed 중 무엇으로 실행하고 있습니까?
+2. 같은 서버에 다른 고객 계정이 함께 올라가 있는 공용 환경입니까?
+3. PHP 7.4 이상을 선택할 수 있습니까? 가능하면 어떤 절차로 바꿉니까?
+```
+
+3번이 "가능하다"면 **거기서 끝이다.** 이 절 전체가 필요 없어진다 — 7.4 이상으로 올려라.
 
 ### 0-2. DB 정보 (미리 받아 둘 것)
 
@@ -133,9 +229,24 @@ echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
 
 ### 1-1. "설치 루트"란 무엇인가 (여기를 틀리면 전부 404다)
 
-버전 폴더 `v1.2.0_20260828/`의 **내용을 그대로** 업로드한다. 폴더 자체를 통째로 올려도 되고
-내용만 꺼내 올려도 되지만, **`server/` · `public/` · `examples/` 세 디렉토리가 같은 부모 아래 나란히**
-있어야 한다. 그 부모의 공개 URL이 **설치 루트**다.
+**저장소 루트의 `server/` · `public/` · `examples/` 세 디렉토리를 그대로 업로드한다.**
+세 디렉토리가 **같은 부모 아래 나란히** 있어야 한다. 그 부모의 공개 URL이 **설치 루트**다.
+
+> **문서와 개발용 파일은 서버에 올리지 않아도 된다.** `README.md` · `INSTALL.md` ·
+> `CHANGELOG.md` · `AI_INTEGRATION_GUIDE.md` · `LICENSE` · `docs/` · `.gitignore` ·
+> `.gitattributes` 는 **설치·동작에 전혀 쓰이지 않는다.** 특히 `docs/screenshots/` 는
+> PNG 수십 장이라 공용 호스팅 용량만 쓴다. 올려도 해는 없지만 올릴 이유도 없다.
+>
+> **`tools/` 는 다르다 — 올리지 마라.** 저장소에는 들어 있지만 서버에 둘 물건이 아니다.
+> 릴리스를 내보내는 사람이 **자기 PC에서 CLI로** 돌리는 스크립트만 들어 있고
+> ([8-1절](#8-1-1단계--버전-문자열-일괄-치환)), 설치·동작에는 전혀 쓰이지 않는다.
+> 두 스크립트 모두 CLI 전용 `$argv`를 읽으므로 브라우저로 열면 즉시 죽는데,
+> `display_errors`가 켜진 호스팅에서는 **그 오류가 서버의 절대 경로를 화면에 인쇄한다.**
+> `tools/.htaccess` 가 그 경우를 막지만, 그것은 두 번째 방어선이고
+> **첫 번째 방어선은 폴더를 아예 올리지 않는 것이다**(`.htaccess`가 무시되는 환경에서는
+> 그 두 번째 방어선도 없다 — [7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)).
+>
+> **올려야 하는 것은 위 세 디렉토리뿐이다.**
 
 ```
 {설치루트}/                          ← 예: https://example.com/ulogin
@@ -727,7 +838,8 @@ send_cookie()  ─ PHP_VERSION_ID >= 70300 ─→ setcookie($name, $value, $opti
 두 분기가 같은 헤더 문자열을 만드는지 16개 케이스로 바이트 단위 대조해 전부 일치했다.
 **그래도 실제 배포 환경에서 눈으로 한 번 보는 것이 최종 확인이다** —
 개발 환경에 PHP 7.2 바이너리가 없어 7.2 인터프리터 자체로는 실행하지 못했다
-(`README.md` `## 미검증 항목` 10번).
+(`README.md`의 `## 알려진 제한 · 미검증 항목`  →  `### 검증하지 못한 것`의
+**실 호스팅의 PHP 7.2 인터프리터** 행).
 
 ---
 
@@ -876,10 +988,9 @@ D-54의 게이트 검사는 **생성·수정 시점**만 막는다. 그 이전�
 
 ### 5-2. 데모 열기
 
-버전 폴더 안에서 로컬 웹서버를 띄운다.
+**저장소 루트에서** 로컬 웹서버를 띄운다(`server/` · `public/` · `examples/` 가 보이는 자리다).
 
 ```bash
-cd v1.2.0_20260828
 php -S localhost:5173 -t .
 ```
 
@@ -909,8 +1020,9 @@ http://localhost:5173/examples/local-ai-app.html
 ```html
 <!-- ?v= 는 캐시 무효화용이다. 지우면 브라우저가 옛 ulogin-client.js 를 최대 1년간 계속 쓴다
      (자산에 immutable 이 걸려 있어 일반 새로고침으로도 갱신되지 않는다).
-     값은 {설치루트}/public/version.txt 의 앞부분과 맞춘다 — 8-3절. -->
-<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v=1.2.0"></script>
+     {버전} 은 자리표시자다. 그대로 두지 말고 실제 값으로 바꾼다 —
+     값은 {설치루트}/public/version.txt 첫 줄의 _ 앞부분이다. 확인 방법은 8-3절. -->
+<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v={버전}"></script>
 <script>
   // server 는 설치 루트 한 칸. /server 나 /public 을 붙이지 않는다.
   var ulogin = new UloginClient({
@@ -936,8 +1048,9 @@ http://localhost:5173/examples/local-ai-app.html
 `callback.html`에는 **같은 값으로 클라이언트를 하나 더 만들고** 한 줄만 부른다.
 
 ```html
-<!-- ?v= 는 캐시 무효화용이다. 위 코드와 같은 값으로 맞춘다 — 지우면 옛 파일이 최대 1년 고정된다. -->
-<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v=1.2.0"></script>
+<!-- ?v= 는 캐시 무효화용이다. {버전} 은 자리표시자이며 위 코드와 같은 실제 값으로 맞춘다
+     ({설치루트}/public/version.txt 첫 줄의 _ 앞부분) — 지우면 옛 파일이 최대 1년 고정된다. -->
+<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v={버전}"></script>
 <script>
   var ulogin = new UloginClient({
     server: 'https://example.com/ulogin',
@@ -1274,7 +1387,7 @@ Bearer로 호출해도 쿠키를 지우는 엔드포인트는 500이 된다.
 > `revoke_reason`이 `logout`(전체 기기 로그아웃이면 `logout_all`, 탈퇴면 `withdraw`)이고
 > `revoked_at`이 채워져 있으면 회수는 끝난 것이다. 로그인 로그에 그 행이 없더라도
 > 그 세션은 살아 있지 않다.
-> 이 순서를 고치는 것은 다음 버전 과제다 (`README.md` `## v1.3 검토 목록` 5번). **v1.2.0에서는 처리하지 않았다** — 그 라운드는 배포 반영·캐시만 다뤘다.
+> 이 순서를 고치는 것은 다음 버전 과제다 (`docs/PORTFOLIO.md` 9-3절 **"감사 로그 1행 누락 제거"**). **v1.2.0에서는 처리하지 않았다** — 그 라운드는 배포 반영·캐시만 다뤘다.
 
 ### 7-8. 프록시/CDN 뒤인데 무한 리다이렉트에 빠진다
 
@@ -1370,8 +1483,7 @@ sudo nginx -t && sudo systemctl reload nginx
 > 상수를 **정의**하며, 나머지 **12개**가 상단에서 그 상수가 없으면 즉시 종료한다
 > (**정의 1 + 검사 12 = 13**, 리더 판정 D-34 / D-43).
 >
-> 파일이 늘거나 줄면 이 세 숫자를 함께 고쳐야 한다. 다시 세는 명령은 아래 한 줄이다
-> (`README.md` `## 보안 설계 요약`의 같은 문장도 함께 고칠 것).
+> 파일이 늘거나 줄면 이 세 숫자를 함께 고쳐야 한다. 다시 세는 명령은 아래 한 줄이다.
 >
 > ```bash
 > ls -1 server/core/*.php | wc -l                                      # 13 = 전체
@@ -1422,8 +1534,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ##### 이 설정이 없을 때 실제로 깨지는 것은 "링크·주소창 재진입"뿐이다 — 새로고침은 동작한다
 
 **이 구분을 알면 진단이 빨라지고, 모르면 설정을 넣기 전에는 아무것도 안 된다고 오판한다.**
-`mod_headers`가 없는 Apache 인스턴스를 별도로 만들어 실측한 결과다(2026-08-28,
-`_workspace/25_qa_v1.2.md` `## A. 사용자 문제 해결 확인`).
+`mod_headers`가 없는 Apache 인스턴스를 별도로 만들어 실측한 결과다(2026-08-28, 내부 QA 기록).
 
 | 사용자가 한 동작 | `mod_headers` 있음 (의도한 배포 형태) | `mod_headers` 없음 / `.htaccess` 무시 (이 절의 환경) |
 |---|---|---|
@@ -1515,29 +1626,33 @@ location ^~ /ulogin/examples/ {
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-> **`?v=1.2.0` 쿼리스트링은 `location` 매칭에 영향을 주지 않는다.** nginx는 쿼리를 뗀
-> 경로로만 매칭하므로 `assets/api.js?v=1.2.0`은 `location ~* \.(css|js)$`에 정상적으로 걸린다.
+> **`?v={버전}` 쿼리스트링은 `location` 매칭에 영향을 주지 않는다.** nginx는 쿼리를 뗀
+> 경로로만 매칭하므로 `assets/api.js?v={버전}`은 `location ~* \.(css|js)$`에 정상적으로 걸린다.
 >
-> **이 블록은 `README.md`의 `### M-4 보충`에 있는 `public/` 스니펫과 같은 `location`이다.**
-> 그쪽은 보안 헤더만 다루고 여기는 **보안 헤더 + 캐시 합본**이다.
-> **둘 다 넣지 마라 — 이것 하나만 넣으면 양쪽이 모두 걸린다.**
+> **위 블록 하나가 `public/`에 필요한 전부다 — 보안 헤더 5종 + 캐시 3종 합본이다.**
+> 다른 문서에서 스니펫을 더 가져올 필요가 없다.
 >
 > `server/`쪽 deny 규칙은 이 절 앞부분의 스니펫이다. 그것과 이 블록은 **둘 다** 필요하다.
 
 ##### Apache `AllowOverride None` 환경의 캐시 헤더
 
-Apache는 `Header`가 하위 컨텍스트로 상속되므로 nginx처럼 복사할 필요가 없다.
-보안 헤더 5종은 `README.md` `### M-4 보충`의 `<Directory>` 블록에 있다.
-그 블록에 캐시 규칙 3종을 **더한** 형태가 아래다.
+Apache는 `Header`가 하위 컨텍스트로 상속되므로 nginx처럼 하위 블록마다 복사할 필요가 없다.
+**아래 한 블록이 보안 헤더 5종 + 캐시 정책 3종 전부다** — 다른 문서를 함께 보지 않아도 된다.
+값의 정본은 `{설치루트}/public/.htaccess`이고, 아래는 그 파일에서 그대로 옮긴 것이다.
 
 ```apache
 <Directory "/var/www/html/ulogin/public">
     Options -Indexes
     DirectoryIndex index.html
     <IfModule mod_headers.c>
-        # 보안 헤더 5종은 README.md `### M-4 보충` 의 같은 블록에 있다. 값의 정본은 public/.htaccess.
-        # 여기서는 캐시 3종만 보인다 — 두 블록을 하나로 합쳐서 넣어라.
+        # ── 보안 헤더 5종 (public/.htaccess 의 값과 같다) ──────────────────
+        Header always set X-Content-Type-Options "nosniff"
+        Header always set X-Frame-Options "DENY"
+        Header always set Referrer-Policy "strict-origin-when-cross-origin"
+        Header always set Permissions-Policy "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), usb=()"
+        Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
 
+        # ── 캐시 정책 3종 ────────────────────────────────────────────────
         # 1) HTML — no-store. ?v= 방식의 전제다.
         <FilesMatch "\.html$">
             Header always set Cache-Control "no-store"
@@ -1571,6 +1686,22 @@ Apache는 `Header`가 하위 컨텍스트로 상속되므로 nginx처럼 복사�
 `AllowOverride None`이 호스팅사 정책이고 서버 설정을 만질 수 없다면, 아래를 요청한다.
 **무엇을 요청해야 하는지 모르면 "설정을 바꿔 주세요"만 보내게 되고 답이 돌아오지 않는다.**
 
+> **보낼 때 위의 `<Directory>` 블록 두 개(`public/` · `examples/`)를 그대로 복사해 첨부하라.**
+> 아래 문안은 **무엇을 왜 요청하는지**만 담고 있고, **지시자와 값은 그 블록이 정본이다.**
+> **값을 문안에 풀어 옮겨 적지 마라** — `Content-Security-Policy` 지시자 **13개** ·
+> `Permissions-Policy` 지시자 **14개**를 손으로 옮기면 한 글자만 틀려도 조용히 다르게 적용되고,
+> 정본이 두 곳으로 갈라진다. **두 개수는 옮겨 적지 말고 다시 세라** — 정본에서 직접 세는 명령이다
+> (2026-08-30 실측값이 각각 13 · 14였다):
+>
+> ```bash
+> grep -o 'Content-Security-Policy "[^"]*"' public/.htaccess | tr ';' '\n' | grep -c -- '-src\|-uri\|-action\|-ancestors'
+> grep -o 'Permissions-Policy "[^"]*"' public/.htaccess | grep -o '=()' | wc -l
+> ```
+>
+> **`server/` 접근 차단은 별개다.** 이 문안은 `public/`·`examples/`의 **응답 헤더**만 다룬다.
+> `server/core/` · `server/storage/` · `config.php` 차단은 [7-9절 앞부분](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)의
+> `Require all denied` 스니펫이고, **그것도 같은 메일에 함께 요청해야 한다.**
+
 ```
 안녕하세요. {도메인} 계정 관련 문의입니다.
 
@@ -1582,14 +1713,31 @@ Apache는 `Header`가 하위 컨텍스트로 상속되므로 nginx처럼 복사�
    (.htaccess 안에서 Header 지시자와 Options -Indexes 를 쓰려고 합니다)
 2) mod_headers 모듈이 활성화되어 있는지 알려주세요.
 
-1)이 정책상 불가하다면, 아래 응답 헤더를 서버 설정에 직접 넣어 주실 수 있을까요.
-  - {설치루트}/public/ 의 *.html          → Cache-Control: no-store
-  - {설치루트}/public/ 의 *.css, *.js     → Cache-Control: public, max-age=31536000, immutable
-  - {설치루트}/public/version.txt         → Cache-Control: no-store
-  - {설치루트}/examples/ 의 *.html        → Cache-Control: no-store
+1)이 정책상 불가하다면, 첨부한 Apache 설정 블록(<Directory> 2개)을 서버 설정에
+직접 넣어 주실 수 있을까요. 내용은 아래 두 가지이고, 정확한 지시자와 값은 첨부 파일에
+그대로 들어 있습니다.
+
+  A. 보안 응답 헤더 5종 — {설치루트}/public/ 전체에 적용
+     Content-Security-Policy / X-Frame-Options / X-Content-Type-Options /
+     Referrer-Policy / Permissions-Policy
+     (값은 첨부한 블록 그대로 넣어 주세요. 로그인 화면이 있는 디렉토리라 필요합니다)
+
+  B. 캐시 정책 3종 — 경로별로 Cache-Control 이 달라집니다
+     - {설치루트}/public/ 의 *.html          → 캐시하지 않음
+     - {설치루트}/public/ 의 *.css, *.js     → 장기 캐시 (URL 에 버전 쿼리가 붙습니다)
+     - {설치루트}/public/version.txt         → 캐시하지 않음
+     - {설치루트}/examples/ 의 *.html        → 캐시하지 않음
+     (examples/ 는 첨부의 두 번째 <Directory> 블록입니다. 보안 헤더 5종은
+      이 디렉토리에 의도적으로 넣지 않았습니다)
+
+mod_headers 가 없어 Header 지시자를 쓸 수 없다면 그 사실만 알려주셔도 됩니다.
 
 감사합니다.
 ```
+
+> **`A`를 빼고 `B`만 요청하지 마라.** 캐시 4줄만 적어 보내면 호스팅사는 그것만 넣어 주고,
+> **보내는 사람은 막힌 줄 모른 채 "완료했다"고 믿게 된다.** 아래 확인 명령의 첫 줄이
+> `content-security-policy`를 함께 보는 이유가 이것이다.
 
 ##### 적용됐는지 확인하는 방법
 
@@ -1612,14 +1760,15 @@ curl -sSI "https://your-host.com/ulogin/examples/callback.html"  | grep -i "cach
 
 > **검증 상태는 두 스니펫이 다르다.**
 >
-> - **Apache `<Directory>` 스니펫 — 검증했다.** v1.2.0 QA가 `AllowOverride None` 환경에 이 블록과
->   `README.md` `### M-4 보충`의 보안 헤더 블록을 합쳐 실제로 기동해 `httpd -t` **Syntax OK** 후
->   위 기대값 표를 **전부 충족**했다(Apache 2.4.58 + `mod_headers`, 2026-08-28.
->   `_workspace/25_qa_v1.2.md` F4). **남은 것은 실 호스팅의 Apache 버전·정책 차이다**
+> - **Apache `<Directory>` 스니펫 — 검증했다.** v1.2.0 QA가 `AllowOverride None` 환경에서
+>   이 블록(보안 헤더 5종 + 캐시 3종 합본)을 실제로 기동해 `httpd -t` **Syntax OK** 후
+>   위 기대값 표를 **전부 충족**했다(Apache 2.4.58 + `mod_headers`, 2026-08-28, 내부 QA 기록).
+>   **남은 것은 실 호스팅의 Apache 버전·정책 차이다**
 > - **nginx 스니펫 — 여전히 미검증이다.** **이 개발 환경에 nginx가 없어 `nginx -t`조차 돌리지 못했다.**
 >   `include`로 보안 헤더를 재삽입하는 형태가 의도대로 동작하는지 확인하지 못했고,
 >   **`add_header` 비상속도 nginx 문서상의 동작이며 실측이 아니다.** 검증한 것은 값의
->   출처(`public/.htaccess`와 문자 단위 대조)뿐이다 (`README.md` `## 미검증 항목` 11번)
+>   출처(`public/.htaccess`와 문자 단위 대조)뿐이다
+>   (`README.md`의 `## 알려진 제한 · 미검증 항목`  →  `### 검증하지 못한 것`의 **nginx · LiteSpeed** 행)
 >
 > **Apache가 통과했다는 것이 nginx가 통과한다는 뜻이 아니다.** 어느 쪽이든 **적용 후 위의 `curl`
 > 4줄을 직접 확인하라.**
@@ -1943,29 +2092,39 @@ v1.2.0은 테이블·컬럼을 하나도 바꾸지 않았다. 스키마가 바�
 `.htaccess`·`mod_headers`·프록시 설정에 전혀 의존하지 않는다.
 
 손으로 넣지 마라. 참조가 여러 파일에 흩어져 있어 반드시 일부가 빠진다.
-치환 스크립트가 `_workspace/bump_asset_version.php`에 있다.
+치환 스크립트가 저장소의 `tools/bump_asset_version.php`에 있다.
 
-> **이 스크립트는 배포물이 아니다.** `_workspace/`에 두고 릴리스마다 재사용한다.
-> **호스팅에 업로드하지 마라.** 버전 폴더에 복사해 넣어서도 안 된다.
+> **이 스크립트는 배포물이 아니다 — 그러나 저장소에는 들어 있다.** 두 층을 구분하라.
+> **저장소**는 소스와 릴리스 도구를 담고, **서버**에는 `server/` · `public/` · `examples/`만 올라간다.
+> `tools/`는 릴리스를 내보내는 사람이 **자기 PC에서 CLI로** 돌리는 폴더다.
+> **호스팅에 업로드하지 마라**([1-1절](#1-1-설치-루트란-무엇인가-여기를-틀리면-전부-404다)의 제외 목록).
+> 저장소를 clone해 **설치만** 하는 경우에는 이 절 자체가 필요 없다 —
+> 이 절은 **자기가 배포본을 관리하며 새 버전을 내보내는 사람**을 위한 것이다.
+> 도구 자체의 설명은 `tools/README.md`에 있다.
 
 ```bash
-cd _workspace
-php bump_asset_version.php <새버전> --dir=../<버전폴더> --version-txt=<새버전>_<YYYYMMDD>
+# 저장소 루트에서 (tools/ 의 부모가 곧 설치 루트다)
+php tools/bump_asset_version.php <새버전> --version-txt=<새버전>_<YYYYMMDD>
 ```
 
 실제 값 예시 (v1.2.0을 v1.3.0으로 올리는 경우):
 
 ```bash
-cd _workspace
-php bump_asset_version.php 1.3.0 --dir=../v1.3.0_20260901 --dry-run
-php bump_asset_version.php 1.3.0 --dir=../v1.3.0_20260901 --version-txt=1.3.0_20260901
+php tools/bump_asset_version.php 1.3.0 --dry-run
+php tools/bump_asset_version.php 1.3.0 --version-txt=1.3.0_20260901
+```
+
+릴리스마다 폴더를 따로 두고 관리한다면 `--dir=`로 대상을 명시한다.
+
+```bash
+php tools/bump_asset_version.php 1.3.0 --dir=/path/to/ulogin --dry-run
 ```
 
 옵션은 이것뿐이다.
 
 | 옵션 | 의미 |
 |---|---|
-| `--dir=<경로>` | 대상 버전 폴더. 생략하면 스크립트 상위의 가장 최근 버전 폴더를 자동 선택한다 |
+| `--dir=<경로>` | 대상 설치 루트 = `public/`을 가진 폴더. **생략하면 이 스크립트의 상위 폴더**(= `tools/`의 부모)를 쓴다. 상위에 `public/`이 없으면 상위를 작업 루트로 보고 그 안의 가장 최근 `v{x}.{y}.{z}_{YYYYMMDD}` 폴더를 고른다 |
 | `--from=<현재버전>` | 치환 대상을 이 값으로 한정한다. 생략하면 발견된 모든 `?v=` 값이 대상이다 |
 | `--version-txt=<문자열>` | `public/version.txt`를 이 내용으로 덮어쓴다. **형식이 `{버전}_{YYYYMMDD}`로 달라 자동 추론하지 않는다** |
 | `--dry-run` | 파일을 쓰지 않고 결과만 출력한다 |
@@ -2043,6 +2202,11 @@ echo "종료코드=$?"
 | `public/**` (HTML 8개 · `assets/` 4개 · `.htaccess` · `version.txt`) | 화면과 자산. **`version.txt`도 반드시 함께 올린다** |
 | `examples/**` (HTML 2개 · `README.md` · **`.htaccess`**) | 데모. 필요 없으면 아예 올리지 않아도 된다. 올린다면 **`.htaccess`를 함께 올려라** — 점(`.`)으로 시작해 FTP 클라이언트에서 숨겨지기 쉽고, 이 파일이 없으면 `callback.html`이 캐시된다([7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)) |
 
+> **`tools/`는 갱신에서도 올리지 않는다.** 방금 1단계에서 쓴 스크립트가 그 폴더에 있지만,
+> 그것은 **자기 PC에서 도는 릴리스 도구**이지 서버에 둘 물건이 아니다.
+> 이유와 실측은 [1-1절의 제외 목록](#1-1-설치-루트란-무엇인가-여기를-틀리면-전부-404다)에 있다.
+> 이 문서의 제외 목록은 그 절과 여기 두 곳이고, **둘은 같은 내용이어야 한다.**
+
 #### 절대 덮어쓰거나 지우면 안 되는 것
 
 | 경로 | 덮어쓰면 무슨 일이 생기는가 |
@@ -2092,11 +2256,14 @@ curl -sS https://your-host.com/ulogin/public/version.txt
 curl -sS https://your-host.com/public/version.txt
 ```
 
-기대 출력 — 방금 올린 버전 문자열 한 줄:
+기대 출력 — **방금 올린** 버전 문자열 한 줄. 형식은 `{버전}_{YYYYMMDD}`다:
 
 ```
-1.2.0_20260828
+{버전}_{YYYYMMDD}
 ```
+
+`{버전}`·`{YYYYMMDD}`는 자리표시자다. **비교 대상은 이 문서에 적힌 값이 아니라 방금 1단계에서
+`--version-txt=`로 올린 값이다.**
 
 **올린 값과 다른 값이 보이면 그 자리에서 멈추고 원인을 가려라.** 아래 넷 중 하나다.
 
@@ -2123,12 +2290,13 @@ curl -sS https://your-host.com/public/version.txt
 2. `F12` → **Network** 탭 → `Ctrl+R`(일반 새로고침. 강제 새로고침이 아니다)
 3. `style.css` · `api.js` · `ui.js` 요청의 **URL 끝을 본다**
 
-기대하는 모습:
+기대하는 모습 — **`{버전}` 자리에는 1단계에서 첫 인자(`<새버전>`)로 준 값이 보여야 한다.**
+아래 `{버전}`은 자리표시자이며, 판정 기준은 이 문서의 값이 아니라 **당신이 올린 값**이다.
 
 ```
-style.css?v=1.2.0
-api.js?v=1.2.0
-ui.js?v=1.2.0
+style.css?v={버전}
+api.js?v={버전}
+ui.js?v={버전}
 ```
 
 | 보이는 것 | 의미 | 조치 |
@@ -2376,7 +2544,7 @@ HTML이 캐시되고 있다는 확정 증거이고, 조치는
 | 2026-08-28 (검증 후속) | **8-1절 종료코드 표를 3행 → 4행으로.** `3`(= `--from` 불일치로 치환 0곳) 신설, `1`의 두 원인(버전 쿼리 누락 / 푸터에 박힌 버전 문자열) 명시, `1`과 `3`의 우선순위 | **QA Q12-3.** `--from` 오타로 아무것도 치환되지 않았는데 종료코드가 `0`이었고, 문서가 `$?`만 확인하라고 못박아 **절차대로 하면 조용히 통과했다.** 스크립트가 종료코드 `3`을 내도록 수정됐다(2026-08-28 실측 재확인) |
 | 2026-08-28 (검증 후속) | **8-3절 진단 표를 원인별로 분리.** `옛 버전 문자열`을 자산 `?v=`가 새 값인 경우(= `--version-txt=` 누락, **업로드는 성공**)와 옛 값인 경우(= 업로드 실패)로 갈랐다. `404` 행에서 `--version-txt=` 언급 제거, "셋 중 하나" → "넷 중 하나" | **보안 감사 V12-L-2.** 가장 흔한 원인이 `404` 행에 들어가 있어 **정상 배포를 "업로드 실패"로 오진단**시켰고, 그 오진단이 재업로드로 이어지면 8-2절이 덮어쓰지 말라고 한 3파일을 함께 덮어쓴다 |
 | 2026-08-28 (검증 후속) | **8-5절 정정** — `/api/me`는 `GET` 전용이 아니라 **`GET`·`PUT`** 이고, `curl -I`의 실제 405 응답은 **`Allow: GET, PUT`** 이다 | **QA Q12-2.** 직전 문서 라운드가 **자체 하네스(`only_method('GET')`)로 측정**해 틀린 실측값을 실었다. 이번에는 **배포물의 `server/`를 그대로 올려 실제 파일로 측정했다**(2026-08-28). 코드는 `server/api/me/index.php`의 `only_method('GET', 'PUT')`이고 API 계약서도 `GET`/`PUT` 두 개다 |
-| 2026-08-28 | **`## 8. 새 버전으로 갱신하기` 신설 (7단계 + 갱신 후 점검 체크리스트).** 버전 문자열 일괄 치환(`_workspace/bump_asset_version.php`, 전후 개수·종료코드 확인) → 업로드(**덮어쓰면 안 되는 3종**: `server/config.php` · `server/.install.lock` · `server/storage/.installed`) → `version.txt` 반영 확인 → Network 탭 `?v=` 확인 → `curl`로 API 캐시 헤더 확인 → opcache 진단 → `Ctrl+Shift+R`가 해결책이 아닌 이유 | **리더 판정 D-88.** 이 문서에는 설치 절차만 있고 **갱신 절차가 없었다.** 그래서 "새 버전을 올렸는데 반영이 안 된다"에서 무엇을 확인해야 하는지가 어디에도 없었다. 이번 라운드의 근본 원인은 코드가 아니라 이 공백이었다 |
+| 2026-08-28 | **`## 8. 새 버전으로 갱신하기` 신설 (7단계 + 갱신 후 점검 체크리스트).** 버전 문자열 일괄 치환(`tools/bump_asset_version.php`, 전후 개수·종료코드 확인) → 업로드(**덮어쓰면 안 되는 3종**: `server/config.php` · `server/.install.lock` · `server/storage/.installed`) → `version.txt` 반영 확인 → Network 탭 `?v=` 확인 → `curl`로 API 캐시 헤더 확인 → opcache 진단 → `Ctrl+Shift+R`가 해결책이 아닌 이유 | **리더 판정 D-88.** 이 문서에는 설치 절차만 있고 **갱신 절차가 없었다.** 그래서 "새 버전을 올렸는데 반영이 안 된다"에서 무엇을 확인해야 하는지가 어디에도 없었다. 이번 라운드의 근본 원인은 코드가 아니라 이 공백이었다 |
 | 2026-08-28 | 목차에 8절 추가 + 서두에 "갱신이면 8절로 바로 가라" 안내 | 위와 동일 |
 | 2026-08-28 | **7-9절에 `#### 캐시 헤더 3종` 신설** — HTML `no-store` / 자산 `public, max-age=31536000, immutable` / `version.txt` `no-store`. nginx 합본 스니펫(`include`로 보안 헤더 5종 재삽입) + Apache `<Directory>` 블록 + 호스팅사 요청 문안 + `curl` 확인 3줄. **`add_header`는 상속되지 않는다**는 함정을 명시 | **리더 판정 D-85(4).** `.htaccess`가 무시되면 HTML이 캐시되어 새 자산 URL(`?v=`)을 가리키는 새 HTML조차 도달하지 않는다 — **`?v=` 방식이 무력해지는 유일한 경로이고 프론트 코드로는 닫을 수 없다.** 값의 정본은 `public/.htaccess`. *(같은 날 검증 후속에서 이 서술의 범위가 정정됐다 — 깨지는 것은 링크·주소창 재진입뿐이고 일반 새로고침은 동작한다. 위 D-95 행)* |
 | 2026-08-28 | 8-6절에 **opcache 진단** — 의심 신호(자산·HTML은 바뀌었는데 API 동작만 그대로), `curl` 판별(`Cache-Control`이 `no-store` 단독이면 옛 PHP 코드), 임시 진단 파일(**새 파일명으로 올려야 하는 이유**), 해결 6가지, 호스팅사 문의 문안 | **리더 판정 D-86.** 코드로 해결하지 않고 문서로 진단하게 한다. opcache는 `.php`만 캐시하므로 증상이 비대칭으로 나타난다 |
@@ -2398,10 +2566,10 @@ HTML이 캐시되고 있다는 확정 증거이고, 조치는
 | 2026-08-26 | 2-8절에 **완료 화면의 번호 없는 안내 2건** 표 신설 — PHP EOL 주의 1행(`PHP_VERSION_ID < 70400`일 때만) / "다음 단계"의 프록시 짝 안내 | 감사 §C-4 조건 1 · 리더 판정 **D-69(a)**. 설치기를 삭제하면 EOL 경고를 다시 볼 수 없다 |
 | 2026-08-26 | 2-8절 2번 항목에 **"설치기 11개 / 콘솔 12개는 정상"** 각주 추가 (`auth_code_ttl`은 시드하지 않고 `AUTH_CODE_TTL` 폴백을 쓴다) | `README.md`가 "전역 설정 12개"라고 적어 두 숫자가 모순처럼 보였다. 다음 작업자가 한쪽을 잘못 "고치는" 것을 막는다 |
 | 2026-08-26 | 7-9절 인용 블록: `core/*.php` 가드 **"나머지 11개" → "정의 1 + 검사 12 = 13"** + 다시 세는 `grep` 3줄 | 실측은 12개였다(`bootstrap.php`가 정의, 나머지 12개가 404 가드). 리더 판정 **D-71** — `README.md`와 **동시 수정** |
-| 2026-08-26 | **7-7절 전면 개편 — 증상이 "조용한 실패"에서 "명시적 500"으로 이동했다.** 제목에 `/ 로그인만 500이다` 추가, 로그 확정 증거(`COOKIE_SECURE is on but the request is not HTTPS`), 두 줄을 함께 바꾸는 이유, **실효 `secure` 값 설명**(`COOKIE_SECURE=false`인데도 `COOKIE_SAMESITE='None'` 때문에 500이 나는 경우), 영향 범위(쿠키를 내보내는 요청만 500 — 경계는 인증 방식이 아니라 `Set-Cookie` 발행 여부다) | 리더 판정 **D-75**. v1.0.0에서는 로그인이 200인데 세션이 안 붙고 서버 로그에 아무것도 남지 않았다. v1.1.0은 `send_cookie()`가 그 자리에서 500으로 멈춘다 (`_workspace/17a_fix_cookie_secure_report.md`) |
+| 2026-08-26 | **7-7절 전면 개편 — 증상이 "조용한 실패"에서 "명시적 500"으로 이동했다.** 제목에 `/ 로그인만 500이다` 추가, 로그 확정 증거(`COOKIE_SECURE is on but the request is not HTTPS`), 두 줄을 함께 바꾸는 이유, **실효 `secure` 값 설명**(`COOKIE_SECURE=false`인데도 `COOKIE_SAMESITE='None'` 때문에 500이 나는 경우), 영향 범위(쿠키를 내보내는 요청만 500 — 경계는 인증 방식이 아니라 `Set-Cookie` 발행 여부다) | 리더 판정 **D-75**. v1.0.0에서는 로그인이 200인데 세션이 안 붙고 서버 로그에 아무것도 남지 않았다. v1.1.0은 `send_cookie()`가 그 자리에서 500으로 멈춘다 (내부 감사 기록) |
 | 2026-08-26 | **7-21절 표에 2행 추가 + 서두 개편.** `COOKIE_SECURE is on but the request is not HTTPS`(D-75) / `invalid "path" cookie option rejected`(D-65) 행 신설, **`범위` 열 추가**(전 요청 / 쿠키 발급 요청만), `invalid COOKIE_SAMESITE`는 500이 아니라 경고라는 인용 블록, `COOKIE_SAMESITE='None'` + 평문이 이 표의 어느 행으로 나타나는지 명시 | 위와 동일. **500 원인을 한 곳에 모아 로그 문장으로 구분**한다 — 새 절을 만들면 원인이 흩어진다 (리더 지시) |
 | 2026-08-26 | 3-4절 서두에 **평문 HTTP 운영 시 선행 확인 블록** 추가 (`COOKIE_SECURE=false` + `COOKIE_SAMESITE='Lax'`가 아니면 이 절차의 로그인 요청 자체가 500이다). 686행 표의 "로그인이 유지되지 않는다" 서술을 500·로그 검색어로 정정. "`Set-Cookie`가 안 보이면 4xx다" → **응답 코드 4xx / 500 분기**로 정정 | 위와 동일. 확인 절차가 500에서 멈추는데 그 이유를 문서가 말하지 않으면 절차 자체가 막힌다 |
 | 2026-08-26 | 6-1절에 v1.1.0의 500 동작과 `COOKIE_SAMESITE='None'` 주의 추가 | 위와 동일. "HTTP 허용"을 고른 배포가 이 절을 가장 먼저 읽는다 |
-| 2026-08-26 | **사실오류 정정 — "`Authorization: Bearer` API는 정상 200"이라는 무조건 단언을 3곳에서 제거했다**(7-7절 본문 · 7-21절 표 `범위` 열 · 이 표의 7-7절 개편 행). 7-7절에 `#### 경계는 인증 방식이 아니라 Set-Cookie 발행 여부다` 소절 신설 — Bearer 경로 7행 표(조회·`exchange`·`refresh` 무영향 / `csrf.php`·`logout`·`withdraw`·현재 세션 `DELETE` 500), `clear_session_cookie()`가 `send_cookie()`를 2회 부른다는 사실, **`logout`·`withdraw` 500에 재시도 루프 금지**(DB 커밋 뒤에 쿠키를 지우므로 이미 완료. 재시도하면 401) | **그 단언은 조회 경로에만 참이었다.** `logout.php:30` · `withdraw.php:113` · `sessions.php:84-89`는 인증 방식과 무관하게 `clear_session_cookie()`(`core/auth.php:223-241`)를 부른다. 방치하면 운영자가 로그아웃 500을 "Bearer가 아니라 브라우저 문제"로 오진한다. `README.md`·`CHANGELOG.md`·`AI_INTEGRATION_GUIDE.md` 3문서가 이미 같은 경계를 쓰고 있어 이 파일만 갈라진 상태였다 (`_workspace/18a`·`18b` 리포트) |
+| 2026-08-26 | **사실오류 정정 — "`Authorization: Bearer` API는 정상 200"이라는 무조건 단언을 3곳에서 제거했다**(7-7절 본문 · 7-21절 표 `범위` 열 · 이 표의 7-7절 개편 행). 7-7절에 `#### 경계는 인증 방식이 아니라 Set-Cookie 발행 여부다` 소절 신설 — Bearer 경로 7행 표(조회·`exchange`·`refresh` 무영향 / `csrf.php`·`logout`·`withdraw`·현재 세션 `DELETE` 500), `clear_session_cookie()`가 `send_cookie()`를 2회 부른다는 사실, **`logout`·`withdraw` 500에 재시도 루프 금지**(DB 커밋 뒤에 쿠키를 지우므로 이미 완료. 재시도하면 401) | **그 단언은 조회 경로에만 참이었다.** `logout.php:30` · `withdraw.php:113` · `sessions.php:84-89`는 인증 방식과 무관하게 `clear_session_cookie()`(`core/auth.php:223-241`)를 부른다. 방치하면 운영자가 로그아웃 500을 "Bearer가 아니라 브라우저 문제"로 오진한다. `README.md`·`CHANGELOG.md`·`AI_INTEGRATION_GUIDE.md` 3문서가 이미 같은 경계를 쓰고 있어 이 파일만 갈라진 상태였다 (내부 감사 기록) |
 | 2026-08-26 | **7-7절 재시도 금지 블록에 예외 1건을 명시했다 — 감사 로그 1행이다.** 기존 서술("500을 받아도 세션 회수·탈퇴는 이미 완료되어 있다")은 유지하고, 그 아래에 **DB 상태 변경은 완료되지만 `login_logs`의 `result='logout'` 1행이 누락된다**는 예외 블록을 신설했다. 3파일의 줄 순서 근거 + 실측 수치 + 운영자가 대신 볼 곳(`app_ulogin_sessions.revoke_reason` 확인 SQL) 포함 | **QA 최종 라운드 `Q11-2`.** `log_login()`이 `clear_session_cookie()`의 다음 줄(`api/auth/logout.php:30-31` · `api/me/withdraw.php:113-114` · `api/me/sessions.php:88-89`)이라 500이 그 앞에서 요청을 끊는다. 실측: 500이면 로그 행 3→3, 200이면 3→4. 보안 영향은 없으나 **운영자가 로그인 로그로 로그아웃을 추적하면 로그아웃 기록이 없는 로그인이 남는다.** 4문서(`README.md`·`INSTALL.md`·`CHANGELOG.md`·`AI_INTEGRATION_GUIDE.md`)가 같은 단언을 하고 있었으므로 **한 담당이 4문서를 같은 커밋에서 함께 고쳤다.** 코드 수정은 `README.md` `## v1.2 검토 목록` 5번으로 이월 |
 | 2026-08-25 | 최초 작성 | — |

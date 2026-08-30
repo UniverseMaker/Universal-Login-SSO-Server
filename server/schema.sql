@@ -1,6 +1,6 @@
 -- =====================================================================
 -- ulogin — 범용 로그인 서비스 DB 스키마 v1.0.0
--- 원안: ulogin-architect (_workspace/01_architect_schema.sql)
+-- 원안: ulogin-architect (내부 설계 기록)
 -- 구현: ulogin-backend / 2026-08-25
 -- 대상: MySQL 5.7+ / MariaDB 10.3+ , InnoDB, utf8mb4
 -- 테이블 수: 15

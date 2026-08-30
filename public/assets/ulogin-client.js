@@ -4,8 +4,8 @@
  * 사용법 — 최소 구성
  *   <!-- ?v= 는 캐시 무효화용이다. 지우면 브라우저가 옛 ulogin-client.js 를 최대 1년간
  *        계속 쓴다(자산에 immutable 이 걸려 있어 일반 새로고침으로도 갱신되지 않는다).
- *        값은 {설치루트}/public/version.txt 의 앞부분과 맞춘다. -->
- *   <script src="https://your-host.com/ulogin/public/assets/ulogin-client.js?v=1.3.0"></script>
+ *        값은 {설치루트}/public/version.txt 첫 줄의 _ 앞부분과 맞춘다(_ 뒤 날짜는 넣지 않는다). -->
+ *   <script src="https://your-host.com/ulogin/public/assets/ulogin-client.js?v={버전}"></script>
  *   const ulogin = new UloginClient({
  *     server: 'https://your-host.com/ulogin',        // ulogin 설치 루트 (끝 슬래시 없이)
  *     serviceId: 'local-ai-chat',                    // 관리자 콘솔에 등록한 service_id

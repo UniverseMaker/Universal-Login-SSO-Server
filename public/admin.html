@@ -6,11 +6,11 @@
 <meta name="robots" content="noindex, nofollow">
 <title>관리자 콘솔 · ulogin</title>
 <!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
-     자산 URL 의 ?v=1.2.0 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
+     자산 URL 의 ?v={버전} 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
      프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
      처음 보는 URL 이므로 무조건 새로 받는다. "쿼리스트링이 지저분하다"는 이유로
      지우면 새 버전을 올려도 반영되지 않는 문제가 그대로 돌아온다.
-     값 일괄 변경은 _workspace/bump_asset_version.php 로 한다(손으로 고치지 마라).
+     값 일괄 변경은 tools/bump_asset_version.php 로 한다(손으로 고치지 마라).
      아래 meta 는 **보조 수단이다.** 현대 브라우저는 http-equiv="Cache-Control" 을
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
@@ -418,18 +418,18 @@
 /* ============================================================================
  * admin.html — 관리자 콘솔 (탭: 대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정)
  *
- * 구속 문서
- *   _workspace/01b_leader_decisions_round1.md  ← 수정 라운드 1
+ * 구속 조건 (판정 번호 D-nn 의 내용은 CHANGELOG.md 가 설명한다)
+ *   리더 판정 — 수정 라운드 1
  *     D-36 진입 기준 role_rank >= 10 (manager). manager 에게는
  *          대시보드 / 회원(읽기 전용) / 로그(로그인 로그만) 만 노출하고
  *          서비스 · 시크릿 · 설정 탭 · 관리자 조작 로그 서브탭 · 회원 조작 버튼은 **숨긴다**
- *   _workspace/01_leader_decisions.md      ← 최우선
+ *   리더 판정 — 최우선
  *     D-0  동적 세그먼트 금지. 관리자 API 는 전부 쿼리 파라미터
  *     D-4  user_services.points 는 UI 에 노출하지 않는다
  *     D-7  시크릿 평문 조회(reveal)는 superadmin + 확인 모달 1회
  *     D-11 session.auth_type 으로 분기하지 않는다 (표시만)
- *   _workspace/03_frontend_report.md       ← api.js / ui.js 공개 함수만 사용
- *   _workspace/02c_backend_admin_report.md ← 응답 최상위 키 + 주의사항 20개
+ *   내부 프론트엔드 기록                   ← api.js / ui.js 공개 함수만 사용
+ *   내부 백엔드 기록                       ← 응답 최상위 키 + 주의사항
  *   server/api/admin/*.php                 ← 실제 요청 필드·응답 키 (최종 근거)
  *
  * 규칙
@@ -464,21 +464,39 @@
   /**
    * D-36 / Q-8 — 기능별 최소 role_rank.
    *
-   * 값의 근거는 리포트가 아니라 **`server/api/admin/*.php` 의 `require_role()` 인자를 직접 읽은 것**이다.
-   *   stats.php:19            require_role($ctx, 'manager')
-   *   users.php:23            require_role($ctx, 'manager')
-   *   user_detail.php:185     GET    require_role($ctx, 'manager')
-   *   user_detail.php:252     PUT    require_role($ctx, 'admin')
-   *   user_detail.php:484     DELETE require_role($ctx, 'superadmin')
-   *   user_points.php:101     require_role($ctx, 'admin')
-   *   user_status.php:176     require_role($ctx, 'admin')   ← suspend/restore/reset-password 공통
-   *   user_sessions.php:97    require_role($ctx, 'admin')
-   *   services.php:165        require_role($ctx, 'admin')
-   *   secrets.php:121         require_role($ctx, 'admin')
-   *   secrets.php:153         action=reveal → role_gte(..., 'superadmin')
-   *   settings.php:111        require_role($ctx, 'admin')
-   *   logs.php:57             type=login → require_role($ctx, 'manager')
-   *   logs.php:154            type=admin → role_gte(..., 'admin')
+   * 값의 근거는 리포트가 아니라 **`server/api/admin` 의 진입 가드를 직접 읽은 것**이다.
+   * 관리자 API 의 가드는 전역 role 판정 함수 `require_global_role($ctx, '<최소role>')` 이다.
+   * `require_role()` 도 `server/core/perm.php` 에 있지만 그쪽은 effective role — 서비스
+   * 오버라이드를 반영한다. 관리자 API 에서 그것을 쓰면 어떤 서비스의 admin 오버라이드가
+   * 서버 전체의 관리자가 된다. 리더 판정 D-50 / 보안 감사 M-13 으로 관리자 API 는 전부
+   * 전역 판정으로 옮겼고, `server/api/admin` 안의 `require_role()` 호출은 0곳이다.
+   *
+   * 행 번호는 적지 않는다 — 편집 한 번에 낡는다(D-92). 파일명 + 함수명으로 가리킨다.
+   *
+   *   stats.php           require_global_role($ctx, 'manager')
+   *   users.php           require_global_role($ctx, 'manager')
+   *   user_detail.php     GET    require_global_role($ctx, 'manager')
+   *                       PUT    require_global_role($ctx, 'admin')
+   *                       DELETE require_global_role($ctx, 'superadmin')
+   *   user_points.php     require_global_role($ctx, 'admin')
+   *   user_status.php     require_global_role($ctx, 'admin')   ← suspend/restore/reset-password 공통
+   *                       action=restore 이고 대상이 withdrawn 이면 추가로
+   *                         role_gte(ctx_global_role($ctx), 'superadmin')
+   *   user_sessions.php   require_global_role($ctx, 'admin')
+   *   services.php        require_global_role($ctx, 'admin')
+   *   secrets.php         require_global_role($ctx, 'admin')
+   *                       action=reveal → role_gte(ctx_global_role($ctx), 'superadmin')
+   *   settings.php        require_global_role($ctx, 'admin')
+   *   logs.php            type=login  → require_global_role($ctx, 'manager')
+   *                       type=admin  → role_gte(ctx_global_role($ctx), 'admin')
+   *
+   * 다시 세려면 — 버전 폴더 루트에서:
+   *   grep -rn 'require_global_role($ctx' server/api/admin   ← 진입 가드
+   *   grep -rn 'role_gte(ctx_global_role' server/api/admin   ← 분기 안에서 더 좁히는 자리
+   * 위 표는 이 두 명령의 출력을 그대로 옮긴 것이다. 어긋나면 코드가 정답이다.
+   *
+   * 탈퇴 계정 복구의 superadmin 조건은 MIN_RANK 에 별도 항목이 없다 — userWrite(admin)
+   * 로 버튼은 보이고 서버가 403 을 준다. 아래 원칙 그대로다.
    *
    * 화면 차단은 편의일 뿐 실제 방어는 서버다. 서버가 403 을 주면 화면은 깨지지 않고
    * showError() 로 안내만 표시한다.
@@ -583,7 +601,7 @@
   function myRoleRank() { return (state.me && typeof state.me.role_rank === 'number') ? state.me.role_rank : -1; }
   function isSuperadmin() { return myRoleRank() >= RANK.role.superadmin; }
 
-  /** MIN_RANK 판정 단축. 근거는 MIN_RANK 주석의 require_role() 목록. */
+  /** MIN_RANK 판정 단축. 근거는 MIN_RANK 주석의 require_global_role() 목록. */
   function allowed(minRank) { return myRoleRank() >= minRank; }
 
   /** 회원 정보를 바꿀 수 있는가 (PUT user_detail · user_points · user_status · user_sessions). */

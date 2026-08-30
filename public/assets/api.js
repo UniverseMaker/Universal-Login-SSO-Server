@@ -4,8 +4,8 @@
  * 이 파일은 로그인 서버 자체 UI(login/register/forgot/reset/mypage/admin)가
  * 쓰는 유일한 HTTP 진입점이다. 화면 코드에서 fetch를 직접 쓰지 않는다.
  *
- * 계약: _workspace/01_architect_api_contract.md  (응답 봉투 {ok,data,error})
- * 판정: _workspace/01_leader_decisions.md D-0     (API_EXT / 쿼리파라미터 규칙)
+ * 계약: 내부 API 계약서   (응답 봉투 {ok,data,error})
+ * 판정: 리더 판정 D-0     (API_EXT / 쿼리파라미터 규칙)
  *
  * 의존성 없음. Vanilla JS. UTF-8.
  * ========================================================================== */
