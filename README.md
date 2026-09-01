@@ -146,8 +146,9 @@ capture environment and per-frame rationale live in `docs/screenshots/INDEX.md`.
 | **시크릿 금고**<br>Secret vault | AI 키 등 서비스 시크릿을 **AES-256-CBC로 DB에 암호화 저장.** 시크릿마다 최소 등급 3개를 걸고, 통과한 것만 `payload`로 반환한다. 미달분은 **에러 없이 생략**된다<br>Service secrets encrypted at rest; each carries three tier gates; only what the user clears is returned, the rest silently omitted |
 | **3축 등급**<br>Three-axis tiers | **계정등급 / 역할 / 결제등급**이 서로 독립이다. 각 값에 **랭크 정수**가 있어 문자열 비교로 생기는 조용한 오작동을 막는다. 서비스별 오버라이드는 **올려주기만**(grant-only) 한다<br>Account level, role and billing tier are independent axes, compared by integer rank; per-service overrides can only raise, never demote |
 | **포인트**<br>Points | 전역 잔액 · 앱이 호출마다 차감 · **멱등키** 지원(같은 키로 재요청해도 중복 차감 없음) · 부족 시 `POINT_INSUFFICIENT`<br>Global balance, per-call spend, idempotency keys, explicit insufficient-balance error |
-| **관리자 콘솔**<br>Admin console | **6탭** — 대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정. 회원 등급·포인트 조정, 정지·복구, 세션 강제 종료, 서비스 CRUD, 시크릿 게이트 관리, 로그인/관리자 로그, 전역 설정 **12키**<br>Six tabs covering users, services, secrets, logs and 12 global settings |
+| **관리자 콘솔**<br>Admin console | **6탭** — 대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정. 회원 등급·포인트 조정, 정지·복구, 세션 강제 종료, 서비스 CRUD, 시크릿 게이트 관리, 로그인/관리자 로그, **시크릿 전달 로그**, 전역 설정 **13키**<br>Six tabs covering users, services, secrets, logs (including a secret-delivery audit trail) and 13 global settings |
 | **웹 설치기**<br>Web installer | 브라우저로 한 번 열면 **8단계**로 끝난다 — 환경 점검 · DB 접속 · 스키마 적용 · 키 생성 · 관리자 계정 · 첫 서비스 · 시크릿 · **자기 잠금**<br>One browser visit, eight steps, then it locks itself |
+| **운영·진단**<br>Ops & diagnostics | **헬스체크** `GET /api/health` — 익명에게는 「살아 있나」만, 관리자에게는 9항목 자가 진단. **스키마 마이그레이션 러너** `server/migrate.php` — 적용 이력을 DB에 남기고, 중간에 끊겨도 어디까지 갔는지 알 수 있다<br>A health endpoint with two disclosure levels, and a schema migration runner that records how far it got |
 
 **English.** Everything above ships in the box. There is no paid tier, no external service, and no
 account to create anywhere else.
@@ -244,25 +245,33 @@ useless without the `code_verifier`, which never leaves the app's memory.
 
 | 항목 / Item | 값 / Value | 다시 세는 명령 / Recount |
 |---|---|---|
-| 엔드포인트 파일 / endpoint files | **32** | `find server/api -name "*.php" \| wc -l` |
-| **메서드 × 경로 조합** / method × path pairs | **43** | `grep -rho "only_method([^)]*)" server/api \| grep -o "'" \| wc -l` → ÷2 |
-| DB 테이블 / tables | **15** | `grep -c "CREATE TABLE IF NOT EXISTS" server/schema.sql` |
+| 엔드포인트 파일 / endpoint files | **33** | `find server/api -name "*.php" \| wc -l` |
+| **메서드 × 경로 조합** / method × path pairs | **45** | `grep -rho "only_method([^)]*)" server/api \| grep -o "'" \| wc -l` → ÷2 |
+| DB 테이블 / tables | **17** | `grep -c "CREATE TABLE IF NOT EXISTS" server/schema.sql` |
 | 에러 코드 / error codes | **31** | `grep -o "'[A-Z_]\{4,\}' *=>" server/core/response.php \| wc -l` |
 
-그룹별 분포(43 기준) / by group: `admin` 19 · `auth` 11 · `me` 10 · `sso` 2 · `points` 1.
-(2026-08-30 실측 / measured)
+그룹별 분포(45 기준) / by group: `admin` 19 · `auth` 11 · `me` 10 · `health` 2 · `sso` 2 · `points` 1.
+(2026-09-01 실측 / measured — 위 명령을 그룹 디렉토리마다 돌린 값이다)
 
 > **엔드포인트 개수는 계수 기준을 밝히지 않으면 반드시 갈라진다.**
-> 이 README의 **43**은 **메서드 × 경로 조합**(`only_method()`가 허용하는 메서드의 총합)이다.
-> [`AI_INTEGRATION_GUIDE.md`](AI_INTEGRATION_GUIDE.md) 5절의 요약표는 **같은 43개를**,
-> 쿼리 파라미터로 동작이 갈리는 2건(`admin/secrets.php` GET `action=reveal`,
-> `admin/logs.php` GET `type=login`/`type=admin`)을 별행으로 세어 **45행**으로 적는다.
-> **45 − 2 = 43. 둘 다 맞다. 한쪽으로 통일하지 마라.**
+> 이 README의 **45**는 **메서드 × 경로 조합**(`only_method()`가 허용하는 메서드의 총합)이고
+> **`HEAD`를 포함한다** — v1.4.0의 `GET`/`HEAD /api/health`가 2로 세어지는 것이 그 때문이다.
+> `HEAD`를 빼면 **44**다.
+> [`AI_INTEGRATION_GUIDE.md`](AI_INTEGRATION_GUIDE.md) 5절의 요약표는 같은 API를,
+> 쿼리 파라미터로 동작·최소역할이 갈리는 3건(`admin/secrets.php?action=reveal` ·
+> `admin/logs.php?type=admin` · `admin/logs.php?type=secret_access`)을 별행으로 세므로 **47행**이 된다.
+> **45 · 44 · 47은 같은 API를 세 기준으로 센 값이고 셋 다 맞다. 한쪽으로 통일하지 마라.**
 >
-> **Counting endpoints without stating the basis always diverges.** The **43** here counts
-> **method × path pairs**. The reference table in `AI_INTEGRATION_GUIDE.md` §5 lists the *same* API as
-> **45 rows**, splitting two query-parameter variants onto their own lines. 45 − 2 = 43; both are
-> correct, and neither should be "fixed" to match the other.
+> **다만 그 요약표는 지금 45행에서 동결돼 있다** — v1.4.0이 더한 2행(`api/health` ·
+> `logs.php?type=secret_access`)이 그 표에 아직 없다. 그 절의 본문을 바꾸면 이미 그것을
+> 인용한 연동 앱이 깨지므로, 문서 머리의 「v1.4.0 갱신 고지」에 보정을 모아 두었다.
+>
+> **Counting endpoints without stating the basis always diverges.** The **45** here counts
+> **method × path pairs and includes `HEAD`** (44 without it). The reference table in
+> `AI_INTEGRATION_GUIDE.md` §5 splits three query-parameter variants onto their own lines, which comes
+> to **47 rows** — though that table is currently frozen at 45 rows, with the two v1.4.0 additions
+> listed in the "v1.4.0 갱신 고지" box at the top of that file instead. All three numbers are correct;
+> none should be "fixed" to match the others.
 
 논리 경로는 `/api/auth/login` 형태지만 **실제 호출에는 `.php` 확장자를 붙인다** —
 `{설치루트}/server/api/auth/login.php`. 동적 세그먼트는 쓰지 않고 **쿼리 파라미터**로 받는다
@@ -304,7 +313,7 @@ https://example.com/ulogin/server/install.php
 |---|---|---|
 | 1 | 환경 점검 / Environment | 필수 **7항목**을 검사한다. **"PHP 버전 7.2 이상 / 통과"** 를 확인하라<br>Seven required checks; PHP 7.1 and below is the only version that blocks |
 | 2 | DB 접속 / Database | host · db · user · password · prefix 입력 후 접속 테스트 |
-| 3 | 스키마 적용 / Schema | `CREATE TABLE IF NOT EXISTS` **15개**. 재실행해도 안전하다 |
+| 3 | 스키마 적용 / Schema | `CREATE TABLE IF NOT EXISTS` **17개** (v1.3.0은 15개). 결과 표의 **17줄이 전부 "성공"** 이어야 한다. 재실행해도 안전하다<br>17 tables in v1.4.0 — all 17 rows must read "성공" |
 | 4 | 사이트·보안 / Site | 사이트명 · `BASE_URL` · HTTPS 강제와 쿠키 `Secure`를 **한 쌍으로** 결정한다 |
 | 5 | 관리자 계정 / Admin | 첫 `superadmin` 계정을 만든다 |
 | 6 | 첫 서비스 / Service | `service_id` · `redirect_whitelist` · `allowed_origins` |
@@ -318,6 +327,8 @@ https://example.com/ulogin/server/install.php
 2. 브라우저로 {설치루트}/server/config.php 를 연다 → 403 이나 빈 화면이어야 한다
 3. 로그인 1회 → 개발자도구 Network → login.php 응답의 Set-Cookie 에
    HttpOnly · SameSite=Lax (HTTPS 면 secure) 가 붙었는지 확인한다
+4. 관리자 토큰으로 헬스체크 1회 — checks 9 항목이 전부 ok:true 인지 본다
+   curl -sS '{설치루트}/server/api/health.php' -H 'Authorization: Bearer <관리자토큰>'
 ```
 
 **3번은 건너뛰지 마라.** 이것이 정적 검증으로 메울 수 없는 유일한 공백이고, 확인 비용은 30초다.
@@ -331,13 +342,31 @@ row of [Security design](#보안-설계-요약--security-design) below.
 전 과정(준비물 · 업로드 경로 · 8단계 화면별 입력값 · 설치 후 보안 확인 4항목 · 트러블슈팅)은
 [`INSTALL.md`](INSTALL.md)에 있다. / The full walkthrough lives in [`INSTALL.md`](INSTALL.md).
 
+#### 이미 v1.3.0 이하를 운영 중이라면 / Upgrading an existing install
+
+**파일만 올려서는 안 된다.** v1.4.0은 테이블 2개·컬럼 1개·인덱스 3개를 더한다.
+업로드 직후 `{설치루트}/server/migrate.php`를 **한 번** 열어 `superadmin`으로 인증하고 적용한다.
+**백업을 먼저 받아라 — `down` 마이그레이션은 없다.** 셸이 있으면
+`php server/migrate.php status` → `apply` → `verify`도 같은 일을 한다.
+빠뜨렸는지는 헬스체크의 `checks.schema`가 알려준다.
+절차 전문은 [`INSTALL.md` 8-2절](INSTALL.md#8-2-2단계--업로드와-스키마-마이그레이션)에 있다.
+**신규 설치는 해당 없다** — 설치기가 최신 스키마를 적용하고 마이그레이션을 `baseline`으로 기록한다.
+
+**English.** Upgrading from v1.3.0 or earlier changes the database. After uploading, open
+`{install root}/server/migrate.php` once, authenticate as `superadmin`, and apply.
+**Back up first — there is no `down` migration.** With shell access,
+`php server/migrate.php status|apply|verify` does the same. Full procedure:
+[`INSTALL.md` §8-2](INSTALL.md#8-2-2단계--업로드와-스키마-마이그레이션). Fresh installs are unaffected.
+
 ### 앱에 붙이기 — 4줄 / Wiring your app in four lines
 
 ```html
 <!-- ?v= 는 캐시 무효화용이다. 지우면 브라우저가 옛 클라이언트를 최대 1년간 계속 쓴다
-     (자산에 immutable 이 걸려 있다). 값은 {설치루트}/public/version.txt 의 앞부분과 맞춘다.
-     Keep the ?v= — assets are served immutable, so without it a stale client can stick for a year. -->
-<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v=1.3.0"></script>
+     (자산에 immutable 이 걸려 있다). {버전} 은 자리표시자다 —
+     {설치루트}/public/version.txt 첫 줄의 `_` 앞부분을 그대로 넣는다.
+     Keep the ?v= — assets are served immutable, so without it a stale client can stick for a year.
+     {버전} is a placeholder: use the part before `_` in public/version.txt. -->
+<script src="https://example.com/ulogin/public/assets/ulogin-client.js?v={버전}"></script>
 <script>
   var ulogin = new UloginClient({
     server:      'https://example.com/ulogin',       // 설치 루트 한 칸. /server 나 /public 을 붙이지 않는다
@@ -366,7 +395,7 @@ All 35 frames, grouped by feature. The four highlighted above reappear here in t
 | | |
 |---|---|
 | ![1단계 환경 점검](docs/screenshots/install-01-env-check.png)<br>**1. 환경 점검** — PHP 7.2 이상, PDO MySQL, OpenSSL, mbstring 등 필수 7항목이 모두 "통과"<br>*Step 1 — all 7 required items pass* | ![2단계 DB 접속 정보](docs/screenshots/install-02-db.png)<br>**2. DB 접속** — 호스트·DB명·계정·테이블 prefix 입력<br>*Step 2 — host, name, user and table prefix* |
-| ![3단계 스키마 적용](docs/screenshots/install-03-schema.png)<br>**3. 스키마 적용** — 15개 테이블 생성 완료<br>*Step 3 — 15 tables created* | ![4단계 사이트·전송 보안](docs/screenshots/install-04-site-security.png)<br>**4. 사이트·전송 보안** — BASE_URL, HTTPS 강제, 메일 드라이버, 가입 정책<br>*Step 4 — base URL, HTTPS enforcement, mail driver, signup policy* |
+| ![3단계 스키마 적용](docs/screenshots/install-03-schema.png)<br>**3. 스키마 적용** — 테이블 생성 완료. **이 장은 v1.3.0 빌드에서 촬영한 것이라 화면에 15개가 보인다** — v1.4.0 배포본에서는 `schema_migrations` · `secret_access_logs`가 더해져 **17줄**이 나온다<br>*Step 3 — captured on a v1.3.0 build (15 tables); v1.4.0 lists 17* | ![4단계 사이트·전송 보안](docs/screenshots/install-04-site-security.png)<br>**4. 사이트·전송 보안** — BASE_URL, HTTPS 강제, 메일 드라이버, 가입 정책<br>*Step 4 — base URL, HTTPS enforcement, mail driver, signup policy* |
 | ![5단계 관리자 계정 생성](docs/screenshots/install-05-admin.png)<br>**5. 첫 최고관리자 계정 생성** — 기본 비밀번호가 존재하는 상태를 애초에 없앤다<br>*Step 5 — create the first superadmin account* | ![6단계 첫 서비스 등록](docs/screenshots/install-06-service.png)<br>**6. 첫 서비스 등록** — `service_id`, 복귀 주소 화이트리스트, 허용 출처<br>*Step 6 — service ID, redirect whitelist, allowed origins* |
 | ![7단계 시크릿 등록](docs/screenshots/install-07-secrets.png)<br>**7. 시크릿 등록** — 값과 함께 **등급 게이트**(`min_billing_tier`)를 지정한다<br>*Step 7 — each secret value carries a tier gate* | ![8단계 설치 완료](docs/screenshots/install-08-done.png)<br>**8. 완료** — 결과 요약과 `install.php` 삭제 안내. 생성된 `SECRET_ENC_KEY`·`APP_KEY`는 **화면에 표시하지 않는다**<br>*Step 8 — summary; the generated keys are never printed* |
 
@@ -416,7 +445,7 @@ All seven show the three-axis tier badges in the header.
 
 | | |
 |---|---|
-| ![Set-Cookie 실측 화면](docs/screenshots/set-cookie-headers.png)<br>**쿠키 속성 실측** — 로그인·로그아웃 응답의 `Set-Cookie`와 `/api/me`의 200 → 401. `HttpOnly`·`SameSite=Lax`가 실제로 붙고, 로그아웃이 쿠키 2종을 만료시키며 서버 세션도 함께 회수한다<br>*Measured cookie attributes and session revocation on sign-out* | ![캐시 무효화 실측 화면](docs/screenshots/cache-busting.png)<br>**캐시 무효화 실측** — `public/login.html`이 실제로 요청한 자산 3건이 전부 `?v=1.3.0`, 응답은 `max-age=31536000, immutable`<br>*Assets cached for a year, invalidated by the version query* |
+| ![Set-Cookie 실측 화면](docs/screenshots/set-cookie-headers.png)<br>**쿠키 속성 실측** — 로그인·로그아웃 응답의 `Set-Cookie`와 `/api/me`의 200 → 401. `HttpOnly`·`SameSite=Lax`가 실제로 붙고, 로그아웃이 쿠키 2종을 만료시키며 서버 세션도 함께 회수한다<br>*Measured cookie attributes and session revocation on sign-out* | ![캐시 무효화 실측 화면](docs/screenshots/cache-busting.png)<br>**캐시 무효화 실측** — `public/login.html`이 실제로 요청한 자산 3건이 전부 같은 `?v=` 값을 달고 나가고, 응답은 `max-age=31536000, immutable`. **이 장은 v1.3.0 빌드에서 촬영한 것이라 화면의 값이 `?v=1.3.0`이다** — v1.4.0 배포본에서는 같은 자리가 `?v=1.4.0`이 된다<br>*Assets cached for a year, invalidated by the version query* |
 
 > 이 두 장은 개발자도구 화면이 아니라, Chrome DevTools Protocol로 받은 **응답 헤더·요청 URL 원문을
 > 그대로 페이지에 렌더해** 촬영한 것이다. 표시된 문자열은 손으로 입력하지 않았다.
@@ -435,10 +464,10 @@ All seven show the three-axis tier badges in the header.
 | **런타임 / Runtime** | PHP **7.2 이상** (7.2 ~ 8.x 양방향 호환) · MySQL 또는 MariaDB · PDO(`ATTR_EMULATE_PREPARES=false`) |
 | **의존성 / Dependencies** | **없다.** Composer도 `vendor/`도 없다. PHP 내장 확장만 쓴다 — `pdo_mysql` · `openssl` · `mbstring` · `json`<br>**None.** No Composer, no `vendor/`, built-in extensions only |
 | **프론트 / Front end** | 정적 HTML **8개** + Vanilla JS. 프레임워크·번들러·`node_modules` 없음<br>8 static screens, vanilla JS, no framework and no bundler |
-| **DB / Database** | 테이블 **15개**, 전부 `app_ulogin_` prefix, `utf8mb4`, `ROW_FORMAT=DYNAMIC`. **DB 1개를 다른 서비스와 공유해도 된다**<br>15 prefixed tables that can share a single database with other apps |
+| **DB / Database** | 테이블 **17개** (v1.3.0은 15개 — `schema_migrations` · `secret_access_logs`가 늘었다), 전부 `app_ulogin_` prefix, `utf8mb4`, `ROW_FORMAT=DYNAMIC`. **DB 1개를 다른 서비스와 공유해도 된다**<br>17 prefixed tables that can share a single database with other apps |
 | **라우팅 / Routing** | **파일 경로 = URL 경로.** `mod_rewrite`는 확장자를 생략하게 해 주는 편의일 뿐, 없어도 전부 동작한다<br>The file path is the URL; rewrite is a convenience, not a requirement |
 | **배포 / Deploy** | 폴더째 업로드 → `install.php` 1회. 빌드 단계 **0개**<br>Upload the folder, open the installer once. Zero build steps |
-| **설정 / Config** | `server/config.php` 상수 **51개**. 설치기가 생성하며 **저장소에는 커밋되지 않는다**(`.gitignore`). 템플릿은 `server/config.sample.php`<br>51 constants, generated by the installer, never committed |
+| **설정 / Config** | `server/config.php` 상수 **54개** (v1.3.0은 51개 — `SECRET_ACCESS_LOG` · `T_MIGRATIONS` · `T_SECRET_ACCESS`가 늘었다). 설치기가 생성하며 **저장소에는 커밋되지 않는다**(`.gitignore`). 템플릿은 `server/config.sample.php`<br>54 constants, generated by the installer, never committed |
 
 ### PHP 7.2 — 동작한다. 다만 알고 쓰라 / It runs on 7.2, but know what that means
 
@@ -470,13 +499,49 @@ A function-by-function breakdown of what 7.2 does and does not change is in `doc
 
 ## 보안 설계 요약 / Security design
 
-**미해결 Critical 0건 / 미해결 High 0건.**
-보안 감사 **4회차**와 QA **3회차**를 거쳤고, 발견된 Critical 3건과 High 5건은 **전부 수정 확인**됐다.
+**v1.3.0까지: 미해결 Critical 0건 / 미해결 High 0건.**
+보안 감사 **4회차**와 QA **3회차**를 거쳤고, 그때까지 발견된 Critical 3건과 High 5건은 **전부 수정 확인**됐다.
+
+**v1.4.0이 닫은 것 — 이미 공개된 코드에 있던 Critical 1건 · High 2건.**
+
+| 심각도 | 무엇이었나 |
+|---|---|
+| **Critical** | 서비스를 `disabled`로 바꿔도 `GET /api/auth/session`이 **시크릿 평문을 계속 반환**했다. 반환 경로 넷 중 **셋은 실제로 막혀서** 운영자가 막혔다고 결론짓게 만들었다 |
+| **High** | `exchange`가 클라이언트 인증을 `code` 형식 검사보다 먼저 해서, 익명이 **401/400 두 응답으로 `service_secret`의 정오답을 가릴 수 있었다.** 실패가 어느 로그에도 남지 않았다 |
+| **High** | **시크릿 반환(`payload`)이 무기록이었다.** 탈취 토큰으로 분당 200회 키를 받아가도 남는 것이 `last_seen_at`뿐이었고, 반대로 드문 관리자 조회는 기록됐다 — 감사 대상이 뒤집혀 있었다 |
+
+**여기에 이 라운드가 만들고 이 라운드가 닫은 High 3건이 더 있다** — 새로 연 `migrate.php` 표면의
+경쟁 조건·`FORCE_HTTPS` 누락, 그리고 레이트리밋 기록이 429마다 1행을 남기던 문제다.
+보안 검증이 **배포 보류**를 냈고, 같은 폴더에서 셋 다 닫았다.
+
+**독립 재검증이 그 셋을 전부 수정확인했고, 그 자리에서 High 1건을 새로 찾았다.**
+새로 연 시크릿 전달 감사 로그가 **토큰 갱신 요청과 1:1로 늘고 자동 정리가 없었다**(유효 계정 하나로 하루 43만 행).
+그것도 같은 폴더에서 닫았다 — 갱신 경로에 전용 레이트리밋을 걸어 **계정당 하루 1,440행**으로 묶었다.
+**행이 요청과 1:1인 비율 자체는 남아 있고**(v1.5.0), 보존 정책은 v1.9.0이다.
+같은 라운드의 QA는 **기능 회귀 0건**을 확인하고 **「서버가 만든 것을 화면이 쓰지 않는다」** 유형의
+경계면 결함 High 3건을 찾았다 — 관리자 콘솔의 집계 배선·표식·로그 라벨이고, 셋 다 이 라운드에서 닫혔다.
+
+> **정직하게 적는다 — 마지막 수정들에 대한 독립 재검증은 없다.**
+> 보안 감사는 **6회차**까지 돌았고 그 뒤의 수정(위 신규 High 1건 + Medium 4건), 프론트 수정, 문서 수정은
+> **담당 자신의 실측**이 근거다. **보안 7회차와 QA 2회차는 돌지 않았다.**
+> 그래서 **「v1.4.0의 미해결 High 0」을 확정 판정으로 단언하지 않는다** — v1.3.0까지는 그것이
+> 4회차 감사의 확정 판정이었고 v1.4.0은 아직 그 상태가 아니다.
+> 라운드가 어떻게 끝났는지의 전수 기록은 [`CHANGELOG.md`](CHANGELOG.md)의 `v1.4.0` 절
+> **「검증 라운드가 어떻게 끝났나」** 표에 있다. **그 절을 함께 읽으라.**
+
 남은 Medium·Low는 숨기지 않고 [알려진 제한](#알려진-제한--미검증-항목--known-limits--unverified)에 적었다.
 
-**English. Zero unresolved Critical, zero unresolved High.** Four security audit rounds and three QA
-rounds. All 3 Criticals and all 5 Highs found were fixed and re-verified. The remaining Medium/Low
-items are not hidden — they are listed under [Known limits](#알려진-제한--미검증-항목--known-limits--unverified).
+**English.** Through v1.3.0: zero unresolved Critical, zero unresolved High, across four audit rounds
+and three QA rounds. **v1.4.0 closed one Critical and two Highs that were already in the published
+code** — secrets kept flowing from a disabled service, an oracle that revealed whether a
+`service_secret` guess was right, and the complete absence of an audit trail on secret delivery.
+Three further Highs were introduced and closed inside the same round, on the newly added migration
+screen. The independent re-verification confirmed all three and found one more High — the new
+secret-delivery audit log grew one row per token refresh with no cleanup — which was also closed in
+the same folder by rate-limiting that path. **The last round of fixes has not been independently
+re-verified**: the security audit ran six rounds and QA one, and everything after that rests on each
+owner's own measurements. **We therefore do not claim "zero unresolved High" for v1.4.0.**
+See the `v1.4.0` section of [`CHANGELOG.md`](CHANGELOG.md) for the full round-by-round record.
 
 | 위협 / Threat | 어떻게 막았는가 / How it is stopped |
 |---|---|
@@ -494,6 +559,9 @@ items are not hidden — they are listed under [Known limits](#알려진-제한-
 | **PHP 7.2에서 쿠키 보호 속성이 조용히 사라짐**<br>Cookie flags silently dropped on 7.2 | `setcookie()`의 옵션 배열은 **7.3+ 전용**이다. 7.2에서 그 배열을 넘기면 만료 인자로 캐스팅되어 **`SameSite`가 통째로 사라지고 `HttpOnly`·`Secure`도 기본값으로 떨어진다 — 오류 하나 없이.** `send_cookie()` 래퍼가 `PHP_VERSION_ID`로 분기해 7.2에서는 `Set-Cookie` 헤더를 직접 조립한다. 두 분기의 동등성은 관측이 아니라 **불변식**이다 — 값 검증을 버전 분기보다 **앞**에서 하므로 잘못된 설정에서 양쪽이 같은 지점에서 같은 이유로 실패한다 |
 | **메일 로그 평문 노출**<br>Plaintext reset links on disk | 다층 방어 — `storage/.htaccess` + `storage/index.html` + 메일 파일 확장자 `.php` + 첫 줄 `<?php exit; ?>` + 파일명 8바이트 난수 + `chmod 0700`/`0600` |
 | **설치기 선점**<br>Installer hijack | 자기 잠금 **3종**(`.install.lock` · `storage/.installed` · `config.php`). 잠금 해제 파라미터는 **구현하지 않았다.** 설치기 자체도 POST + 1회용 CSRF를 쓰고, 생성한 키를 화면에 표시하지 않는다 |
+| **비활성 서비스에서 키가 계속 나감**<br>Secrets outliving a disabled service | `build_payload()`가 **함수 안에서** 서비스 상태를 직접 본다. 호출부 네 곳에 조건을 흩어 두면 한쪽만 고쳐지므로, 판정은 **`service_load()` 한 곳**을 재사용한다. 서비스를 끄면 `payload`가 `{}`가 되고 **세션은 유지된다**(회원 단위 차단과 같은 모양) |
+| **시크릿을 누가 언제 받아 갔나**<br>No audit trail on secret delivery | 새 표 `secret_access_logs`. 같은 세션의 반복 조회는 **요청마다 INSERT하지 않는다** — 그 경로가 가장 자주 불려서 분당 200회면 하루 28만 행이 되고 그 부피가 신호를 묻는다. `(세션, 출처, 1시간)`으로 묶고 `hits`를 올린다: 같은 상황이 **하루 24행 + `hits` 288,000**이 되어 숫자 하나가 오히려 더 크게 보인다. **키의 값은 담지 않는다 — 이름만.** *단 **토큰 갱신은 접히지 않는다*** — 회전마다 새 세션 식별자가 생겨 버킷 키가 갈린다. 그래서 갱신 경로에는 전용 레이트리밋으로 **상한**을 걸었다(계정당 하루 1,440행). 비율 자체는 v1.5.0 |
+| **스키마를 바꾸는 웹 화면 자체**<br>The migration screen as a new surface | `server/migrate.php`는 **삭제하지 않는 파일**이다(다음 버전에서 또 필요하다). 그래서 `install.php`와 같은 수준의 보호를 받는다 — 미인증 `GET`은 로그인 폼뿐, **매 요청** superadmin 자격증명, 시도 제한 5회/15분(하나의 배타 잠금 안에서 검증 **전에** 소모), 계정 락아웃 존중, 실패의 DB 기록, `FORCE_HTTPS`에서 평문 요청 **403 거부**(리다이렉트가 아니다 — 301로 POST를 되던지면 비밀번호가 다시 나간다) |
 
 ### 잘못된 설정은 조용히 넘어가지 않는다 (fail-closed)
 
@@ -548,11 +616,12 @@ Reproduction scenarios for every vulnerability that was found and fixed: `docs/P
 
 | 문서 / Document | 읽는 사람 / Audience | 내용 / Contents |
 |---|---|---|
-| [`INSTALL.md`](INSTALL.md) | 배포하는 사람<br>Whoever deploys it | 준비물 · 업로드 · 설치기 8단계 · 설치 후 보안 확인 4항목 · 서비스/시크릿 등록 · HTTP 운영 · 트러블슈팅 · 버전 갱신<br>Requirements through troubleshooting, step by step |
+| [`INSTALL.md`](INSTALL.md) | 배포하는 사람<br>Whoever deploys it | 준비물 · 업로드 · 설치기 8단계 · 설치 후 보안 확인 4항목 · **헬스체크** · 서비스/시크릿 등록 · HTTP 운영 · 트러블슈팅 21항목 · **버전 갱신과 스키마 마이그레이션**<br>Requirements through troubleshooting, step by step — including the health endpoint and the schema migration procedure |
 | [`AI_INTEGRATION_GUIDE.md`](AI_INTEGRATION_GUIDE.md) | **다른 AI 에이전트**<br>Another AI agent | **이 파일 하나만 읽고 연동 코드를 쓸 수 있는 자립형 단일 문서.** 엔드포인트 전체 레퍼런스 · 요청/응답 JSON 전문 · 에러 코드 전수 · 프레임워크별 완전 예제 · 함정 목록<br>Self-contained: full endpoint reference, complete JSON, every error code, runnable examples |
 | [`docs/PORTFOLIO.md`](docs/PORTFOLIO.md) | 기술 리뷰어<br>Technical reviewers | **"어떻게, 왜 그렇게 결정했는가."** 설계 결정의 근거 · 막은 취약점의 재현 시나리오 · 검증 방법론 · 정량 지표. 문서 끝에 English Summary<br>The reasoning, the reproductions, the methodology, the numbers |
 | [`examples/README.md`](examples/README.md) | 로컬 앱 개발자<br>App developers | 3분 연동 가이드 / a three-minute integration walkthrough |
-| [`CHANGELOG.md`](CHANGELOG.md) | 전원 / everyone | 버전별 변경 이력 / release history |
+| [`tools/README.md`](tools/README.md) | 릴리스를 내보내는 사람<br>Whoever cuts a release | 자산 버전 일괄 치환 · PHP 7.2 호환성 스캐너. **서버에 올리지 않는 폴더다**<br>Release-time CLI scripts — **not uploaded to the server** |
+| [`CHANGELOG.md`](CHANGELOG.md) | 전원 / everyone | 버전별 변경 이력. **각 라운드가 무엇을 바꿨고 무엇을 닫지 않았는지의 정본**<br>Release history — the canonical record of what each round changed and what it left open |
 
 > **이 저장소에는 최신 버전 하나만 들어 있다.** 이전 릴리스는 git 태그로 관리한다.
 > 그래서 `CHANGELOG.md`·`INSTALL.md`에 남아 있는 **버전 폴더 두 개를 나란히 비교하는 재현 명령**
@@ -579,6 +648,10 @@ Reproduction scenarios for every vulnerability that was found and fixed: `docs/P
 | **휴면 자동 전이** | `dormant` 상태는 있으나 **자동 전이가 없다.** 관리자가 수동으로만 설정한다<br>The dormant state exists but nothing transitions into it automatically |
 | **`services.payload_fields`** | 저장·반환만 되고 **실제 필터링에 쓰이지 않는다. 동작하지 않는 보안 통제이므로 이것에 기대지 마라** — 접근 통제는 시크릿의 등급 게이트가 전부다<br>Stored and echoed but never enforced — **do not rely on it as a control** |
 | **`require_tier()` · `can()` · `CAN_MAP`** | 미사용 API 표면이다. 그 결과 **`TIER_INSUFFICIENT`는 기본 구성에서 발생하지 않는다.** 연동 측이 등급 게이팅을 붙일 자리로 남겨 뒀다<br>Unused surface left for integrators |
+| **`SECRET_ENC_KEY` 회전 경로**<br>Key rotation | **없다 (v1.4.0 미해결 · Critical).** 지금 그 키를 바꾸면 저장된 시크릿을 복호화할 수 없고 **`payload`가 조용히 `{}`가 된다** — 에러가 아니라 빈 객체다. 복구 방법은 시크릿 전량 재등록뿐이다<br>Changing the key silently empties every payload; there is no migration path |
+| **일괄 세션 회수**<br>Bulk session revocation | **서비스·전역 단위로 세션을 한 번에 끊는 수단이 없다 (v1.4.0 미해결 · High).** 그래서 **서비스를 껐다 켜면 탈취된 토큰도 함께 되살아난다.** v1.4.0은 「끈 동안 `payload`가 `{}`가 된다」까지만 한다 — 침해 대응으로 껐다면 **끈 상태를 유지해야 한다**<br>Turning a service off and on again restores stolen tokens too |
+| **세션 절대 수명 · HSTS**<br>Absolute session lifetime, HSTS | **둘 다 없다 (v1.4.0 미해결 · High).** refresh를 계속 돌리면 세션이 무한히 연장된다. `FORCE_HTTPS`는 301로 올려 보내지만 **첫 요청은 평문으로 한 번 나간다.** *같은 감사 항목의 다른 절반이었던 「refresh 전용 레이트리밋 없음」은 v1.4.0에서 닫혔다* — 갱신 횟수는 IP 120회/60초 · 계정 60회/3600초로 제한된다<br>Sessions extend indefinitely through refresh; the first request can still go out in the clear |
+| **시크릿 전달 로그의 보존 정책**<br>Audit log retention | **없다 (v1.4.0 미해결).** `secret_access_logs` · `login_logs` · `admin_logs` · `point_logs` **네 표는 자동으로 줄지 않는다** — 감사 근거이므로 일부러 지우지 않는다. 상한은 각 경로의 레이트리밋뿐이다(시크릿 전달 로그: **계정당 하루 1,440행**, IP당 `min(172,800, 1,440 × 그 IP의 계정 수)`). 용량 측정 SQL과 기간을 명시한 수동 삭제 절차는 [`INSTALL.md`](INSTALL.md) 4-8절에 있다. 보존 GC는 v1.9.0<br>Four audit tables never shrink on their own; rate limits are the only ceiling until v1.9.0 |
 
 ### 구조상의 제약 / Structural constraints
 
@@ -588,7 +661,7 @@ Reproduction scenarios for every vulnerability that was found and fixed: `docs/P
 | **`service_id`는 변경 불가** | 세션·시크릿·가입 매핑·로그가 문자열 키로 참조한다. 새로 만들고 기존 것을 `disabled`로 내려야 한다<br>Immutable once created |
 | **`BASE_URL`은 사실상 필수** | 비어 있으면 (a) 메일 발송이 전면 중단되고 (b) HTTPS 강제 리다이렉트가 500으로 멈춘다. **(a)는 응답이 "보냈습니다"라서 조용히 실패한다**<br>Effectively required; when empty, mail silently stops |
 | **`auto_join=0` 서비스** | 로그인은 200으로 성공하는데 `payload`만 `{}`라서 **무증상 실패로 보인다**<br>Login succeeds but the payload is empty — an easy trap |
-| **게이트 강제는 생성·수정 시점만** | 그 이전에 만들어진 게이트 없는 시크릿은 그대로 동작한다. 정기 점검이 필요하다. 이름 기반 판정이라 `openai_org` 같은 이름은 민감 키로 잡히지 않는다<br>Enforced at write time only; audit existing rows |
+| **게이트 강제는 생성·수정 시점만** | 그 이전에 만들어진 게이트 없는 시크릿은 그대로 동작한다 — **v1.4.0이 민감 키 판정 규칙을 넓혔지만 기존 행은 건드리지 않는다.** 대신 관리자 콘솔 [시크릿] 탭의 **「게이트 점검」 카드**가 「이름이 민감 + 실효 게이트 0개」인 행을 목록으로 보여 준다(**자동 변경은 하지 않는다** — 운영 중인 서비스의 등급을 코드가 임의로 올리면 정상 연동 앱이 갑자기 막힌다). 판정이 이름 기반이라 `openai_org` · `api_base` 같은 이름은 비민감으로 남는다<br>Enforced at write time only; v1.4.0 widened the name rule and added a review screen, but never rewrites existing rows |
 | **CSP의 `'unsafe-inline'`** | 화면 8개 중 **7개**가 인라인 `<script>`를 갖는다. **빌드 도구가 없어** sha256도 nonce도 쓸 수 없어 받아들인 타협이다. 그럼에도 `connect-src 'self'`가 남아 **XSS가 성립해도 데이터를 밖으로 보낼 통로가 없다**<br>An accepted trade-off; `connect-src 'self'` still closes the exfiltration path |
 
 **남아 있는 Medium·Low 보안 항목** — 배포를 막지는 않지만 알고 운영해야 한다. 대표적인 것:
@@ -613,7 +686,7 @@ AES layer. None of them block deployment, but you should know they are there. Fu
 | 1 | **실 호스팅의 PHP 7.2 인터프리터**<br>A real 7.2 runtime | **개발 환경에 PHP 8.1만 있었다.** 토크나이저 스캐너(규칙 50종, ERROR 0)와, 버전 조건을 뒤집은 사본으로 7.2 쿠키 분기를 **강제 실행**해 헤더 바이트 동일 + 실 HTTP 왕복까지 확인했다. 그래도 **인터프리터 자체의 동작 차이**는 정적 스캔으로만 커버된다 | 설치기 1단계에서 **"PHP 버전 7.2 이상 / 통과"** 가 뜨는지, 8단계까지 가는지 확인한다 |
 | 2 | **nginx · LiteSpeed**<br>Non-Apache web servers | **이 환경에 nginx가 없어 `nginx -t`조차 돌리지 못했다.** 확인한 것은 스니펫의 헤더 값이 `public/.htaccess`의 정본과 **문자 단위로 같다**는 것뿐이다. `add_header` 비상속은 nginx 문서상의 동작이며 실측이 아니다 | 설정 후 `nginx -t` → `INSTALL.md` 7-9절의 `curl` 3줄. **`Cache-Control`은 보이는데 CSP가 사라졌다면 헤더 재삽입 줄이 빠진 것이다** |
 | 3 | **실 공용 호스팅의 `.htaccess`**<br>`.htaccess` on the real host | **Apache 쪽은 확인됐다** — 실 Apache **2.4.58 + `mod_headers`** 로 `public/.htaccess`·`examples/.htaccess`를 파싱시켜 보안 5종 + 캐시 3종이 실제 응답에 나가는 것과, `AllowOverride None` 대체 스니펫이 `httpd -t` Syntax OK로 동작하는 것까지 실측했다. **남은 것은 그 서버다** — Apache 버전 · `AllowOverride` 값 · `mod_headers` 유무 · 제공자 단 프록시는 확인할 수 없다 | 위 "배포 후 30초 확인"을 한다 |
-| 4 | **배포 호스팅 MySQL의 전 엔드포인트 e2e** | 임시 **MariaDB 10.4.32**에 `schema.sql`을 무수정 적용(**15/15**)하고 실 PDO 경로로 가입·로그인·`/api/me`·로그아웃·SSO 3단계·PKCE 왕복까지 확인했다. 다만 호스팅의 MySQL 버전과 `sql_mode`는 다를 수 있다 | 설치 후 로그인 → `payload` 수신 → 포인트 차감까지 1회 종주한다 |
+| 4 | **배포 호스팅 MySQL의 전 엔드포인트 e2e** | 임시 **MariaDB 10.4.32**에 `schema.sql`을 무수정 적용(v1.4.0 기준 **17/17**)하고 실 PDO 경로로 가입·로그인·`/api/me`·로그아웃·SSO 3단계·PKCE 왕복까지 확인했다. v1.4.0에서는 **두 설치 경로(신규 `schema.sql` / 기존 `migrations/`)가 같은 스키마에 도달하는지**를 `information_schema` 직접 비교로 **두 담당이 각자** 확인했다(**291항목**과 **321항목** — 세는 집합이 다르다. 러너의 `verify`를 쓰지 않는 독립 하네스). **동작에 영향을 주는 축은 양쪽 다 차이 0**이고, 넓게 센 쪽이 찾은 차이 2건은 컬럼 주석과 컬럼 순서로 **둘 다 동작 영향이 없다.** 다만 호스팅의 MySQL 버전과 `sql_mode`는 다를 수 있다 | 설치 후 로그인 → `payload` 수신 → 포인트 차감까지 1회 종주한다. **기존 설치본을 갱신했다면 `migrate.php verify`도 함께.** 그 명령이 **비교하지 않는 8항목**(인덱스 `UNIQUE` 여부 등)은 [`INSTALL.md`](INSTALL.md) 8-2절의 SQL로 따로 확인한다 |
 | 5 | **`mail()` 실제 발송** | SMTP 환경이 없다. 기본 드라이버가 `log`다 | 콘솔에서 `mail`로 바꾼 뒤 비밀번호 찾기를 1회 실행한다 |
 | 6 | **브라우저 CORS 프리플라이트 · 쿠키 실전송** | 코드와 `allowed_origins` 파싱까지만 확인했다 | 로컬 앱에서 로그인해 개발자도구 Network 탭으로 확인한다 |
 | 7 | **2FA** | **미구현이라 감사 대상 코드가 없다** | — |
@@ -623,15 +696,24 @@ AES layer. None of them block deployment, but you should know they are there. Fu
 > **Do not read row 3 as covering row 2.** Apache passing says nothing about nginx; the two rows have
 > genuinely different verification status.
 
-**다음 단계로 잡아 둔 것** — 관리자 콘솔의 PHP 버전·EOL 표시, 인라인 스크립트 분리(`'unsafe-inline'` 제거),
-`X-Powered-By` 제거, 로그아웃 감사 로그 1행 누락 제거, 데모 폴더 전용 CSP 설계, 중복 코드 정리, 암복호 MAC 추가.
-각 항목이 **왜 이번에 들어가지 않았는지**까지 [`docs/PORTFOLIO.md`](docs/PORTFOLIO.md) 9-3절에 적었다.
+**v1.4.0에서 닫힌 「다음 단계」 항목** — `X-Powered-By` 제거(PHP 응답 + 정적 파일 `.htaccess` 3곳),
+`fail_ratelimit`이 기록되지 않던 문제, 시크릿 전달의 무기록.
+**진행 중인 PHP 버전을 사람이 볼 수 있게 하는 것**도 절반 닫혔다 — 관리자 콘솔 화면은 아직이지만
+헬스체크가 `php.version` · `php.supported`를 관리자에게 낸다.
 
-**English. What comes next** — surfacing the running PHP version and its EOL status in the admin
-console, moving inline scripts out to drop `'unsafe-inline'`, removing `X-Powered-By`, closing a
-one-row audit-log gap on logout, designing a CSP for the demo folder, de-duplicating admin helpers,
-and adding a MAC to the encryption layer. `docs/PORTFOLIO.md` §9-3 explains why each one was not in
-this release.
+**아직 남아 있는 것** — 인라인 스크립트 분리(`'unsafe-inline'` 제거), 로그아웃 감사 로그 1행 누락 제거,
+데모 폴더 전용 CSP 설계, 관리자 헬퍼 중복 정리, 암복호 MAC 추가, `SECRET_ENC_KEY` 회전 경로,
+일괄 세션 회수, 2FA, 회귀 테스트 러너.
+각 항목이 **왜 그 라운드에 들어가지 않았는지**까지 [`docs/PORTFOLIO.md`](docs/PORTFOLIO.md) 9-3절에 적었다.
+
+**English. Closed in v1.4.0** — the `X-Powered-By` header (both the PHP responses and the three
+`.htaccess` files that cover static files), the rate-limit result that was defined but never written,
+and the missing audit trail on secret delivery. Surfacing the running PHP version is half-closed: the
+health endpoint reports it to admins, though the console screen does not yet.
+**Still open** — moving inline scripts out to drop `'unsafe-inline'`, a one-row audit-log gap on
+logout, a CSP for the demo folder, de-duplicating admin helpers, a MAC on the encryption layer,
+a rotation path for `SECRET_ENC_KEY`, bulk session revocation, 2FA, and a regression test runner.
+`docs/PORTFOLIO.md` §9-3 explains why each one was not in the release it was deferred from.
 
 ---
 

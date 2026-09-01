@@ -79,6 +79,13 @@ function admin_secret_public(array $r): array
         'sort_order'        => (int) $r['sort_order'],
         'description'       => $r['description'] !== null ? (string) $r['description'] : null,
         'status'            => (string) $r['status'],
+        // v1.4.0 후속 (마이그레이션 0002) — **추가 필드다. 기존 키는 하나도 바뀌지 않았다.**
+        // 이 행이 "민감한 키 + 실효 게이트 0개" 인데 운영자가 allow_public=true 로
+        // 명시적으로 승인해 만들어졌는가. 종전에는 그 사실이 admin_logs 에만 남아
+        // 게이트 점검 화면이 **의도한 공개와 빠뜨린 게이트를 구분할 수 없었다.**
+        // 컬럼이 없는 DB(마이그레이션 0002 미적용)에서도 죽지 않게 array_key_exists 로 본다 —
+        // 이 응답 하나 때문에 업그레이드 중인 설치본의 관리자 화면이 500 이 되면 안 된다.
+        'allow_public'      => array_key_exists('allow_public', $r) && (bool) $r['allow_public'],
         'created_at'        => iso($r['created_at']),
         'updated_at'        => iso($r['updated_at']),
     ];
@@ -107,20 +114,31 @@ function admin_min_grade(array $in, string $key, array $allowed): ?string
 
 if (!function_exists('admin_secret_key_is_sensitive')) {
     /**
-     * 민감 키 판정. **정규식은 `install.php:1457` `ins_is_sensitive_key()` 와 글자 단위로 같다**
+     * 민감 키 판정. **정규식은 install.php 의 `ins_is_sensitive_key()` 와 글자 단위로 같다**
      * (출처: `_workspace/08a_fix2_install_report.md` §2 「민감 키 판정 규칙」).
      *
      * 규칙이 두 곳에서 갈라지면 한쪽만 막히는 상태가 된다. 설치기를 고칠 때 이 함수도 함께
      * 고쳐라 — 공용 파일로 뺄 수 없는 이유는 install.php 가 core/ 를 로드하지 않기 때문이다.
      *
-     * 민감: `ai_api_key` `api_key` `apikey` `x_secret` `client-secret` `refresh_token`
+     * v1.4.0 개정(D-154(4)). 이름을 `_` `-` `.` 로 나눈 **낱말** 중 하나라도
+     * key / keys / apikey / apikeys / secret(s) / token(s) / password(s) / passwd /
+     * credential(s) / sk 이면 민감하다.
+     *
+     * 민감: `ai_api_key` `openai_key` `claude_key` `anthropic_key` `private_key`
+     *       `ai_api_key_prod` `api_key_v2` `sk_live` `x-api-key` `secret_key`
+     *       `api_key` `apikey` `x_secret` `client-secret` `refresh_token`
      *       `db_password` `passwd` `aws_credentials` (대소문자 무시, 복수형 허용)
-     * 비민감: `api_base` `model` `endpoint` `org_id` `api_key_hint` `keyring`
+     * 비민감: `api_base` `model` `endpoint` `org_id` `openai_org` `keyring`
+     *
+     * 종전 규칙은 대안 목록에 맨 `key` 가 없고 끝이 `$` 로 고정돼 있어
+     * `openai_key` 계열과 글자 그대로의 `secret_key` 까지 통째로 빠져나갔다.
+     * `api_key_hint` 는 이제 민감으로 잡힌다 — `api_key_v2` 와 이름 모양이 같아
+     * 규칙으로 가를 수 없고, 틀린다면 닫는 쪽으로 틀리는 것이 맞다(fail-closed).
      */
     function admin_secret_key_is_sensitive(string $key): bool
     {
         return preg_match(
-            '/(?:^|[_\-])(api_?key|secret|token|password|passwd|credential)s?$/',
+            '/(?:^|[_\-.])(?:apikeys?|keys?|secrets?|tokens?|passwords?|passwd|credentials?|sk)(?:$|[_\-.])/',
             strtolower(trim($key))
         ) === 1;
     }
@@ -181,6 +199,31 @@ if (!function_exists('admin_secret_guard_gate')) {
             ]);
         }
         return true;
+    }
+}
+
+if (!function_exists('admin_secrets_has_allow_public')) {
+    /**
+     * `service_secrets.allow_public` 컬럼이 이 DB 에 있는가 (마이그레이션 0002).
+     *
+     * **코드를 올리고 아직 migrate.php 를 돌리지 않은 설치본이 존재한다.** 그 상태에서
+     * 이 컬럼을 무조건 INSERT/UPDATE 에 넣으면 시크릿 생성·수정이 전부 500 이 된다.
+     * 컬럼이 없으면 승인 표시를 쓰지 않고 넘어간다 — 그러면 게이트 점검 화면에서
+     * 그 행이 '미승인' 으로 보이는데, **그것이 안전한 쪽의 오차**다(승인된 것을
+     * 미승인으로 보는 것은 확인을 한 번 더 하게 만들 뿐이고, 반대는 놓치게 만든다).
+     * 마이그레이션을 적용하면 그다음 수정부터 정상 기록된다.
+     *
+     * 요청당 1회만 조회한다. 이 함수를 부르는 곳은 관리자 시크릿 쓰기 경로뿐이다.
+     */
+    function admin_secrets_has_allow_public(): bool
+    {
+        static $has = null;
+        if ($has === null) {
+            $has = db_val('SELECT COUNT(*) FROM information_schema.COLUMNS'
+                . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+                [T_SECRETS, 'allow_public']) > 0;
+        }
+        return $has;
     }
 }
 
@@ -328,6 +371,11 @@ if ($method === 'POST') {
     $ackPublic = admin_secret_guard_gate(
         $key, $row['min_account_level'], $row['min_billing_tier'], $row['min_role'], $body
     );
+    // 승인 사실을 행에도 남긴다(마이그레이션 0002). admin_logs 에만 있으면 목록에서
+    // 안 보이고, 안 보이면 게이트 점검 화면이 의도한 공개까지 섞어 보여 준다.
+    if (admin_secrets_has_allow_public()) {
+        $row['allow_public'] = $ackPublic ? 1 : 0;
+    }
 
     try {
         $newId = db_insert(T_SECRETS, $row);
@@ -473,6 +521,20 @@ if ($method === 'PUT') {
                 ? $set['min_role'] : $target['min_role'],
             $body
         );
+        // 게이트 3필드나 키 이름을 건드린 요청은 **적용 후 상태**로 표시를 다시 쓴다.
+        // 게이트를 실제로 걸었다면 $ackPublic 은 false 이고 표시가 0 으로 내려간다 —
+        // 승인 표시가 한 번 켜지면 영원히 남는 구조면, 게이트를 채운 뒤에도 그 행이
+        // 점검 화면에 계속 남아 화면이 다시 못 믿을 것이 된다.
+        // 이 4필드를 건드리지 않는 요청(description·status·sort_order 만 바꾸는 등)은
+        // 표시를 그대로 둔다 — 판정 근거가 바뀌지 않았기 때문이다.
+        // 값이 실제로 달라질 때만 $set 에 넣는다. 무조건 넣으면 아무것도 안 바뀐 PUT 도
+        // updated_at 을 올려 "언제 마지막으로 손댔나" 가 흐려진다.
+        if (admin_secrets_has_allow_public()) {
+            $ackNow = $ackPublic ? 1 : 0;
+            if ((int) (array_key_exists('allow_public', $target) ? $target['allow_public'] : 0) !== $ackNow) {
+                $set['allow_public'] = $ackNow;
+            }
+        }
     }
 
     if ($set !== []) {

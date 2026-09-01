@@ -3,7 +3,17 @@
 -- 원안: ulogin-architect (내부 설계 기록)
 -- 구현: ulogin-backend / 2026-08-25
 -- 대상: MySQL 5.7+ / MariaDB 10.3+ , InnoDB, utf8mb4
--- 테이블 수: 15
+-- 테이블 수: 17 (v1.0.0 의 15 + v1.4.0 의 schema_migrations · secret_access_logs)
+-- =====================================================================
+--
+-- [이 파일의 지위 — v1.4.0]
+--   이 파일은 **신규 설치용 최종 스키마**다. install.php 만 이것을 적용한다.
+--   기존 설치본은 server/migrations/NNNN_*.sql 을 순서대로 적용해 여기 도달한다.
+--   두 경로가 갈라지지 않게 하는 장치는 `php server/migrate.php verify` 다 —
+--   그것이 살아 있는 DB 를 **이 파일**과 대조한다. 마이그레이션에 컬럼을 넣고
+--   이 파일에 넣지 않으면 업그레이드된 DB 쪽에서 'schema.sql 에 없는 것' 으로 잡히고,
+--   반대로 여기에만 넣으면 업그레이드된 DB 쪽에서 '없는 것' 으로 잡힌다.
+--   **스키마를 바꾸는 모든 변경은 이 파일과 마이그레이션 파일을 같이 고친다.**
 -- =====================================================================
 --
 -- [테이블 prefix 규약]
@@ -83,7 +93,12 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_users` (
   KEY `idx_users_role_status`    (`role`, `status`),
   KEY `idx_users_billing`        (`billing_tier`, `billing_expires_at`),
   KEY `idx_users_account_level`  (`account_level`),
-  KEY `idx_users_last_login_at`  (`last_login_at`)
+  KEY `idx_users_last_login_at`  (`last_login_at`),
+  -- v1.4.0 추가. 관리자 목록의 정렬 화이트리스트(api/admin/users.php)에는 points 와
+  -- login_count 가 들어 있는데 인덱스가 없어 필터 없는 정렬이 전량 filesort 였다.
+  -- LIMIT 20 이어도 정렬은 전 행에 걸린다.
+  KEY `idx_users_points`         (`points`),
+  KEY `idx_users_login_count`    (`login_count`)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- 조회 패턴: 로그인=username/email(UNIQUE), 관리자 목록=status/role/level 필터 + created_at 정렬,
 --            통계=billing_tier·account_level 집계.
@@ -157,6 +172,13 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_service_secrets` (
   `min_billing_tier`  VARCHAR(20)     NULL,
   `min_role`          VARCHAR(20)     NULL,
   `is_masked`         TINYINT(1)      NOT NULL DEFAULT 1 COMMENT '1이면 관리자 콘솔에서도 값 마스킹',
+  -- v1.4.0 후속 (마이그레이션 0002). 민감한 키 이름인데 실효 게이트가 하나도 없는 행을
+  -- 운영자가 `allow_public=true` 로 **명시적으로 승인**해 만들었는가(D-54 / D-47).
+  -- 종전에는 그 사실이 admin_logs 에만 남아 목록 응답으로는 구분할 수 없었고,
+  -- 그래서 게이트 점검 화면이 '의도한 공개' 와 '빠뜨린 게이트' 를 섞어 보여줄 수밖에 없었다.
+  -- 기본값 0 = 승인된 적 없음. 이 컬럼이 생기기 전에 만들어진 행도 0 이며 **그것이 맞다** —
+  -- 그때는 승인이라는 절차 자체가 없었으므로 전부 점검 대상이다.
+  `allow_public`      TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '게이트 없는 민감 키를 운영자가 명시적으로 승인했는가(D-54)',
   `sort_order`        INT             NOT NULL DEFAULT 0,
   `description`       VARCHAR(255)    NULL,
   `status`            VARCHAR(20)     NOT NULL DEFAULT 'active' COMMENT 'active|disabled',
@@ -200,7 +222,12 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_sessions` (
   UNIQUE KEY `uq_sessions_refresh_hash` (`refresh_token_hash`),
   KEY `idx_sessions_user_revoked` (`user_id`, `revoked_at`),
   KEY `idx_sessions_expires_at`   (`expires_at`),
-  KEY `idx_sessions_service`      (`service_id`, `user_id`)
+  KEY `idx_sessions_service`      (`service_id`, `user_id`),
+  -- v1.4.0 추가. core/gc.php 의 세션 정리 DELETE 는
+  --   (refresh_expires_at IS NOT NULL AND refresh_expires_at < now) OR (refresh_expires_at IS NULL AND expires_at < now)
+  -- 형태다. expires_at 에만 인덱스가 있어 OR 절의 앞 절반이 전체 스캔이었고,
+  -- 그 DELETE 가 100 요청마다 한 번 돈다.
+  KEY `idx_sessions_refresh_expires` (`refresh_expires_at`)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- 토큰 해시에 UNIQUE 를 건 이유: 조회가 항상 단건 exact-match 이고,
 -- 난수 충돌/중복 삽입을 DB가 직접 막아준다. (NULL 은 MySQL에서 중복 허용되므로
@@ -266,7 +293,7 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_login_logs` (
   `user_id`        BIGINT UNSIGNED NULL COMMENT '존재하지 않는 계정 시도면 NULL',
   `username_input` VARCHAR(190)    NOT NULL DEFAULT '' COMMENT '입력값 원본. 계정 열거 시도 추적용',
   `service_id`     VARCHAR(64)     NULL,
-  `result`         VARCHAR(30)     NOT NULL COMMENT 'success|fail_credential|fail_locked|fail_status|fail_ratelimit|fail_service_blocked|logout',
+  `result`         VARCHAR(30)     NOT NULL COMMENT 'success|fail_credential|fail_locked|fail_status|fail_ratelimit|fail_service_blocked|fail_client_auth|fail_migrate_auth|fail_refresh_reuse|fail_refresh_revoked|logout',
   `ip`             VARCHAR(45)     NOT NULL,
   `user_agent`     VARCHAR(255)    NOT NULL DEFAULT '',
   `created_at`     DATETIME        NOT NULL,
@@ -377,6 +404,93 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_user_consents` (
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
+-- ---------------------------------------------------------------------
+-- 9. 스키마 리비전 (v1.4.0 신규)
+-- ---------------------------------------------------------------------
+--
+-- 이 테이블이 **스키마 리비전의 유일한 저장소**다.
+-- install.php 의 `db_version` 은 `SELECT VERSION()` 의 결과 = **MySQL 서버 버전 문자열**이며
+-- 스키마 리비전이 아니다. 둘을 섞지 마라.
+--
+-- 두 경로가 이 테이블을 채운다 (둘 다 같은 최종 스키마에 도달해야 한다):
+--   1) 신규 설치  — install.php 가 이 schema.sql 전체를 적용한 뒤
+--                   server/migrations/ 의 전 파일을 status='baseline' 으로 기록한다.
+--                   schema.sql 이 이미 최종 형태이므로 다시 적용하지 않는다.
+--   2) 기존 업그레이드 — server/migrate.php 가 미적용 파일만 순서대로 적용하고
+--                   status='applied' 로 기록한다.
+--
+-- **이 CREATE 문의 정의가 정본이다.** server/migrate.php 는 부트스트랩 시
+-- 이 파일에서 이 문장을 찾아 그대로 실행한다 — DDL 을 두 곳에 적지 않기 위함이다.
+--
+-- 부분 적용의 표현: MySQL 은 DDL 에 트랜잭션이 걸리지 않는다. 그래서 실행 **전에**
+-- status='running' 행을 만들고 문장 하나가 끝날 때마다 statements_done 을 올린다.
+-- 중간에 죽으면 그 행이 'running' 인 채로 남아 **어디까지 적용됐는지**가 DB 에 남는다.
+
+CREATE TABLE IF NOT EXISTS `app_ulogin_schema_migrations` (
+  `version`          VARCHAR(20)  NOT NULL COMMENT '파일명 앞의 번호. 0001, 0002 …',
+  `name`             VARCHAR(120) NOT NULL COMMENT '파일의 -- name: 헤더',
+  `filename`         VARCHAR(190) NOT NULL,
+  `checksum`         CHAR(64)     NOT NULL COMMENT '파일 원문의 SHA-256. 적용 후 파일이 바뀌면 거부한다',
+  `status`           VARCHAR(20)  NOT NULL COMMENT 'baseline|running|applied|failed',
+  `statements_total` INT          NOT NULL DEFAULT 0,
+  `statements_done`  INT          NOT NULL DEFAULT 0 COMMENT '부분 적용 지점. status=running 으로 남았다면 여기까지 적용됐다',
+  `started_at`       DATETIME     NOT NULL,
+  `finished_at`      DATETIME     NULL,
+  `applied_by`       VARCHAR(60)  NULL COMMENT 'install|cli|관리자 username',
+  `error_text`       TEXT         NULL COMMENT '실패 사유. DB 메시지는 요약만 담는다',
+  PRIMARY KEY (`version`),
+  KEY `idx_schema_migrations_status` (`status`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ---------------------------------------------------------------------
+-- 10. 시크릿 전달 감사 (v1.4.0 신규)
+-- ---------------------------------------------------------------------
+--
+-- 이 시스템의 왕관 보석은 `payload` 로 나가는 서비스 시크릿이다. v1.3.0 까지
+-- 그 전달은 **무기록**이었다 — 탈취된 토큰으로 분당 200회 키를 받아가도 남는 것은
+-- sessions.last_seen_at 하나였다. 반대로 드문 관리자 조회(secret.reveal)는 남았다.
+--
+-- **시간 버킷 UPSERT 다 — 그러나 모든 경로가 접히지는 않는다.**
+-- (session_id, source, window_start) 로 1시간 버킷을 묶고 hits 를 올린다.
+-- 같은 session_id 로 반복 호출되는 경로(source=session)는 설계대로 접힌다 —
+-- 그 세션이 한 시간에 몇 번 불리든 1행이고 hits 만 오른다. 단순 INSERT 라면
+-- 분당 200회 트래픽이 하루 28만 행이 됐을 자리다.
+--
+-- **접히지 않는 경로가 있다 — 보안 재검증 V14b-H-1.**
+-- rotate_refresh() 가 회전마다 새 session_id 를 만들기 때문에 source=refresh 는
+-- 두 요청이 같은 버킷을 쓰는 일이 없다. 즉 **갱신 경로는 요청과 1:1** 이다.
+-- 실측: 같은 세션 GET session 20회 → 2행 / refresh 10회 → 10행 / refresh 150회 → 151행.
+-- **그래서 「하루 24행」은 이 표 전체의 전제가 아니다** — 접히는 경로에만 참이다.
+--
+-- 증가율은 회전 자체의 상한으로 묶었다 — api/auth/refresh.php 의 refresh:ip 120/60 과
+-- core/auth.php rotate_refresh() 의 refresh:user 60/3600. **계정당 하루 상한 1,440행.**
+-- 1:1 비율 자체를 없애려면 회전에 걸쳐 살아남는 계보 키(sessions.root_session_id)가
+-- 필요하고 그것은 마이그레이션 대상이다(V14-M-3, v1.5.0).
+-- 근거 전문은 core/logger.php 의 log_secret_access() 머리 주석에 있다.
+--
+-- **값은 절대 담지 않는다.** secret_keys 에는 키의 *이름*만 콤마로 나열한다.
+
+CREATE TABLE IF NOT EXISTS `app_ulogin_secret_access_logs` (
+  `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`      BIGINT UNSIGNED NOT NULL,
+  `service_id`   VARCHAR(64)     NOT NULL,
+  `session_id`   CHAR(64)        NOT NULL COMMENT 'sessions.session_id (공개 식별자). 인증자 아님',
+  `source`       VARCHAR(20)     NOT NULL COMMENT 'login|exchange|refresh|session',
+  `window_start` DATETIME        NOT NULL COMMENT '1시간 버킷의 시작(UTC)',
+  `hits`         INT UNSIGNED    NOT NULL DEFAULT 1,
+  `secret_keys`  VARCHAR(255)    NOT NULL COMMENT '전달된 키 **이름** 목록. 값은 담지 않는다',
+  `first_ip`     VARCHAR(45)     NOT NULL,
+  `last_ip`      VARCHAR(45)     NOT NULL COMMENT 'first_ip 와 다르면 같은 세션이 여러 IP 에서 쓰였다는 신호',
+  `first_at`     DATETIME        NOT NULL,
+  `last_at`      DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_secret_access_bucket` (`session_id`, `source`, `window_start`),
+  KEY `idx_secret_access_service` (`service_id`, `window_start`),
+  KEY `idx_secret_access_user`    (`user_id`, `window_start`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 -- =====================================================================
 -- 확률적 GC 대상 (cron 이 없으므로 요청당 1/100 확률로 실행 — core/gc.php)
 --   DELETE FROM app_ulogin_auth_codes          WHERE expires_at < UTC_TIMESTAMP();
@@ -386,5 +500,11 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_user_consents` (
 --   DELETE FROM app_ulogin_sessions
 --     WHERE (refresh_expires_at IS NOT NULL AND refresh_expires_at < UTC_TIMESTAMP())
 --        OR (refresh_expires_at IS NULL AND expires_at < UTC_TIMESTAMP());
--- 로그 테이블(login_logs / point_logs / admin_logs)은 GC 하지 않는다. 감사 근거다.
+-- 로그 테이블(login_logs / point_logs / admin_logs / secret_access_logs)은 GC 하지 않는다.
+-- 감사 근거다. secret_access_logs 는 (세션 × 경로 × 시간) 으로 늘어나는데,
+-- **갱신 경로는 회전마다 session_id 가 새로 생기므로 요청과 1:1 이다**(V14b-H-1).
+-- 상한은 레이트리밋뿐이다 — refresh:ip 120/60 · refresh:user 60/3600, 계정당 하루 1,440행.
+-- 네 표의 상한은 core/gc.php 머리 주석에 표로 정리돼 있다.
+-- 보존 정책은 아직 없다 — 격차 G-26, D-156(6) 이 v1.9.0 으로 배정했다.
+-- schema_migrations 도 GC 대상이 아니다. 적용 이력 자체가 자산이다.
 -- =====================================================================

@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 // 직접 실행 차단 — 리더 판정 D-34. bootstrap.php 를 거치지 않은 요청은 존재하지 않는 파일이다.
 if (!defined('ULOGIN_BOOTSTRAPPED')) {
+    // X-Powered-By 제거 — D-154(2). 이 경로는 bootstrap.php 를 거치지 않는다.
+    header_remove('X-Powered-By');
     http_response_code(404);
     exit;
 }
@@ -79,6 +81,25 @@ function membership_active(array $grades, ?array $us = null): bool
 }
 
 /**
+ * 이 서비스가 **서비스 자체로** 활성인가. 리더 판정 D-152 / 보안 조사 A-1.
+ *
+ * `service_load()` 가 유일한 `services.status='active'` 필터다. 여기서 새 SELECT 를
+ * 쓰지 않는 이유: 조건을 두 곳에 두면 한쪽만 고쳐지는 사고가 난다(D-51/D-67 이 같은
+ * 이유로 두 함수의 조건식을 맞췄다).
+ *
+ * 요청 안에서 같은 service_id 로 여러 번 불릴 수 있으므로 정적 캐시를 둔다 —
+ * 한 요청 안에서 서비스 상태가 바뀌는 일은 없다.
+ */
+function payload_service_active(string $serviceId): bool
+{
+    static $cache = [];
+    if (!array_key_exists($serviceId, $cache)) {
+        $cache[$serviceId] = (service_load($serviceId) !== null);
+    }
+    return $cache[$serviceId];
+}
+
+/**
  * 등급 미달 키는 에러가 아니라 '미포함' 으로 처리한다.
  * 어떤 키가 존재하는지 자체가 정보이므로 알려주지 않는다.
  * 프론트는 payload.ai_api_key 가 없을 때의 분기만 처리하면 된다.
@@ -87,10 +108,35 @@ function membership_active(array $grades, ?array $us = null): bool
  *
  * @param array      $grades effective_grades() 결과
  * @param array|null $us     user_services 행. 넘기지 않아도 $grades 로 가입 여부가 판정된다
+ * @param array      $audit  ['source'=>'login|exchange|refresh|session', 'session'=>sessions 행]
+ *                           시크릿이 실제로 나간 사건을 기록하기 위한 문맥. 없으면 기록만 생략된다
  */
-function build_payload(?string $serviceId, array $grades, ?array $us = null): array
+function build_payload(?string $serviceId, array $grades, ?array $us = null, array $audit = []): array
 {
     if ($serviceId === null || $serviceId === '') {
+        return [];
+    }
+
+    // -----------------------------------------------------------------
+    // 리더 판정 D-152 (보안 조사 A-1) — **서비스 자체가 활성일 때만** 시크릿을 담는다.
+    //
+    // v1.3.0 까지 이 판정이 어디에도 없었다. require_auth() 는 세션 행의 service_id 를
+    // 그대로 넘기고 services.status 를 한 번도 읽지 않았다. 아래 WHERE 절의
+    // `status = 'active'` 는 **시크릿 행**의 상태이지 서비스의 상태가 아니다.
+    //
+    // 그 결과: 관리자가 침해를 의심해 서비스를 disabled 로 바꿔도
+    // `GET /api/auth/session` 이 탈취된 Bearer 토큰에 200 + ai_api_key 평문을
+    // 계속 돌려줬다. 최대 services.session_ttl(상한 7일) 동안.
+    // login·authorize·exchange 는 service_require() 로, refresh 는 service_load() 가
+    // null 을 돌려줘 막혔다 — **네 경로 중 셋이 막혀서** 운영자가 막혔다고 오판했다.
+    //
+    // 왜 여기인가: 판정을 호출부 4곳에 흩어 놓으면 하나만 빠져도 구멍이 되고,
+    // session.php 는 소유자가 없다. D-48 이 membership_active() 를 이 함수 안에
+    // 둔 것과 같은 이유다. 세션 자체를 401 로 죽이지 않고 payload 만 비우는 것은
+    // **회원 단위 blocked 가 이미 그렇게 동작하기 때문**이고(대칭), refresh 경로가
+    // 이미 payload {} 를 내고 있어 기존 연동 앱이 아는 상태이기 때문이다.
+    // -----------------------------------------------------------------
+    if (!payload_service_active($serviceId)) {
         return [];
     }
 
@@ -143,6 +189,28 @@ function build_payload(?string $serviceId, array $grades, ?array $us = null): ar
         } else {
             $out[(string) $r['secret_key']] = $v;
         }
+    }
+
+    // -----------------------------------------------------------------
+    // 리더 판정 D-153 H-2 (보안 조사 A-3) — 시크릿이 실제로 나간 사건을 남긴다.
+    //
+    // v1.3.0 까지 이 함수가 남기는 로그는 **복호화 실패 한 종류뿐**이었다.
+    // 탈취된 토큰으로 분당 200회 키를 받아가도 남는 것은 sessions.last_seen_at 하나였고,
+    // 반대로 드문 관리자 조회(secret.reveal)는 admin_logs 에 남았다 — 감사 대상이
+    // 뒤집혀 있었다. "이 키를 누가 언제 받아 갔나" 에 답할 데이터가 DB 에 없었다.
+    //
+    // **빈 payload 는 기록하지 않는다.** 시크릿이 나가지 않은 요청은 감사 대상이 아니고,
+    // 기록하면 정상 폴링이 로그를 덮어 신호가 묻힌다.
+    // 기록은 시간 버킷 UPSERT 다 — 성능·용량 근거는 logger.php 의 함수 주석에 있다.
+    // 기록 실패는 응답을 막지 않는다(logger.php 가 삼킨다).
+    // -----------------------------------------------------------------
+    if ($out !== [] && $audit !== []) {
+        log_secret_access(
+            (string) $serviceId,
+            isset($audit['session']) && is_array($audit['session']) ? $audit['session'] : null,
+            isset($audit['source']) ? (string) $audit['source'] : 'unknown',
+            array_keys($out)
+        );
     }
     return $out;
 }

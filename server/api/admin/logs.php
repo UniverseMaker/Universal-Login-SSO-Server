@@ -1,14 +1,20 @@
 <?php
 declare(strict_types=1);
 /**
- * GET /api/admin/logs.php?type=login|admin — 로그 조회
- * 담당 계약: §8-20(로그인 로그) · §8-21(관리자 조작 로그)
- * 리더 판정 D-0: 두 논리 경로를 `?type=` 으로 구분한다.
- * 최소 역할: type=login → manager / type=admin → admin
+ * GET /api/admin/logs.php?type=login|admin|secret_access — 로그 조회
+ * 담당 계약: §8-20(로그인 로그) · §8-21(관리자 조작 로그) · secret_access 는 v1.4.0 신규
+ * 리더 판정 D-0: 논리 경로를 `?type=` 으로 구분한다.
+ * 최소 역할: type=login → manager / type=admin → admin / type=secret_access → admin
  *
  * 응답 최상위 키
- *   type=login : items, total, page, per_page, summary
- *   type=admin : items, total, page, per_page
+ *   type=login          : items, total, page, per_page, summary
+ *   type=admin          : items, total, page, per_page
+ *   type=secret_access  : items, total, page, per_page, summary  (v1.4.0 신규 — D-153 H-2)
+ *                         summary 는 v1.4.0 후속 추가 —
+ *                         {rows, hits, ip_changed_rows}. **조건 전체**의 집계다.
+ *                         이 표는 시간 버킷이라 total(행 수) 이 접근 횟수가 아니다.
+ *
+ * **기존 두 type 의 응답 shape 은 바뀌지 않았다.** 새 type 하나가 추가됐을 뿐이다.
  *
  * 조회이므로 admin_logs 에 기록하지 않는다(계약 §8 공통 — secret.reveal 만 예외).
  */
@@ -42,7 +48,7 @@ if (!function_exists('admin_parse_dt')) {
 }
 
 $ctx  = require_auth();
-$type = (string) v_enum($_GET, 'type', ['login', 'admin'], false, 'login');
+$type = (string) v_enum($_GET, 'type', ['login', 'admin', 'secret_access'], false, 'login');
 
 $fromAt = admin_parse_dt(in_raw($_GET, 'from'), 'from', false);
 $toAt   = admin_parse_dt(in_raw($_GET, 'to'), 'to', true);
@@ -56,7 +62,24 @@ $uuidRe = '/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-f
 if ($type === 'login') {
     require_global_role($ctx, 'manager');
 
-    $results = ['success', 'fail_credential', 'fail_locked', 'fail_status', 'fail_ratelimit', 'fail_service_blocked', 'logout'];
+    // v1.4.0: fail_client_auth 추가 (D-153 H-1 — exchange 의 service_secret 오인증).
+    // fail_ratelimit 은 종전부터 이 목록에 있었지만 **기록하는 코드가 없어** 항상 0건이었다.
+    // v1.4.0 부터 core/ratelimit.php 의 rate_limit_logged() 가 실제로 남긴다.
+    //
+    // 아래 셋은 보안 검증 후속에서 더 늘었다. 셋 다 **필터 값이 늘어난 것**이고
+    // 응답 shape 은 그대로다(summary 는 이 배열을 그대로 키로 쓴다).
+    //   fail_migrate_auth — server/migrate.php 의 superadmin 인증 실패 (V14-H-2)
+    //   fail_refresh_reuse — 회수된 refresh 토큰의 재사용 = 탈취 신호 (A-6 / D-164)
+    //
+    // fail_refresh_revoked 는 보안 재검증 A-6 오탐이 만든 값이다. 종전에는 로그아웃 ·
+    // 마이페이지 세션정리 · 비밀번호 변경 · 관리자 회수 **네 정상 경로**가 전부
+    // fail_refresh_reuse 로 기록돼 「탈취 신호」의 대부분이 오탐이었다. 이제
+    // 회수 사유가 refresh_rotated / refresh_reuse 일 때만 fail_refresh_reuse 이고
+    // 나머지는 이 값으로 온다. **화이트리스트를 한쪽만 고치면 필터에서 사라진다** —
+    // 이 배열과 api/me/login_logs.php 의 v_enum 목록은 항상 함께 본다.
+    $results = ['success', 'fail_credential', 'fail_locked', 'fail_status', 'fail_ratelimit',
+                'fail_service_blocked', 'fail_client_auth', 'fail_migrate_auth',
+                'fail_refresh_reuse', 'fail_refresh_revoked', 'logout'];
 
     $q         = v_string($_GET, 'q', 1, 190, false);
     $serviceId = v_string($_GET, 'service_id', 1, 64, false);
@@ -144,6 +167,117 @@ if ($type === 'login') {
         'total'    => $total,
         'page'     => $page,
         'per_page' => $perPage,
+        'summary'  => $summary,
+    ]);
+}
+
+// =====================================================================
+// type=secret_access — 시크릿 전달 감사 (v1.4.0 신규, D-153 H-2) · admin
+//
+// 기록은 core/logger.php 의 log_secret_access() 가 만든다. **시간 버킷 UPSERT** 라
+// 한 행이 여러 요청을 담는다 — hits 가 그 수다. 값은 담기지 않는다(키 이름만).
+//
+// 없으면 무슨 일이 생기나: 기록만 하고 볼 곳이 없으면, `fail_ratelimit` 이
+// 「필터는 있는데 항상 0건」이었던 것과 대칭인 상태가 된다 — 이번에는
+// 「데이터는 있는데 화면이 없다」다. 그래서 읽는 경로를 같은 라운드에 만든다.
+// =====================================================================
+if ($type === 'secret_access') {
+    if (!role_gte(ctx_global_role($ctx), 'admin')) {
+        throw new AppError('FORBIDDEN', 403, ['message' => '시크릿 전달 로그는 admin 이상만 조회할 수 있습니다.']);
+    }
+
+    $svcId  = v_string($_GET, 'service_id', 1, 64, false);
+    $source = v_enum($_GET, 'source', ['login', 'exchange', 'refresh', 'session'], false);
+    $uuid   = v_string($_GET, 'uuid', 1, 64, false);
+
+    $where  = ['1 = 1'];
+    $params = [];
+    if ($svcId !== null)  { $where[] = 's.service_id = ?'; $params[] = $svcId; }
+    if ($source !== null) { $where[] = 's.source = ?';     $params[] = $source; }
+    if ($uuid !== null) {
+        if (preg_match($uuidRe, $uuid) !== 1) {
+            v_fail('uuid', '회원 식별자 형식이 올바르지 않습니다.');
+        }
+        $uid = db_val('SELECT id FROM ' . T_USERS . ' WHERE uuid = ?', [$uuid]);
+        if ($uid === null) {
+            throw new AppError('NOT_FOUND', 404, ['message' => '회원을 찾을 수 없습니다.']);
+        }
+        $where[]  = 's.user_id = ?';
+        $params[] = (int) $uid;
+    }
+    if ($fromAt !== null) { $where[] = 's.last_at >= ?'; $params[] = $fromAt; }
+    if ($toAt !== null)   { $where[] = 's.last_at <= ?'; $params[] = $toAt; }
+
+    $joinSql = ' FROM ' . T_SECRET_ACCESS . ' s LEFT JOIN ' . T_USERS . ' u ON u.id = s.user_id'
+             . ' WHERE ' . implode(' AND ', $where);
+
+    // ------------------------------------------------------------------
+    // summary — **조건 전체**의 집계. frontend 요청.
+    //
+    // 이 표는 시간 버킷 UPSERT 라 `total`(= 행 수)이 접근 횟수가 아니다. 그런데
+    // 페이저의 "전체 N건" 은 total 을 그대로 쓰므로, 화면이 계산할 수 있는 유일한
+    // 횟수가 **현재 페이지의 hits 합**이었다. 실측된 대비가 그 오차의 크기다 —
+    // 4행에 hits 288,046. 조건 전체 합계를 서버가 주지 않으면 화면은 그 차이를
+    // 글자로 경고하는 것 말고 할 수 있는 것이 없다.
+    //
+    // COUNT 를 따로 돌리지 않고 같은 쿼리에서 함께 낸다 — 쿼리 수는 종전과 같다.
+    // `SUM(hits)` 는 32비트를 넘길 수 있어 드라이버가 문자열로 준다. PHP 정수는
+    // 64비트이므로 (int) 캐스팅이 안전하다.
+    // ip_changed 는 목록 항목이 이미 first_ip <> last_ip 로 계산하는 값이고,
+    // 여기서는 **조건 전체**에서 그런 행이 몇 개인지를 같은 규칙으로 센다.
+    // ------------------------------------------------------------------
+    $agg = db_one(
+        'SELECT COUNT(*) AS rows_total, COALESCE(SUM(s.hits), 0) AS hits_total,'
+        . ' COALESCE(SUM(CASE WHEN s.first_ip <> s.last_ip THEN 1 ELSE 0 END), 0) AS ip_changed_rows'
+        . $joinSql,
+        $params
+    );
+    $total   = (int) ($agg['rows_total'] ?? 0);
+    $summary = [
+        // rows 는 total 과 같은 값이다. 이름이 다른 자리에 같은 수를 두는 이유는,
+        // 이 표에서 "행 수" 와 "전달 횟수" 를 나란히 놓지 않으면 total 이 횟수로 읽히기 때문이다.
+        'rows'            => $total,
+        'hits'            => (int) ($agg['hits_total'] ?? 0),
+        'ip_changed_rows' => (int) ($agg['ip_changed_rows'] ?? 0),
+    ];
+
+    $rows  = db_all(
+        'SELECT s.id, s.service_id, s.session_id, s.source, s.window_start, s.hits, s.secret_keys,'
+        . ' s.first_ip, s.last_ip, s.first_at, s.last_at, u.uuid AS user_uuid, u.username'
+        . $joinSql
+        . ' ORDER BY s.last_at DESC, s.id DESC LIMIT ' . (int) $perPage . ' OFFSET ' . (int) $offset,
+        $params
+    );
+
+    $items = [];
+    foreach ($rows as $r) {
+        $keys = (string) $r['secret_keys'] === '' ? [] : explode(',', (string) $r['secret_keys']);
+        $items[] = [
+            'id'           => (int) $r['id'],
+            'user_uuid'    => $r['user_uuid'] !== null ? (string) $r['user_uuid'] : null,
+            'username'     => $r['username'] !== null ? (string) $r['username'] : null,
+            'service_id'   => (string) $r['service_id'],
+            'session_id'   => (string) $r['session_id'],
+            'source'       => (string) $r['source'],
+            'hits'         => (int) $r['hits'],
+            // 키 **이름**만이다. 값은 어떤 경우에도 이 응답에 담기지 않는다.
+            'secret_keys'  => $keys,
+            'first_ip'     => (string) $r['first_ip'],
+            'last_ip'      => (string) $r['last_ip'],
+            // first_ip 와 last_ip 가 다르면 같은 세션이 여러 IP 에서 쓰였다는 신호다.
+            'ip_changed'   => ((string) $r['first_ip'] !== (string) $r['last_ip']),
+            'window_start' => iso($r['window_start']),
+            'first_at'     => iso($r['first_at']),
+            'last_at'      => iso($r['last_at']),
+        ];
+    }
+
+    json_out([
+        'items'    => $items,
+        'total'    => $total,
+        'page'     => $page,
+        'per_page' => $perPage,
+        // 추가 키다. items·total·page·per_page 는 바뀌지 않았다.
         'summary'  => $summary,
     ]);
 }

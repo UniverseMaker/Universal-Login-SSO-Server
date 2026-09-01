@@ -19,7 +19,7 @@ only_method('POST');
 
 // 2) 레이트리밋 — 인증보다 먼저. login.php 와 같은 버킷을 공유한다.
 //    버킷을 분리하면 authorize 로 10회 + login 으로 10회를 시도할 수 있다.
-rate_limit('login:ip:' . client_ip(), 10, 300);
+rate_limit_logged('login:ip:' . client_ip(), 10, 300);   // D-153: 한도 도달을 login_logs 에 남긴다
 
 // 3) 입력
 $in          = body_json();
@@ -31,7 +31,7 @@ $state       = v_string($in, 'state', 1, 255);
 $challenge   = v_string($in, 'code_challenge', 1, 128);
 $chalMethod  = v_string($in, 'code_challenge_method', 1, 10);
 
-rate_limit('login:user:' . mb_strtolower($loginId, 'UTF-8'), 5, 300);
+rate_limit_logged('login:user:' . mb_strtolower($loginId, 'UTF-8'), 5, 300, null, $loginId, $serviceId);
 
 // PKCE 는 S256 만 지원한다. plain 은 challenge 가 곧 verifier 여서 방어력이 없다.
 if ($challenge !== null && $chalMethod !== null && strtoupper($chalMethod) !== 'S256') {

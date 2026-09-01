@@ -23,12 +23,28 @@
 **요구사항:** PHP CLI 하나뿐이다. Composer도, 확장 모듈도, 네트워크도 쓰지 않는다.
 어느 쪽도 **파일을 읽고 쓰는 것 외의 부작용이 없다** — DB에 접속하지 않고, 아무것도 전송하지 않는다.
 
+> **`server/migrate.php`는 이 폴더의 도구가 아니다. 헷갈리기 쉬운 자리라 먼저 적는다.**
+>
+> | | 이 폴더의 두 스크립트 | `server/migrate.php` |
+> |---|---|---|
+> | 어디에 있나 | `tools/` | **`server/`** |
+> | 서버에 올리나 | **올리지 않는다** | **올린다. 그리고 배포 후에도 지우지 않는다** |
+> | 무엇을 건드리나 | 파일만 | **DB 스키마** |
+> | 언제 도나 | 릴리스를 **내보낼 때**(자기 PC) | 새 버전을 **올린 직후**(서버) |
+> | 인증 | 없다 (CLI 전용) | **매 요청 `superadmin` 자격증명** (웹) / 없음 (CLI) |
+>
+> 두 스크립트를 여기서 돌리는 것은 **업로드 전** 작업이고,
+> `migrate.php`는 **업로드 후** 작업이다. 절차는 `INSTALL.md` 8-2절에 있다.
+> **이 폴더에 마이그레이션 도구를 추가하지 마라** — 러너는 살아 있는 DB에 붙어야 하고,
+> 그 자격증명은 서버의 `config.php`에만 있다.
+
 ---
 
 ## `bump_asset_version.php` — 자산 URL의 `?v=` 일괄 치환
 
 브라우저 캐시 무효화의 **주 수단**은 자산 URL에 붙은 버전 쿼리다
-(`href="assets/style.css?v=1.3.0"`). 이 값이 바뀌지 않으면 새 버전을 올려도 브라우저가 옛
+(`href="assets/style.css?v={버전}"` — `{버전}`은 자리표시자이고 실제 파일에는 `1.4.0` 같은 값이 들어 있다).
+이 값이 바뀌지 않으면 새 버전을 올려도 브라우저가 옛
 CSS·JS를 계속 쓴다. 자산에는 `immutable, max-age=31536000`이 걸려 있어 **서버 쪽 철회 수단이 없다.**
 
 **손으로 고치지 마라.** 참조가 여러 파일에 흩어져 있어 반드시 일부가 빠진다.
@@ -170,5 +186,12 @@ if (PHP_VERSION_ID >= 70300) {
 1. `php tools/php72_scan.php server tools` → `ERROR 0` 확인
 2. `php tools/bump_asset_version.php <새버전> --dry-run` → `버전없음` 열이 0인지 확인
 3. `php tools/bump_asset_version.php <새버전> --version-txt=<새버전>_<YYYYMMDD>` → 종료코드 0 확인
-4. `server/` · `public/` · `examples/` 업로드 (**`tools/`는 올리지 않는다**)
-5. `INSTALL.md` `## 8. 새 버전으로 갱신하기`의 나머지 확인 단계
+4. **스키마를 바꾼 릴리스라면 `server/migrations/`에 파일이 들어 있는지 확인한다** —
+   러너는 **가드(`-- @skip-if:`) 없는 DDL이 하나라도 있으면 그 파일 전체를 거부**하므로,
+   업로드 전에 `php server/migrate.php status`를 **개발용 DB에 대해** 한 번 돌려 보는 것이 안전하다
+   (이 단계는 `tools/`가 아니라 `server/`의 일이다)
+5. `server/` · `public/` · `examples/` 업로드 (**`tools/`는 올리지 않는다**)
+6. **업로드 직후 `server/migrate.php`를 한 번 돌린다** — `INSTALL.md` 8-2절.
+   **백업을 먼저 받아라. `down` 마이그레이션은 없다**
+7. `INSTALL.md` `## 8. 새 버전으로 갱신하기`의 나머지 확인 단계
+   (`version.txt` · 자산 `?v=` · API 캐시 헤더 · 헬스체크 `checks.schema`)

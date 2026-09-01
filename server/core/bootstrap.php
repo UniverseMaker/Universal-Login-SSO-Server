@@ -63,6 +63,25 @@ if (!defined('ULOGIN_BOOTSTRAPPED')) {
     define('ULOGIN_BOOTSTRAPPED', 1);
 }
 
+// ---------------------------------------------------------------------
+// X-Powered-By 제거 — 리더 판정 D-154(2) (v1.2.0 D-99(3) 부터 이월)
+//
+// 공용 호스팅의 PHP 기본값은 `expose_php=On` 이고, 그러면 SAPI 가 **모든 응답에**
+// `X-Powered-By: PHP/7.2.34` 를 붙인다. 저장소가 공개된 지금 정확한 마이너 버전은
+// 그 버전의 알려진 취약점으로 바로 이어지는 지문이다.
+// `expose_php` 는 PHP_INI_PERDIR 이라 ini_set() 으로 못 바꾼다 — 헤더를 지우는 것이
+// 코드에서 할 수 있는 유일한 조치다.
+//
+// **여기가 맞는 자리인 이유:** 이 파일을 지나는 출력 경로가 넷이고
+// (FORCE_HTTPS 301 · OPTIONS 204 · json_out/json_err 의 JSON · config 없음 500)
+// 넷 다 이 지점 **뒤에** 있다. response.php 에 두면 301·204 가 빠진다.
+// install.php 와 migrate.php 는 이 파일을 거치지 않으므로 각자 같은 줄을 갖고 있고,
+// core/*.php 의 직접 실행 가드 404 도 마찬가지다.
+// ---------------------------------------------------------------------
+if (PHP_SAPI !== 'cli' && !headers_sent()) {
+    header_remove('X-Powered-By');
+}
+
 // 응답 헬퍼를 가장 먼저 올린다. 설정이 없을 때도 JSON 봉투로 답해야 한다.
 require_once __DIR__ . '/response.php';
 
@@ -72,6 +91,60 @@ if (!is_file(__DIR__ . '/../config.php')) {
     json_err('SERVER_ERROR', 500);
 }
 require_once __DIR__ . '/../config.php';
+
+// ---------------------------------------------------------------------
+// 새 테이블 상수의 하위호환 가드 — 리더 판정 D-151
+//
+// **기존 설치본의 config.php 는 v1.4.0 이전에 install.php 가 만든 파일이다.**
+// 그 파일에는 v1.4.0 에서 새로 생긴 T_* 상수가 없다. 코드가 그것을 참조하는 순간
+// PHP 8 에서는 Error, PHP 7.2 에서는 경고 + 상수명 문자열로 떨어져
+// `SELECT ... FROM T_SECRET_ACCESS` 라는 존재하지 않는 테이블 쿼리가 된다.
+// 어느 쪽이든 업그레이드 직후 전 엔드포인트가 죽는다.
+//
+// 그래서 **새 테이블 상수는 반드시 여기에 defined() 가드로 함께 추가한다.**
+// config.sample.php / install.php 의 ins_config_spec() 과 값이 같아야 한다 —
+// 세 곳이 한 벌이다. 스키마를 바꾸는 다음 버전들도 이 규약을 따른다.
+//
+// (설정값 상수는 여기에 넣지 않는다. 그것은 운영자가 골라야 하는 값이고,
+//  조용한 기본값은 D-53·D-67·D-75 의 fail-closed 규약과 충돌한다.
+//  테이블명은 운영자가 고를 값이 아니라 DB_PREFIX 에서 파생되는 이름이라 예외다.)
+// ---------------------------------------------------------------------
+if (!defined('T_MIGRATIONS')) {
+    define('T_MIGRATIONS', DB_PREFIX . 'schema_migrations');
+}
+if (!defined('T_SECRET_ACCESS')) {
+    define('T_SECRET_ACCESS', DB_PREFIX . 'secret_access_logs');
+}
+
+// ---------------------------------------------------------------------
+// 정책 기본값 상수의 하위호환 가드 — **위 규칙의 유일한 예외다. 읽고 늘려라.**
+//
+// 위 괄호가 "설정값 상수는 여기 넣지 않는다" 고 적은 이유는, 운영자가 골라야 하는
+// 값에 조용한 기본값을 주면 잘못된 설정이 소리 없이 넘어가기 때문이다(D-53·D-67·D-75).
+// 그 규칙은 **기본값이 위험한 쪽으로 떨어지는 상수**를 겨눈 것이다.
+//
+// SECRET_ACCESS_LOG 는 반대 방향이다. 이 상수가 없으면 무슨 일이 생기는지 보라:
+//   - core/logger.php 는 값을 못 찾으면 **기록한다**(감사 유지)
+//   - api/admin/settings.php 의 admin_setting_value() 는 DB 행도 상수도 없으면
+//     bool 을 **false 로** 떨어뜨린다 → 관리자 화면이 "꺼짐" 으로 보인다
+// 즉 가드가 없으면 업그레이드한 설치본에서 **화면과 실제 동작이 어긋난다** —
+// 운영자는 감사가 꺼져 있다고 믿는데 실제로는 켜져 있다. 그 반대보다 낫지도 않다.
+// 두 곳이 같은 폴백을 보게 만드는 것이 이 가드의 목적이고, 그래서 logger.php 도
+// 하드코딩 true 가 아니라 이 상수를 읽는다 — **폴백 정의는 한 곳이어야 한다.**
+//
+// 기본값은 **true(기록)** 다. 이 감사 기록은 v1.4.0 이 "누가 언제 이 키를 받아 갔나"
+// 에 답할 데이터가 DB 에 아예 없었기 때문에 만든 것이다(D-153 H-2). 기본이 꺼짐이면
+// 그 답이 기본으로 다시 사라진다. 시간 버킷 UPSERT 라 행 증가도 (세션 × 경로 × 시간)
+// 으로 묶여 있다 — 켜 두는 비용이 작다. **끄는 것은 운영자의 명시적 조작이어야 한다.**
+//
+// 이 자리에 상수를 더할 때는 위 조건을 만족하는지 먼저 확인하라:
+//   (1) 기본값이 **안전한 쪽**으로 떨어지는가
+//   (2) 상수가 없을 때 **두 코드 경로가 서로 다른 답**을 내는가
+// 둘 다 아니면 여기가 아니라 install.php 의 설정 화면에 넣어야 하는 값이다.
+// ---------------------------------------------------------------------
+if (!defined('SECRET_ACCESS_LOG')) {
+    define('SECRET_ACCESS_LOG', true);
+}
 
 ini_set('display_errors', '0');       // 스택 트레이스는 경로·쿼리를 노출한다
 ini_set('log_errors', '1');
@@ -118,100 +191,23 @@ register_shutdown_function(function () {
 });
 
 // ---------------------------------------------------------------------
-// 프록시 헤더를 신뢰할 수 있는 요청인가 — 리더 판정 D-51 / 감사 L-8
+// 전송 보안 판정 — core/transport.php 로 옮겼다 (보안 재검증 V14b-M-3)
 //
-// `X-Forwarded-*` 는 **클라이언트가 마음대로 붙일 수 있는 문자열**이다.
-// 종전 코드는 `X-Forwarded-Proto: https` 한 줄을 무검증으로 믿어서,
-// `curl -H 'X-Forwarded-Proto: https' http://…` 로 FORCE_HTTPS 를 통째로 우회할 수 있었다.
+// trust_proxy_headers() · trust_proxy_misconfigured() · request_is_https() 세 함수는
+// 여기 있었다. 그래서 bootstrap 을 거치지 않는 server/migrate.php 가 그 판정을 쓸 수
+// 없었고 축약 사본(HTTPS 와 포트 443 만)을 갖게 됐다. 그 사본은 프록시가 TLS 를
+// 종료하는 정상 배포에서 마이그레이션 화면을 **영구히 403** 으로 만들었다.
 //
-// 신뢰 조건 (**전부** 만족해야 한다) — 리더 판정 D-67 / 감사 V11-L-6:
-//   1) `TRUST_PROXY` 가 정의돼 있고 true — 리버스 프록시·CDN 뒤에 있을 때만 켠다.
-//      상수가 없는(구버전) config.php 로도 죽지 않아야 하므로 defined() 로 방어한다.
-//      **미정의는 false 와 같다** = 헤더를 무시한다(fail-closed).
-//   2) `TRUSTED_PROXIES` 가 **비어 있지 않고** REMOTE_ADDR 이 그 목록에 있어야 한다.
-//      비어 있으면 홉을 검증할 근거가 아예 없으므로 신뢰하지 않는다.
+// 조건식이 두 곳에 있는 것이 D-51·D-67 이 겨눈 사고이므로, 사본을 고치는 대신
+// 정의를 한 파일로 뺐다. 그 파일은 $_SERVER 4키 + TRUST_PROXY/TRUSTED_PROXIES 만
+// 참조하고 DB·스키마·다른 core/ 파일을 건드리지 않는다 — 그래서 러너가 로드해도
+// 「고치려는 스키마에 의존하면 안 된다」는 전제를 깨지 않는다.
 //
-// **여기 있던 주석은 거짓이었다** (D-67 이 정정을 지시한 항목). 종전 코드는
-// `TRUSTED_PROXIES === []` 일 때 `return true` 였고, 주석은 "core/request.php 의
-// client_ip() 와 같은 기준" 이라고 단언했다. 사실이 아니었다 — client_ip()
-// (`request.php:110`)는 `$proxies !== [] && in_array($remote, $proxies)` 를 요구하므로
-// 같은 설정에서 X-Forwarded-For 를 **무시**한다. 그래서 `TRUST_PROXY=true` +
-// `TRUSTED_PROXIES=[]` 에서는 `curl -H 'X-Forwarded-Proto: https' http://…` 한 줄로
-// FORCE_HTTPS 가 우회됐다(감사 L-8 재발). 이제 두 함수의 조건식이 실제로 동일하다.
-// **한쪽만 고치지 마라.** request.php:100-130 과 이 함수를 항상 함께 본다.
-//
-// 상수 자체(`TRUST_PROXY`)는 config.sample.php / install.php 담당이 추가한다.
+// **request.php 의 client_ip() 와 조건식이 같아야 한다** — 한쪽만 고치지 마라
+// (D-67 이 정정한 항목이다). 지금은 client_ip() 가 자기 사본을 갖고 있고,
+// 그것을 transport.php 로 합치는 것은 별건이다.
 // ---------------------------------------------------------------------
-if (!function_exists('trust_proxy_headers')) {
-    function trust_proxy_headers(): bool
-    {
-        if (!defined('TRUST_PROXY') || !TRUST_PROXY) {
-            return false;
-        }
-        $proxies = defined('TRUSTED_PROXIES') && is_array(TRUSTED_PROXIES) ? TRUSTED_PROXIES : [];
-        if ($proxies === []) {
-            // 설정 오류다. 조용히 무시하면 프록시 뒤 배포에서 FORCE_HTTPS 무한
-            // 리다이렉트가 나고 원인이 숨는다 — 그래서 FORCE_HTTPS 분기가
-            // trust_proxy_misconfigured() 로 이 상태를 감지해 500 으로 멈춘다 (D-67).
-            return false;
-        }
-        return in_array((string) ($_SERVER['REMOTE_ADDR'] ?? ''), $proxies, true);
-    }
-}
-
-/**
- * 프록시 설정이 모순 상태인가 — 리더 판정 D-67.
- *
- * `TRUST_PROXY=true` 는 "나는 프록시 뒤에 있다" 는 선언이고,
- * `TRUSTED_PROXIES=[]` 는 "어떤 홉도 신뢰하지 않는다" 는 선언이다. 둘이 함께 있으면
- * 두 선언이 서로를 부정한다. 이 상태에서 프로토콜 헤더를 **무시**하면
- * (프록시가 https 를 받아 http 로 전달하는 정상 구성에서) FORCE_HTTPS 301 이
- * 영원히 되돌아오는 **무한 리다이렉트**가 되고, 로그에도 원인이 남지 않는다.
- * 반대로 **신뢰**하면 누구의 `X-Forwarded-Proto` 든 믿어 FORCE_HTTPS 가 우회된다.
- *
- * 어느 쪽으로도 조용히 넘어가지 않는다 — D-53 의 `BASE_URL` 미설정 처리와 같이
- * **fail-closed 로 멈추고 사유를 서버 로그에 남긴다.**
- */
-if (!function_exists('trust_proxy_misconfigured')) {
-    function trust_proxy_misconfigured(): bool
-    {
-        if (!defined('TRUST_PROXY') || !TRUST_PROXY) {
-            return false;
-        }
-        $proxies = defined('TRUSTED_PROXIES') && is_array(TRUSTED_PROXIES) ? TRUSTED_PROXIES : [];
-        return $proxies === [];
-    }
-}
-
-/**
- * 이 요청이 https 로 들어왔는가.
- * 프록시 헤더는 trust_proxy_headers() 가 true 일 때만 본다 (D-51).
- */
-if (!function_exists('request_is_https')) {
-    function request_is_https(): bool
-    {
-        if (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') {
-            return true;
-        }
-        if ((int) ($_SERVER['SERVER_PORT'] ?? 0) === 443) {
-            return true;
-        }
-        if (!trust_proxy_headers()) {
-            return false;   // X-Forwarded-* 는 보지 않는다
-        }
-        // 프록시가 홉을 콤마로 이어 붙이는 경우가 있다("https, http").
-        // 가장 앞(클라이언트에 가장 가까운 홉)이 실제 클라이언트 프로토콜이다.
-        $xfp = strtolower(trim((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
-        if ($xfp === '') {
-            return false;
-        }
-        if (strpos($xfp, ',') !== false) {
-            $hops = explode(',', $xfp);
-            $xfp  = trim((string) $hops[0]);
-        }
-        return $xfp === 'https';
-    }
-}
+require_once __DIR__ . '/transport.php';
 
 // ---------------------------------------------------------------------
 // HTTPS 강제 — 리더 판정 D-6

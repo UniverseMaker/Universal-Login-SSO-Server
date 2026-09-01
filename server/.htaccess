@@ -18,9 +18,12 @@
   # Authorization 헤더 전달 (CGI/FastCGI 모드에서 PHP 에 안 넘어오는 문제 대응)
   RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
-  # core/ 와 storage/ 는 어떤 요청도 받지 않는다. 확장자 rewrite 보다 먼저 막는다.
+  # core/ · storage/ · migrations/ 는 어떤 요청도 받지 않는다.
+  # 확장자 rewrite 보다 먼저 막는다.
   # (하위 .htaccess 가 무시되는 설정에서도 이 규칙은 살아 있을 수 있다)
-  RewriteRule ^(core|storage)(/|$) - [F,L]
+  # migrations/ 는 v1.4.0 신규 — 마이그레이션 SQL 과 lib.php 가 들어 있다.
+  # 러너는 server/migrate.php 이고 그것은 여기서 막지 않는다.
+  RewriteRule ^(core|storage|migrations)(/|$) - [F,L]
 
   # 확장자 없는 경로를 .php 로
   RewriteCond %{REQUEST_FILENAME} !-f
@@ -75,4 +78,38 @@ DirectoryIndex index.html index.php
 <IfModule mod_headers.c>
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "no-referrer"
+
+  # -------------------------------------------------------------------
+  # X-Powered-By 제거 (v1.4.0 / 리더 판정 D-156(4))
+  #
+  # ▣ core/bootstrap.php 의 header_remove() 로 끝나지 않는 이유
+  #   PHP 응답은 이미 코드가 닫았다 — 부트스트랩이
+  #   header_remove('X-Powered-By') 를 부르고, install.php · migrate.php ·
+  #   core/*.php 의 직접 실행 가드도 각자 같은 줄을 갖는다.
+  #   그러나 이 디렉토리에 **정적 파일이 놓이거나**(업로드 실수로 남은 .txt,
+  #   호스팅이 만드는 오류 페이지 등) **호스팅이 전역 설정으로 헤더를 심으면**
+  #   그 응답은 PHP 를 거치지 않는다. 그 자리에 PHP 코드는 없다.
+  #   즉 "PHP 에서 지웠다"는 사실이 이 디렉토리 전체를 증명하지는 않는다.
+  #   public/.htaccess · examples/.htaccess 가 같은 이유로 같은 두 줄을 갖는다.
+  #
+  # ▣ 두 줄인 이유 (하나만 쓰면 절반이 남는다)
+  #   `Header unset` 은 정상 응답(headers_out)에서,
+  #   `Header always unset` 은 오류 응답(err_headers_out)에서 지운다. 서로 다른 표다.
+  #   이 디렉토리는 위의 FilesMatch 차단 규칙들 때문에 403 을 자주 낸다 —
+  #   한쪽만 쓰면 그쪽에 그대로 남는다.
+  #
+  # ▣ 한계 — mod_headers 가 없으면 **조용히 아무 일도 일어나지 않는다** (D-83)
+  #   이 블록은 <IfModule mod_headers.c> 안에 있다. 모듈이 없거나
+  #   AllowOverride None · nginx · LiteSpeed 비호환 모드면 500 이 나지 않는 대신
+  #   지우지도 않는다. **오류가 없다는 것을 "제거됐다"로 읽지 마라** —
+  #   확인은 실제 응답 헤더로만 한다:
+  #     curl -sSD- -o /dev/null https://{설치루트}/server/api/health.php | grep -i powered
+  #   그런 환경에서는 서버 설정에 같은 지시를 직접 넣어야 한다(INSTALL.md 7-9절).
+  #
+  # ▣ 이것은 심층 방어이지 취약점 수정이 아니다.
+  #   버전 지문을 지우는 것뿐이고, 이 저장소는 공개돼 있어 소스 자체는 어차피 읽힌다.
+  #   그래도 지우는 이유는 자동 스캐너의 표적 목록에서 빠지기 때문이다.
+  # -------------------------------------------------------------------
+  Header unset X-Powered-By
+  Header always unset X-Powered-By
 </IfModule>

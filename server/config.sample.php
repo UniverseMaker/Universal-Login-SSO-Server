@@ -266,6 +266,13 @@ define('ALLOW_REGISTER',       true);
 define('REQUIRE_EMAIL_VERIFY', false);
 define('MAINTENANCE_MODE',     false);
 define('SITE_NAME',            'ulogin');
+// 시크릿(payload) 전달 감사 기록. true 면 「누가 · 언제 · 어떤 키를」 받아 갔는지를
+// app_ulogin_secret_access_logs 에 남긴다. (세션 × 경로 × 1시간) 버킷 UPSERT 라
+// 요청 수만큼 늘지 않는다. 관리자 콘솔의 「시크릿 전달 로그」가 이 표를 읽는다.
+// **DB settings 의 secret_access_log 값이 있으면 그쪽이 우선한다** — 관리자 API 로
+// 끌 수 있다(§8-22 의 13번째 키). 여기 값은 그 행이 없을 때의 폴백이다.
+// 기존 설치본의 config.php 에 이 줄이 없어도 core/bootstrap.php 가 같은 값으로 채운다.
+define('SECRET_ACCESS_LOG',    true);
 // DEBUG=true 이면 예외 메시지(SQL 오류문·컬럼명)가 응답 본문에 실린다.
 // 운영에서는 반드시 false. install.php 는 항상 false 로 기록한다. (보안 감사 L-2)
 define('DEBUG',                false);
@@ -289,3 +296,11 @@ define('T_RATE_LIMITS',   DB_PREFIX . 'rate_limits');
 define('T_SETTINGS',      DB_PREFIX . 'settings');
 define('T_TERMS',         DB_PREFIX . 'terms');
 define('T_CONSENTS',      DB_PREFIX . 'user_consents');
+// v1.4.0 추가.
+//   **기존 설치본의 config.php 에는 아래 두 줄이 없다.** 그래서 core/bootstrap.php 가
+//   같은 값을 defined() 가드로 채워 넣는다 — 없으면 업그레이드한 순간
+//   Undefined constant 로 전 엔드포인트가 죽는다.
+//   새 테이블 상수를 추가할 때는 여기 · install.php 의 ins_config_spec() ·
+//   core/bootstrap.php 의 가드 블록 **셋을 함께** 고쳐라.
+define('T_MIGRATIONS',    DB_PREFIX . 'schema_migrations');
+define('T_SECRET_ACCESS', DB_PREFIX . 'secret_access_logs');

@@ -12,6 +12,8 @@ declare(strict_types=1);
 
 // 직접 실행 차단 — 리더 판정 D-34. bootstrap.php 를 거치지 않은 요청은 존재하지 않는 파일이다.
 if (!defined('ULOGIN_BOOTSTRAPPED')) {
+    // X-Powered-By 제거 — D-154(2). 이 경로는 bootstrap.php 를 거치지 않는다.
+    header_remove('X-Powered-By');
     http_response_code(404);
     exit;
 }

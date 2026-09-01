@@ -90,6 +90,13 @@
 @ini_set('display_startup_errors', '0');
 @ini_set('log_errors', '1');
 error_reporting(E_ALL);
+// 리더 판정 D-154(2). 공용 호스팅의 PHP 기본값 expose_php=On 은 전 응답에
+// `X-Powered-By: PHP/7.2.34` 를 실어 익명에게 마이너 버전을 알려준다.
+// `expose_php` 는 ini_set() 으로 못 바꾼다(PHP_INI_PERDIR) — 헤더를 지우는 쪽이 유일한 수단이다.
+// 이 파일은 core/bootstrap.php 를 거치지 않으므로 여기서 따로 지운다.
+if (PHP_SAPI !== 'cli') {
+    header_remove('X-Powered-By');
+}
 date_default_timezone_set('UTC');
 if (function_exists('mb_internal_encoding')) {
     mb_internal_encoding('UTF-8');
@@ -730,6 +737,11 @@ function ins_config_spec($v)
         ['REQUIRE_EMAIL_VERIFY', $b($v['require_email_verify']),  null, null],
         ['MAINTENANCE_MODE',     'false', null, null],
         ['SITE_NAME',            $q($v['site_name']), null, null],
+        ['SECRET_ACCESS_LOG',    'true', null,
+            "시크릿(payload) 전달 감사 기록. 「누가 · 언제 · 어떤 키를」 받아 갔는지를\n"
+          . "app_ulogin_secret_access_logs 에 남긴다. (세션 × 경로 × 1시간) 버킷이라\n"
+          . "요청 수만큼 늘지 않는다. DB settings 의 secret_access_log 가 우선하고,\n"
+          . '관리자 콘솔의 설정 화면에서 끌 수 있다.'],
         ['DEBUG',                'false', null, '운영에서는 반드시 false (security L-2)'],
 
         ['T_USERS',         "DB_PREFIX . 'users'",               '테이블 상수',
@@ -748,6 +760,11 @@ function ins_config_spec($v)
         ['T_SETTINGS',      "DB_PREFIX . 'settings'",            null, null],
         ['T_TERMS',         "DB_PREFIX . 'terms'",               null, null],
         ['T_CONSENTS',      "DB_PREFIX . 'user_consents'",       null, null],
+        // v1.4.0 추가. **기존 설치본의 config.php 에는 이 두 줄이 없다** —
+        // core/bootstrap.php 가 defined() 가드로 같은 값을 채워 넣는다.
+        // 새 테이블 상수를 추가할 때는 여기와 그 가드 블록을 **함께** 고쳐라.
+        ['T_MIGRATIONS',    "DB_PREFIX . 'schema_migrations'",   null, null],
+        ['T_SECRET_ACCESS', "DB_PREFIX . 'secret_access_logs'",  null, null],
     ];
 }
 
@@ -790,6 +807,29 @@ function ins_render_config($v)
         $out .= 'define(' . str_pad("'" . $name . "',", $pad + 3) . ' ' . $literal . ");\n";
     }
     return $out;
+}
+
+/**
+ * 화면에 보여줄 config 텍스트에서 **비밀값만** 자리표시자로 바꾼다 (리더 판정 D-110).
+ *
+ * 대상은 셋뿐이다 — `DB_PASS` / `SECRET_ENC_KEY` / `APP_KEY`.
+ * 나머지(DB_HOST·DB_NAME·DB_USER·BASE_URL…)는 운영자가 손으로 옮겨야 하는 설정값이고,
+ * 가리면 파일을 만들 수 없게 된다.
+ *
+ * **이 함수는 원문을 대신하지 않는다.** 원문을 파일로 남기지 못했으면 호출부가
+ * 원문을 그대로 보여준다 — 그것이 D-110 이 지키려던 '설치 실패 시 복구 수단' 이다.
+ */
+function ins_redact_config($text)
+{
+    $keys = ['DB_PASS', 'SECRET_ENC_KEY', 'APP_KEY'];
+    foreach ($keys as $k) {
+        $text = preg_replace(
+            "/(define\\(\\s*'" . preg_quote($k, '/') . "'\\s*,\\s*)'(?:[^'\\\\]|\\\\.)*'/",
+            "$1'__PASTE_FROM_GENERATED_FILE__'",
+            (string) $text
+        );
+    }
+    return (string) $text;
 }
 
 // =====================================================================
@@ -1257,6 +1297,35 @@ function ins_apply_schema($db)
             $failed++;
         }
     }
+
+    // -----------------------------------------------------------------
+    // v1.4.0 (D-151) — 신규 설치의 스키마 리비전을 기록한다.
+    //
+    // schema.sql 은 **이미 최종 형태**다. 그래서 migrations/ 의 파일을 적용하지 않고
+    // status='baseline' 으로 기록만 한다. 기록하지 않으면 다음에 migrate.php 가
+    // "미적용 1건" 으로 보고 이미 있는 테이블·인덱스에 ALTER 를 시도한다.
+    //
+    // 이 한 블록이 **신규 설치와 기존 업그레이드가 같은 지점에서 만나게** 하는 자리다.
+    // 확인 방법: 설치 직후 `php server/migrate.php verify` 가 '동일' 을 내야 한다.
+    // -----------------------------------------------------------------
+    if ($failed === 0) {
+        try {
+            if (!defined('ULOGIN_MIGRATE_CTX')) {
+                define('ULOGIN_MIGRATE_CTX', 1);
+            }
+            require_once INS_DIR . '/migrations/lib.php';
+            $mtable = mig_ensure_table($pdo, INS_SCHEMA, $db['prefix']);
+            $mfiles = mig_list(INS_DIR . '/migrations');
+            $n      = mig_stamp_baseline($pdo, $mfiles, $mtable, 'install');
+            $rows[] = ['table' => '(스키마 리비전)', 'ok' => true,
+                       'note' => 'migrations/ ' . $n . '건을 baseline 으로 기록했습니다 — 신규 설치라 적용하지 않습니다'];
+        } catch (Throwable $e) {
+            error_log('[ulogin-install] migration baseline stamp failed: ' . $e->getMessage());
+            $rows[] = ['table' => '(스키마 리비전)', 'ok' => false,
+                       'note' => '기록에 실패했습니다. 설치 후 server/migrate.php 를 열어 상태를 확인하세요.'];
+            $failed++;
+        }
+    }
     return [$rows, $failed];
 }
 
@@ -1270,8 +1339,12 @@ function ins_step3($result)
        . ' &nbsp;|&nbsp; prefix <code>' . ins_h($S['db']['prefix']) . '</code></p>';
 
     if ($result === null) {
-        echo '<p><code>schema.sql</code> 의 테이블 15개를 만듭니다. 모든 문장이 '
+        echo '<p><code>schema.sql</code> 의 테이블 17개를 만듭니다. 모든 문장이 '
            . '<code>CREATE TABLE IF NOT EXISTS</code> 이므로 이미 있는 테이블은 건드리지 않습니다 — 여러 번 실행해도 안전합니다.</p>';
+        echo '<div class="msg"><b>이미 v1.3.0 이하로 설치해 쓰고 있다면 이 설치기가 아니라 '
+           . '<code>server/migrate.php</code> 를 쓰세요.</b> '
+           . '<code>CREATE TABLE IF NOT EXISTS</code> 는 <b>이미 있는 테이블에 새 컬럼·인덱스를 넣지 않습니다</b> — '
+           . '설치기를 다시 돌려도 스키마가 갱신되지 않습니다.</div>';
         echo '<form method="post">' . ins_csrf_field()
            . '<input type="hidden" name="step" value="3"><button type="submit">스키마 적용 실행</button></form>';
     } else {
@@ -1682,21 +1755,39 @@ function ins_handle_step6(&$S)
  *   (1) 기본 게이트를 min_billing_tier='lite' 로 미리 선택하고
  *   (2) 게이트를 전부 비우려면 명시적 확인 체크박스를 요구한다.
  *
- * 규칙: 이름이 `api_key` / `apikey` / `secret` / `token` / `password` / `passwd`
- *       / `credential` (복수형 허용) 로 **끝나면** 민감. 앞에 붙는 접두사는
- *       문자열 시작 또는 `_` / `-` 로 구분돼야 한다.
- *   민감  : ai_api_key, openai_apikey, api_key, x_secret, secret, refresh_token,
- *           db_password, aws_credentials
- *   비민감: api_base, model, endpoint, org_id, temperature
+ * 규칙(v1.4.0 개정 — D-154(4)): 이름을 `_` `-` `.` 로 나눈 **낱말** 중 하나라도
+ *       key / keys / apikey / apikeys / secret(s) / token(s) / password(s) / passwd /
+ *       credential(s) / sk 이면 민감하다. 낱말 경계로 판정하므로 위치를 가리지 않는다.
+ *
+ *   민감  : ai_api_key, openai_key, claude_key, anthropic_key, private_key,
+ *           ai_api_key_prod, api_key_v2, sk_live, x-api-key, secret_key,
+ *           x_secret, refresh_token, db_password, aws_credentials, apikey
+ *   비민감: api_base, model, endpoint, org_id, openai_org, keyring, monkey, turkey
+ *
+ * **왜 바꿨는가.** 종전 규칙은 `/(?:^|[_\-])(api_?key|secret|…)s?$/` 였다.
+ * 대안 목록에 맨 `key` 가 없고(`api_?key` 는 리터럴 `api` 를 요구한다) 끝이 `$` 로
+ * 고정돼 있어서, 이 시스템의 **대표 사용 사례에서 가장 자연스러운 이름들**이
+ * 전부 빠져나갔다 — `openai_key` `claude_key` `private_key` `sk_live` `api_key_v2`,
+ * 그리고 글자 그대로의 `secret_key` 까지. 게이트 없이 등록되면 그 서비스에 가입한
+ * **모든** 회원의 payload 에 실린다.
+ *
+ * **`api_key_hint` 는 이제 민감으로 잡힌다.** 종전 독스트링은 이것을 비민감 예시로
+ * 들었지만, `api_key_hint` 와 `api_key_v2` 는 이름 모양이 같아 규칙으로 가를 수 없다.
+ * 둘 중 하나를 틀리게 판정해야 한다면 **닫는 쪽으로 틀리는 것이 맞다**(fail-closed) —
+ * 비민감 값을 민감으로 보면 운영자가 확인 한 번을 더 하지만, 반대는 키가 샌다.
  *
  * 이름 기반 판정이므로 완전하지 않다 — 관리자 콘솔에서 다른 이름의 민감 값을
  * 추가할 때는 사람이 판단해야 한다. 그래서 완료 화면이 "게이트 없는 시크릿"
  * 목록을 따로 보여 준다.
+ *
+ * **정규식은 api/admin/secrets.php 의 admin_secret_key_is_sensitive() 와
+ * 글자 단위로 같아야 한다.** 한쪽만 고치면 한쪽 경로만 막히는 상태가 된다.
+ * (공용 파일로 뺄 수 없는 이유: install.php 는 core/ 를 로드하지 않는다)
  */
 function ins_is_sensitive_key($key)
 {
     $k = strtolower(trim((string) $key));
-    return preg_match('/(?:^|[_\-])(api_?key|secret|token|password|passwd|credential)s?$/', $k) === 1;
+    return preg_match('/(?:^|[_\-.])(?:apikeys?|keys?|secrets?|tokens?|passwords?|passwd|credentials?|sk)(?:$|[_\-.])/', $k) === 1;
 }
 
 /**
@@ -2209,6 +2300,10 @@ function ins_finalize(&$S)
             ['maintenance_mode',     '0',                                      'bool',   '점검 모드'],
             ['mail_driver',          $cfg['mail_driver'],                      'string', '메일 발송 방식 (mail|log)'],
             ['site_name',            $cfg['site_name'],                        'string', '사이트 표시명'],
+            // v1.4.0 후속: 관리 가능한 13번째 키. 시드하지 않으면 관리자 화면에서
+            // 처음 켜고 끌 때까지 DB 행이 없고, 그동안 값의 근거가 config.php 상수뿐이다.
+            // 여기 순서는 $DEFS 와 같게 **맨 뒤**로 둔다.
+            ['secret_access_log',    '1',                                      'bool',   '시크릿 전달 감사 기록'],
         ];
         $st = $pdo->prepare('INSERT INTO `' . $prefix . 'settings` (skey, svalue, vtype, label, updated_at)'
             . ' VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE svalue = VALUES(svalue),'
@@ -2355,15 +2450,28 @@ function ins_finalize(&$S)
 
     if (!$configWrote) {
         echo '<h2>2. config.php 를 손으로 만들어 주세요 (필수)</h2>';
-        echo '<div class="msg big"><b>이 화면을 닫으면 아래 키를 다시 볼 수 없습니다.</b><br>'
-           . '아래 내용을 그대로 복사해 <code>server/config.php</code> 로 저장하고 권한을 <code>600</code> 으로 바꾸세요. '
-           . '이 파일이 없으면 모든 API 가 500 을 반환합니다.'
-           . ($configFallbk !== null
-                ? '<br>같은 내용을 <code>' . ins_h($configFallbk) . '</code> 에도 저장해 두었습니다 — '
-                  . 'FTP 로 내려받아 <code>server/config.php</code> 로 이름을 바꿔도 됩니다.'
-                : '')
-           . '</div>';
-        echo '<pre>' . ins_h($configText) . '</pre>';
+        if ($configFallbk !== null) {
+            // 리더 판정 D-110. 쓰기 실패 시의 화면 덤프는 **설치 실패의 복구 수단**이므로
+            // 없애지 않는다. 다만 파일로 남길 수 있었다면 화면에까지 평문을 뿌릴 이유가 없다 —
+            // 그 화면은 캡처·공유되고, 평문 HTTP 로 열려 있을 수도 있다.
+            // 그래서 **파일이 남은 경우에만** 시크릿 3개를 자리표시자로 바꾼다.
+            echo '<div class="msg big"><b>같은 내용을 <code>' . ins_h($configFallbk) . '</code> 에 저장해 두었습니다.</b><br>'
+               . 'FTP 로 내려받아 <code>server/config.php</code> 로 이름을 바꾸고 권한을 <code>600</code> 으로 주세요. '
+               . '이 파일이 없으면 모든 API 가 500 을 반환합니다.<br>'
+               . '<b>옮긴 뒤에는 <code>' . ins_h($configFallbk) . '</code> 를 반드시 지우세요</b> — '
+               . '암호화 키가 들어 있는 파일이 두 개가 됩니다.</div>';
+            echo '<div class="msg">아래는 <b>같은 내용에서 비밀값 3개를 가린 것</b>입니다. '
+               . '구조 확인용이며 이대로 복사하면 동작하지 않습니다 — '
+               . '<code>__PASTE_FROM_GENERATED_FILE__</code> 자리는 위 파일에서 가져와야 합니다.</div>';
+            echo '<pre>' . ins_h(ins_redact_config($configText)) . '</pre>';
+        } else {
+            echo '<div class="msg big"><b>이 화면을 닫으면 아래 키를 다시 볼 수 없습니다.</b><br>'
+               . '<code>server/storage/</code> 에도 쓸 수 없어 파일로 남기지 못했습니다. '
+               . '아래가 <b>유일한 사본</b>이므로 비밀값을 그대로 표시합니다. '
+               . '지금 복사해 <code>server/config.php</code> 로 저장하고 권한을 <code>600</code> 으로 바꾸세요.<br>'
+               . '<b>이 화면을 캡처해 공유하지 마세요.</b> DB 비밀번호와 시크릿 암호화 키가 들어 있습니다.</div>';
+            echo '<pre>' . ins_h($configText) . '</pre>';
+        }
     }
 
     // D-69(a) / 보안 감사 §C-4 조건 1 — 완료 화면의 PHP 보안 지원 종료 경고 1행.

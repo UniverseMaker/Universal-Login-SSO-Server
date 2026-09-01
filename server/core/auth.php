@@ -15,6 +15,8 @@ declare(strict_types=1);
 
 // 직접 실행 차단 — 리더 판정 D-34. bootstrap.php 를 거치지 않은 요청은 존재하지 않는 파일이다.
 if (!defined('ULOGIN_BOOTSTRAPPED')) {
+    // X-Powered-By 제거 — D-154(2). 이 경로는 bootstrap.php 를 거치지 않는다.
+    header_remove('X-Powered-By');
     http_response_code(404);
     exit;
 }
@@ -279,11 +281,18 @@ function create_session(array $user, ?array $service, string $authType, array $o
         $rttl = (int) REFRESH_TTL;
     }
 
+    // service_id 는 서비스 행에서 온다. 행이 없을 때만 $opt['service_id_fallback'] 을 쓴다 —
+    // 리더 판정 D-162. 지금 이것을 쓰는 곳은 rotate_refresh() 하나이고, 이유는 그 함수의
+    // 주석에 있다. **넓히는 용도로 쓰지 마라**: 서비스가 존재하지 않는데 세션에
+    // service_id 를 심는 경로를 만들면 payload 판정이 아니라 세션의 뜻이 흐려진다.
     $now = now_utc();
     $row = [
         'session_id'         => $sid,
         'user_id'            => (int) $user['id'],
-        'service_id'         => $service['service_id'] ?? null,
+        'service_id'         => isset($service['service_id'])
+            ? (string) $service['service_id']
+            : (isset($opt['service_id_fallback']) && $opt['service_id_fallback'] !== ''
+                ? (string) $opt['service_id_fallback'] : null),
         'auth_type'          => $authType,
         'access_token_hash'  => token_hash($access),
         'refresh_token_hash' => $refresh !== null ? token_hash($refresh) : null,
@@ -529,9 +538,43 @@ function rotate_refresh(string $refreshToken, array $opt = []): array
     }
 
     // 회전된(이미 회수된) 토큰의 재사용 = 탈취 신호. 전면 회수한다.
+    //
+    // 리더 판정 D-164 (보안 조사 A-6) — **관리자가 볼 곳을 만든다.**
+    // 이것은 이 시스템의 유일한 **능동** 침해 탐지다(나머지는 전부 시도 기록이다).
+    // 그런데 v1.4.0 후속까지 남는 것이 error_log 한 줄뿐이었다. 같은 라운드가
+    // 레이트리밋 429 라는 수동 신호는 콘솔에 올렸으니(D-153) 비대칭이 뒤집힌 채였다 —
+    // 콘솔은 "레이트리밋에 걸렸다"는 보여 주고 "토큰이 탈취됐다"는 안 보여줬다.
+    // error_log 는 남긴다. 공용 호스팅에서 DB 가 죽어 있을 때 남는 유일한 흔적이다.
+    //
+    // ── 로그를 회수 **사유별로** 가른다 — 보안 재검증 A-6 오탐 ─────────────
+    // 이 분기는 `revoked_at` 만 보고 사유를 가리지 않는다. 그런데 회수 사유는
+    // 저장소 전수로 7가지(`refresh_rotated` `refresh_reuse` `logout` `logout_all`
+    // `password_changed` `admin` `withdraw`)이고 **진짜 재사용 신호는 앞의 둘뿐**이다.
+    // 뒤의 다섯은 시스템이 스스로 회수한 것이고, 그 뒤에 옛 토큰이 오는 것은
+    // 정상 클라이언트의 갱신 타이머다. 실측으로 네 경로가 확인됐다 —
+    // 로그아웃 · 마이페이지 세션정리 · 비밀번호 변경 · 관리자 회수. 넷 다
+    // `fail_refresh_reuse` 로 기록됐고 `GET /api/me/login-logs` 로 **사용자 본인에게도**
+    // 보인다. 정상 사용 빈도가 침해 빈도보다 높으므로, 그대로 두면 이 시스템의
+    // 유일한 능동 침해 탐지가 **대부분 오탐**이 된다.
+    //
+    // **회수 동작은 한 줄도 바꾸지 않았다.** 사유를 가려 회수 범위를 좁히는 것은
+    // 정상 경로의 동작 변경이라 별도 회귀 확인이 필요하다 — v1.5.0.
+    // 지금 가르는 것은 **기록되는 이름**뿐이다. `fail_refresh_revoked` 는
+    // 「회수된 토큰이 제시됐다」는 사실 그대로이고, 전 세션을 회수해 놓고
+    // 로그에 아무것도 남기지 않는 상태(그게 더 나쁘다)도 만들지 않는다.
     if ($old['revoked_at'] !== null) {
+        $priorReason = (string) ($old['revoke_reason'] === null ? '' : $old['revoke_reason']);
+        $isReuse     = ($priorReason === 'refresh_rotated' || $priorReason === 'refresh_reuse');
         revoke_user_sessions((int) $old['user_id'], 'refresh_reuse');
-        error_log('[ulogin] refresh token reuse detected. user_id=' . (int) $old['user_id']);
+        error_log('[ulogin] revoked refresh token presented. user_id=' . (int) $old['user_id']
+            . ' prior_reason=' . ($priorReason === '' ? '(none)' : $priorReason)
+            . ' reuse=' . ($isReuse ? '1' : '0'));
+        // 회수보다 뒤에 둔다 — 기록이 실패해도 회수는 이미 끝나 있어야 한다.
+        // (log_login() 은 내부에서 try/catch 하지만 순서 자체를 그렇게 못박는다.)
+        $reuseName = (string) db_val('SELECT username FROM ' . T_USERS . ' WHERE id = ?', [(int) $old['user_id']]);
+        log_login($isReuse ? 'fail_refresh_reuse' : 'fail_refresh_revoked',
+            (int) $old['user_id'], $reuseName,
+            !empty($old['service_id']) ? (string) $old['service_id'] : null);
         throw new AppError('AUTH_SESSION_EXPIRED', 401);
     }
     $rexp = ts($old['refresh_expires_at']);
@@ -551,6 +594,59 @@ function rotate_refresh(string $refreshToken, array $opt = []): array
         throw new AppError('AUTH_SESSION_EXPIRED', 401);
     }
 
+    // ------------------------------------------------------------------
+    // 사용자 단위 회전 상한 — 보안 재검증 V14b-H-1
+    //
+    // 회전은 매번 새 `session_id` 를 만들고, `secret_access_logs` 의 시간 버킷은
+    // 그 값을 UNIQUE 키에 쓴다. 그래서 **회전 경로만 유일하게 접히지 않고** 요청과
+    // 1:1 로 행이 늘었다(실측 150회 → 151행). `sessions` 도 같은 비율로 늘어난다.
+    // 행은 세션 단위, 세션은 사용자 단위이므로 **사용자 버킷이 증가율을 실제로 묶는
+    // 자리**다. IP 버킷(api/auth/refresh.php)은 폭주 억제용이고, NAT·CDN 뒤에서는
+    // 같은 IP 에 사용자가 수천 명일 수 있어 그것만으로는 좁게 걸 수 없다.
+    //
+    // **한도를 넉넉하게 잡았다 — 좁게 거는 것이 이 라운드가 고친 결함의 형태다.**
+    // 한 사용자의 정상 회전율은 `기기 수 × (3600 / session_ttl)` 회/시간이다.
+    // 기본값(`SESSION_TTL` 3600, 기기 1대)이면 1회/시간이므로 **60회/시간은 60배 여유**고,
+    // 기기 10대 + 10분 토큰(60회/시간)까지 그대로 통과한다. 사용자당 하루 1,440행 상한 —
+    // 상한 없는 432,000행/일/IP 에서 300배 줄어들고, 보안이 감당 가능하다고 판정한
+    // `login_logs` 의 3,456행/일/IP 보다도 작다.
+    // **`session_ttl` 을 아주 짧게 설정한 배포는 이 값을 다시 봐야 한다** —
+    // 넘으면 클라이언트가 429 를 받고 갱신이 지연된다.
+    //
+    // **회전 트랜잭션보다 앞에 둔다.** 뒤에 두면 429 를 받은 클라이언트가 이미
+    // 폐기된 refresh 토큰을 들고 있게 되어 재로그인 말고는 복구 경로가 없다.
+    // 여기서 던지면 옛 토큰이 그대로 살아 있어 잠시 뒤 다시 시도할 수 있다(실측 확인).
+    //
+    // 재사용 탐지 분기보다 **뒤에** 있는 것도 의도한 것이다 — 레이트리밋이
+    // 침해 탐지를 가려서는 안 된다.
+    // ------------------------------------------------------------------
+    rate_limit('refresh:user:' . (int) $old['user_id'], 60, 3600);
+
+    // ------------------------------------------------------------------
+    // 리더 판정 D-162 — **회전이 service_id 를 잃으면 안 된다.**
+    //
+    // service_load() 는 `status='active'` 필터다. 서비스가 비활성인 동안에는 null 을
+    // 돌려주고, 종전 코드는 그 null 을 그대로 create_session() 에 넘겼다. 그래서 새
+    // 세션 행의 service_id 가 **NULL 로 굳었다.** 결과는 의도의 정반대였다(보안 실측):
+    //
+    //   [1] 서비스 disabled → 정상 사용자가 refresh    → 새 세션 service_id = NULL
+    //   [2] 운영자가 점검을 끝내고 active 로 되살림
+    //       회전하지 않은 **탈취 토큰** → payload 복구 (service_id 가 살아 있으므로)
+    //       회전한 **정상 사용자**     → payload 영원히 {} (재로그인 전까지)
+    //
+    // D-152 가 "payload 만 비우고 세션은 살린다"를 고른 이유가 연동 앱을 깨지 않는
+    // 것이었는데, 실제로는 정상 사용자만 영구히 깨지고 공격자가 복구됐다.
+    //
+    // 그래서 **service_id 는 그대로 두고, 시크릿 차단은 build_payload() 에 맡긴다.**
+    // 비활성 동안 payload 가 {} 인 것은 그 함수의 payload_service_active() 가 이미
+    // 보장한다(D-152) — 세션 행에 id 를 남긴다고 시크릿이 나가지 않는다. 회전 자체가
+    // 정책 판단을 하지 않는 것이 옳다: 서비스를 통째로 끊는 것은 A-13(서비스 단위
+    // 일괄 세션 회수, v1.9.0)의 일이고, 그것은 **양쪽 토큰에 똑같이** 적용돼야 한다.
+    //
+    // $service 가 null 이면 세션 TTL 은 서비스별 값이 아니라 전역 기본값이 된다 —
+    // 비활성 서비스의 TTL 을 권위로 쓸 수 없으므로 이것이 맞다. 재활성 뒤의 회전부터
+    // 다시 서비스 값을 쓴다.
+    // ------------------------------------------------------------------
     $service = !empty($old['service_id']) ? service_load((string) $old['service_id']) : null;
 
     // 회전 '전' 에 판정해야 한다. revoke 후에는 쿠키가 가리키던 세션이 이미 죽어 있다.
@@ -562,6 +658,8 @@ function rotate_refresh(string $refreshToken, array $opt = []): array
             'device_label' => $opt['device_label'] ?? ($old['device_label'] ?? device_label_from_ua()),
             'with_refresh' => true,
             'set_cookie'   => $setCookie,
+            // 리더 판정 D-162 — 회전이 세션의 service_id 를 **잃지 않는다.**
+            'service_id_fallback' => !empty($old['service_id']) ? (string) $old['service_id'] : null,
         ];
         if (array_key_exists('cookie_ttl', $opt)) {
             $copt['cookie_ttl'] = $opt['cookie_ttl'];

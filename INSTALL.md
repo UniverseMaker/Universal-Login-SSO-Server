@@ -1,4 +1,4 @@
-# ulogin 설치 가이드 — v1.3.0_20260828
+# ulogin 설치 가이드 — v1.4.0_20260901
 
 이 문서 하나만 보고 끝까지 따라 하면 설치가 완료된다. **위에서부터 순서대로** 진행하라.
 PHP를 몰라도 된다. 코드를 손으로 고칠 일은 없다(단, 6절·7절의 예외 상황 제외).
@@ -17,15 +17,21 @@ PHP를 몰라도 된다. 코드를 손으로 고칠 일은 없다(단, 6절·7�
 - [0. 준비물](#0-준비물) — 호스팅 요구사항 · DB 정보 · **[7.2에서 무엇이 안전하고 무엇이 그렇지 않은가](#72에서-무엇이-안전하고-무엇이-그렇지-않은가)**
 - [1. 파일 업로드](#1-파일-업로드)
 - [2. 웹 설치기 실행 (8단계)](#2-웹-설치기-실행-8단계)
-- [3. 설치 후 보안 확인 (4항목)](#3-설치-후-보안-확인-4항목) — **+ 5번 항목: 쿠키 속성 확인**
-- [4. 서비스·시크릿 등록 (관리자 콘솔)](#4-서비스시크릿-등록-관리자-콘솔)
+- [3. 설치 후 보안 확인 (4항목)](#3-설치-후-보안-확인-4항목) — **+ 5번 항목: 쿠키 속성 확인** · **[3-5절 헬스체크](#3-5-헬스체크로-설치-상태를-한-번에-확인한다-v140-신설)**(v1.4.0 신설)
+- [4. 서비스·시크릿 등록 (관리자 콘솔)](#4-서비스시크릿-등록-관리자-콘솔) — **[4-8절 로그 테이블은 자동으로 줄지 않는다](#4-8-로그-테이블은-자동으로-줄지-않는다--저장소-계획-v140)** (v1.4.0 신설)
 - [5. 로컬 앱 연동 (5분)](#5-로컬-앱-연동-5분)
 - [6. HTTPS가 아닌 경우](#6-https가-아닌-경우)
 - [7. 트러블슈팅](#7-트러블슈팅)
-- [**8. 새 버전으로 갱신하기**](#8-새-버전으로-갱신하기) — **v1.2.0 신설.** 이미 설치된 서버에 새 버전을 올리는 절차 7단계
+- [**8. 새 버전으로 갱신하기**](#8-새-버전으로-갱신하기) — **v1.2.0 신설.** 이미 설치된 서버에 새 버전을 올리는 절차 7단계.
+  **v1.4.0부터 2단계가 「업로드 + 스키마 마이그레이션」이다** — [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션)
 
 > **이미 설치를 끝냈고 "새 버전을 올렸는데 반영이 안 된다"면 [8절](#8-새-버전으로-갱신하기)로 바로 가라.**
 > 0~7절은 처음 설치하는 절차다. 갱신은 8절이고, 그 절은 v1.2.0에서 처음 생겼다.
+
+> **v1.3.0 이하에서 v1.4.0으로 올리는 사람은 파일만 올려서는 안 된다.**
+> v1.4.0은 테이블 2개와 컬럼 1개, 인덱스 3개를 추가한다. 업로드 직후
+> **`{설치루트}/server/migrate.php`를 한 번 돌려야 한다** — 절차는 [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션)이다.
+> **신규 설치는 해당 없다**(설치기가 최신 `schema.sql`을 적용하고 마이그레이션을 `baseline`으로 기록한다).
 
 ---
 
@@ -251,11 +257,13 @@ echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
 ```
 {설치루트}/                          ← 예: https://example.com/ulogin
 ├── server/
-│   ├── api/          (엔드포인트 32개)
+│   ├── api/          (API 파일 33개 — v1.4.0 에서 health.php 가 늘었다)
 │   ├── core/         (내부 모듈 — 웹에서 열리면 안 된다)
-│   ├── storage/      (메일 로그 — 웹에서 열리면 안 된다)
+│   ├── migrations/   (마이그레이션 SQL 2개 + lib.php — 웹에서 열리면 안 된다)
+│   ├── storage/      (메일 로그 · 마이그레이션 시도 제한 파일 — 웹에서 열리면 안 된다)
 │   ├── config.sample.php
 │   ├── install.php   ← 설치 후 삭제한다
+│   ├── migrate.php   ← 스키마 마이그레이션 러너. **설치 후에도 지우지 않는다** (8-2절)
 │   ├── schema.sql
 │   └── .htaccess
 ├── public/
@@ -276,6 +284,8 @@ echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
 | 공통 자산 | `{설치루트}/public/assets/*` | `https://example.com/ulogin/public/assets/ulogin-client.js` |
 | 연동 데모 | `{설치루트}/examples/*` | `https://example.com/ulogin/examples/local-ai-app.html` |
 | 웹 설치기 | `{설치루트}/server/install.php` | `https://example.com/ulogin/server/install.php` |
+| 스키마 마이그레이션 | `{설치루트}/server/migrate.php` | `https://example.com/ulogin/server/migrate.php` |
+| 헬스체크 | `{설치루트}/server/api/health.php` | `https://example.com/ulogin/server/api/health.php` |
 
 **도메인 루트에 올려도 된다.** 그 경우 설치 루트는 `https://example.com` (경로 없음)이다.
 
@@ -287,8 +297,8 @@ echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
 | # | 이름 | 어디에 있나 | 넣을 값 | 실제 예시 | 손으로 고쳐야 하나 |
 |---|---|---|---|---|---|
 | 1 | `BASE_URL` | `server/config.php` (설치기가 생성) | **설치 루트 절대 URL**, 끝 슬래시 없이 | `https://example.com/ulogin` | 아니오 — 설치기 4단계에서 입력 |
-| 2 | `ULOGIN_API_BASE` | `public/assets/api.js` 40행 | **`'../server'`** (상대 경로) | `'../server'` | 아니오 — 기본값 그대로 |
-| 3 | `API_EXT` | `public/assets/api.js` 48행 | **`'.php'`** | `'.php'` | 아니오 — 기본값 그대로 |
+| 2 | `ULOGIN_API_BASE` | `public/assets/api.js` — `var ULOGIN_API_BASE =` 선언 | **`'../server'`** (상대 경로) | `'../server'` | 아니오 — 기본값 그대로 |
+| 3 | `API_EXT` | `public/assets/api.js` — `var API_EXT =` 선언 | **`'.php'`** | `'.php'` | 아니오 — 기본값 그대로 |
 | 4 | 클라이언트 `server` 옵션 | 내 앱의 `new UloginClient({...})` | **설치 루트 절대 URL**, 끝 슬래시 없이 | `https://example.com/ulogin` | 예 — 내 앱 코드에 직접 쓴다 |
 
 **왜 2번만 상대 경로인가:** 로그인·마이페이지·관리자 화면은 전부 `{설치루트}/public/` **직하**에 있다.
@@ -299,7 +309,7 @@ echo 'mail(): ' . (function_exists('mail') ? 'exists' : 'missing') . "<br>";
 > 화면은 `public/` 직하에만 둔다.
 
 **변형 배치를 했다면** (예: `public/`의 내용을 도메인 루트에 직접 올림)
-`public/assets/api.js` 40행의 `'../server'`를 실제 위치에 맞게 고치고,
+`public/assets/api.js`의 `var ULOGIN_API_BASE = '../server';` 를 실제 위치에 맞게 고치고,
 클라이언트에는 `apiBase` · `loginUrl` 옵션을 개별로 넘긴다. ([5절](#5-로컬-앱-연동-5분) 참조)
 
 ### 1-3. 업로드 절차
@@ -390,7 +400,7 @@ DB 접속 정보는 브라우저가 아니라 **서버 세션**에만 담기고,
 
 입력할 것은 없다. **[스키마 적용 실행]** 을 누른다.
 
-`server/schema.sql`의 테이블 **15개**를 만든다. 모든 문장이 `CREATE TABLE IF NOT EXISTS`라
+`server/schema.sql`의 테이블 **17개**를 만든다. 모든 문장이 `CREATE TABLE IF NOT EXISTS`라
 이미 있는 테이블은 건드리지 않는다 — **여러 번 실행해도 안전하다.**
 
 만들어지는 테이블(prefix 기본값 기준):
@@ -401,10 +411,25 @@ app_ulogin_service_secrets     app_ulogin_sessions            app_ulogin_auth_co
 app_ulogin_password_resets     app_ulogin_email_verifications app_ulogin_login_logs
 app_ulogin_point_logs          app_ulogin_admin_logs          app_ulogin_rate_limits
 app_ulogin_settings            app_ulogin_terms               app_ulogin_user_consents
+app_ulogin_schema_migrations   app_ulogin_secret_access_logs
 ```
 
-**결과 표에서 15줄이 전부 "성공"이면 정상이다.** 하나라도 실패하면
+**마지막 줄 2개가 v1.4.0에서 늘어난 것이다.** `schema_migrations`는 다음 버전의 스키마 갱신 기록이고
+(이 표가 없으면 [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션)의 마이그레이션이 아예 돌지 않는다),
+`secret_access_logs`는 시크릿 전달 감사 기록이다. **v1.3.0 이하의 설치 문서는 15개라고 적었다** —
+그 숫자를 기준으로 판정하지 마라.
+
+**결과 표에서 17줄이 전부 "성공"이면 정상이다.** 줄 수가 17보다 적으면 그 자체가 이상 신호다 —
+**"15줄 이상이니 됐다"로 넘기지 마라.** 하나라도 실패하면
 DB 사용자에게 `CREATE` 권한이 있는지 확인하고 **[다시 실행]** 을 누른다.
+
+숫자를 직접 세어 확인하려면(셸이 있는 경우):
+
+```bash
+grep -c "^CREATE TABLE" server/schema.sql        # 17 — schema.sql 의 CREATE TABLE 문 수
+```
+
+설치 후 DB에서 세는 방법은 [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션)의 `verify` 항목에 있다.
 
 **[다음 — 사이트·전송 보안 설정]** 을 누른다.
 
@@ -589,13 +614,16 @@ http://127.0.0.1:5173
 
 1. `SECRET_ENC_KEY` · `APP_KEY` 생성 (`random_bytes(32)` → 64자 hex).
    **화면에 표시되지 않는다** — 브라우저 히스토리·스크린샷으로 새는 것을 막기 위해서다
-2. 관리자 계정 · 첫 서비스 · 시크릿 · 관리자의 서비스 가입 행 · 전역 설정 11개를 **한 트랜잭션**으로 저장
+2. 관리자 계정 · 첫 서비스 · 시크릿 · 관리자의 서비스 가입 행 · 전역 설정 12개를 **한 트랜잭션**으로 저장
    (실패하면 전부 되돌리고 `config.php`도 만들지 않는다 — 새로고침해 다시 시도할 수 있다)
-   <br>*설치기가 심는 설정 키는 **11개**이고, 관리자 콘솔이 관리하는 키는 **12개**다 — 숫자가 다른 것이 정상이다.
+   <br>*설치기가 심는 설정 키는 **12개**이고, 관리자 콘솔이 관리하는 키는 **13개**다 — 숫자가 다른 것이 정상이다.
    `auth_code_ttl`은 설치기가 심지 않고 `config.php`의 `AUTH_CODE_TTL`(기본 60초) 폴백을 쓴다.
-   콘솔에서 한 번 저장하면 그때 DB 행이 생긴다. **두 숫자를 같게 "고치지" 마라.***
+   콘솔에서 한 번 저장하면 그때 DB 행이 생긴다. **두 숫자를 같게 "고치지" 마라.**
+   v1.4.0에서 `secret_access_log`(시크릿 전달 감사 기록)가 양쪽에 하나씩 더해져 11/12 → 12/13이 됐다.*
 3. `server/storage/` · `server/storage/mail/` 생성 + 접근 차단 파일(`chmod 0700` + `.htaccess` + `index.html`)
-4. `server/config.php` 생성 (상수 **51개**, `chmod 0600`)
+4. `server/config.php` 생성 (상수 **54개**, `chmod 0600`)
+   <br>*v1.4.0에서 `SECRET_ACCESS_LOG` · `T_MIGRATIONS` · `T_SECRET_ACCESS` 세 개가 늘어 51개 → 54개다.
+   `server/config.sample.php`의 `define()` 개수와 같아야 한다(설치기가 생성하는 목록과 샘플이 동일 집합임을 확인했다 — 2026-09-01 실측).*
 5. 자기 잠금 — `server/.install.lock` + `server/storage/.installed` 생성
 6. 자체 보안 진단 — 4개 주소에 HTTP 요청을 보내 차단 여부를 확인
 
@@ -663,8 +691,13 @@ https://example.com/ulogin/server/install.php
 
 ```
 https://example.com/ulogin/server/schema.sql
+https://example.com/ulogin/server/migrations/0001_v140_foundation.sql
+https://example.com/ulogin/server/migrations/
 ```
 → 전 테이블 구조가 그대로 나오면 안 된다. **403 / 404**여야 한다.
+**`migrations/`는 v1.4.0에서 새로 생긴 디렉토리다** — 대상이 하나 늘었다.
+`server/.htaccess`와 `server/migrations/.htaccess`가 둘 다 이것을 막지만,
+`.htaccess`가 무시되는 환경에서는 둘 다 없는 것과 같다([7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)).
 
 ### 3-1. 하나라도 내용이 보인다면
 
@@ -841,6 +874,109 @@ send_cookie()  ─ PHP_VERSION_ID >= 70300 ─→ setcookie($name, $value, $opti
 (`README.md`의 `## 알려진 제한 · 미검증 항목`  →  `### 검증하지 못한 것`의
 **실 호스팅의 PHP 7.2 인터프리터** 행).
 
+### 3-5. 헬스체크로 설치 상태를 한 번에 확인한다 (v1.4.0 신설)
+
+`GET /api/health.php`가 v1.4.0에서 새로 생겼다.
+**이 엔드포인트가 생긴 이유는 그전까지 장애 진단의 유일한 수단이
+운영 `config.php`에서 `DEBUG=true`를 켜는 것이었기 때문이다** — 그리고 이 문서가
+그것을 위험하다고 경고하고 있었다([7-10절](#7-10-500-오류만-나오고-원인을-모르겠다)).
+켠 것을 되돌리지 않으면 예외 메시지가 응답에 그대로 실린다.
+
+**노출이 두 단계다. 이것이 이 엔드포인트에서 가장 중요한 성질이다.**
+
+| 누구 | 무엇이 보이나 |
+|---|---|
+| **익명 · 일반 회원 · `manager`** | `{"status":"ok"}` **그것뿐.** DB에 접속하지 못하면 **HTTP 503** + `{"status":"unavailable"}` |
+| **전역 `role`이 `admin` 이상** | 상세 10필드 — `status` `checks` `php` `db` `schema` `storage` `installer` `config` `counts` `time` |
+
+#### 익명 프로브 — 모니터링 도구에 넣을 주소
+
+```bash
+curl -sS '{설치루트}/server/api/health.php'
+```
+
+기대 출력:
+
+```json
+{"ok":true,"data":{"status":"ok"},"error":null}
+```
+
+`HEAD`도 받는다(모니터링 도구가 흔히 쓴다).
+
+```bash
+curl -sS -I '{설치루트}/server/api/health.php'
+```
+
+**익명 응답에 버전·PHP 버전·DB 종류·설치 상태는 담지 않는다.** 저장소가 공개돼 있어
+정확한 버전 지문 하나가 그 태그의 전체 소스와 「고치지 않은 항목」 목록으로 바로 이어진다.
+
+레이트리밋은 **`health:ip` 60회/1분**이다. 그보다 촘촘히 두드리면 429가 난다 —
+모니터링 주기를 **1분 이상**으로 두라.
+
+#### 관리자 상세 — 설치 직후 한 번 열어 볼 것
+
+관리자 토큰이 필요하다. 5단계에서 만든 계정으로 로그인해 `access_token`을 받는다.
+
+```bash
+curl -sS -X POST '{설치루트}/server/api/auth/login.php' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<<관리자비밀번호>>"}'
+```
+
+응답의 `data.tokens.access_token`을 그대로 쓴다.
+
+```bash
+curl -sS '{설치루트}/server/api/health.php' \
+  -H 'Authorization: Bearer <<관리자ACCESS_TOKEN>>'
+```
+
+`data.checks`는 **9항목이고 순서가 고정**이다.
+
+| `key` | `ok:false`의 뜻 | 무엇을 해야 하나 |
+|---|---|---|
+| `php_version` | PHP 7.2 미만이다 | [0-1절](#0-1-호스팅-요구사항-필수) · [7-19절](#7-19-1단계에서-php-버전이-실패로-나온다-또는-주의로-나온다) |
+| `db` | DB에 접속할 수 없다 | [7-2절](#7-2-db-에-접속할-수-없습니다) |
+| `schema` | 리비전 테이블이 없거나 **미적용 마이그레이션이 있다** | [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션)의 `migrate.php` |
+| `storage` | `server/storage/`에 쓸 수 없다 | 권한을 `0700`으로. 메일 `log` 드라이버와 마이그레이션 시도 제한이 여기 쓴다 |
+| `installer_removed` | `server/install.php`가 남아 있다 | [2-9절](#2-9-installphp-삭제-필수) — 지금 삭제하라 |
+| `secret_enc_key` | `SECRET_ENC_KEY`가 64자 hex가 아니다 | **시크릿 복호화가 전부 실패한다.** [7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다) |
+| `debug_off` | `DEBUG=true`다 | 운영에서는 꺼야 한다. 예외 메시지가 응답에 실린다 |
+| `cookie_secure` | HTTPS인데 `COOKIE_SECURE=false`다 | [3-4절](#3-4-항목-5--로그인-응답의-set-cookie-속성-1회-확인) |
+| `proxy_config` | `TRUST_PROXY=true`인데 `TRUSTED_PROXIES`가 비었다 | [3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다). 이 상태의 다른 요청은 500이다(D-67) |
+
+각 원소는 `{"key":…,"ok":true|false|null,"note":null|"…"}`다.
+`ok`가 `null`이면 **판단하지 않음**이고 `status` 계산에 영향을 주지 않는다.
+
+**설치 직후의 정상 상태는 `checks` 9개 전부 `ok:true` + `status:"ok"`다.**
+`installer_removed`가 `false`면 [2-9절](#2-9-installphp-삭제-필수)을 아직 안 한 것이다.
+
+#### 상세 응답은 장애 중에도 항상 HTTP 200이다
+
+**상태 코드로 판단하지 마라.** 진단 보고 자체는 성공한 것이고, 봉투의 `ok`는 그 뜻이다.
+장애 여부는 `data.status`로 읽는다.
+
+| `data.status` | 뜻 |
+|---|---|
+| `ok` | 9개 검사 전부 통과 |
+| `degraded` | 검사 중 하나 이상이 `ok:false` |
+| `unavailable` | DB에 접속하지 못했다 |
+
+**503을 쓰는 것은 익명 프로브뿐이다** — 모니터링 도구가 읽는 것이 상태 코드이기 때문이다.
+
+#### 담기지 않는 것 — admin에게도 나가지 않는다
+
+DB 이름·계정·호스트, 파일 절대경로, `SECRET_ENC_KEY`·`APP_KEY`·`DB_PASS`의
+값이나 그 일부. **키는 「유효한 형식인가」 불리언(`secret_enc_key_valid` ·
+`app_key_valid`)으로만 답한다.** `db.server_version`은 버전 문자열뿐이다.
+
+> **`counts.*`는 DB 장애일 때 `null`이다 — 0이 아니다.**
+> 0으로 렌더하는 모니터링 대시보드를 붙이면 "회원이 사라졌다"로 보인다.
+
+> **인증에 실패해도 401이 아니라 익명 응답이 나간다.** 계정이 정지됐다는 이유로
+> 헬스체크가 답을 못 하면 진단 도구로 쓸 수 없기 때문이다.
+> **그러므로 "상세가 안 보인다"는 것은 토큰이 없거나 `admin` 미만이라는 뜻이다** —
+> 서버 장애가 아니다.
+
 ---
 
 ## 4. 서비스·시크릿 등록 (관리자 콘솔)
@@ -974,6 +1110,83 @@ D-54의 게이트 검사는 **생성·수정 시점**만 막는다. 그 이전�
 
 또한 이름 기반 판정에는 한계가 있다. `openai_org`처럼 규칙에 걸리지 않는 이름으로 민감한 값을 넣으면
 자동 검사가 통과시킨다. **키 이름을 정할 때 사람이 판단해야 한다.**
+
+### 4-8. 로그 테이블은 자동으로 줄지 않는다 — 저장소 계획 (v1.4.0)
+
+**감사 근거이므로 일부러 지우지 않는다.** 자동 정리(확률적 GC)가 도는 표는
+`auth_codes` · `rate_limits` · `password_resets` · `email_verifications` · `sessions` **다섯 개**이고,
+**아래 네 표는 무기한 누적된다.**
+
+| 표 | 자동 정리 | 무엇이 상한인가 (v1.4.0 실측 기준) |
+|---|---|---|
+| `login_logs` | **없다** | `login:ip` 10회/300초 → **IP당 하루 2,880행**. 계정별로는 `login:user` 5회/300초 → 계정당 하루 1,440행 |
+| `secret_access_logs` | **없다** | 아래에서 따로 설명한다 |
+| `admin_logs` | **없다** | 관리자 자격증명이 필요하고 **한 행이 실제 관리 조작 하나**다. 사람이 누른 만큼만 늘어난다 |
+| `point_logs` | **없다** | 차감액이 잔액을 줄이므로 **잔액이 상한**이다 |
+
+#### `secret_access_logs` — 시간 버킷이지만 요청과 1:1인 경로가 남아 있다
+
+이 표는 `(session_id, source, window_start)`로 시간 버킷을 묶고 `hits`를 올리도록 설계됐다.
+**한 세션이 같은 토큰으로 계속 조회하는 경로(`source=session`)에서는 실제로 접힌다** — 세션당 시간당 1행이다.
+
+**그러나 `refresh`(토큰 갱신)는 접히지 않는다.** 갱신할 때마다 새 `session_id`가 만들어지고
+그것이 버킷 키의 한 축이기 때문이다. 즉 **갱신 1회 = 1행**이다.
+v1.4.0은 이 경로에 전용 레이트리밋을 걸어 **상한 없음을 닫았다.**
+
+| 버킷 | 값 | 그래서 상한은 |
+|---|---|---|
+| `refresh:user` | 60회 / 3600초 | **계정 하나당 하루 1,440행** |
+| `refresh:ip` | 120회 / 60초 | IP 하나당 하루 172,800**요청** |
+
+**IP 하나가 만들 수 있는 행 수는 `min(172,800, 1,440 × 그 IP의 계정 수)`다.**
+172,800에 닿으려면 계정 120개가 필요하고, `register:ip` 5회/3600초가 가입을 **하루 120계정/IP**로 제한한다 —
+즉 최악의 경우가 하루면 성립하지만, 그때 `users`에 120개 계정이 남아 관리자 콘솔에서 보인다.
+
+**저장소 계획.** 행 하나를 **대략 300바이트**(인덱스 3개 포함)로 잡으면 계정당 하루 약 0.4MB,
+위 최악의 경우가 하루 약 50MB다. **정확한 값은 추정하지 말고 재라:**
+
+```sql
+SELECT TABLE_NAME,
+       TABLE_ROWS,
+       ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 1) AS mb
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME IN ('app_ulogin_secret_access_logs', 'app_ulogin_login_logs',
+                     'app_ulogin_admin_logs', 'app_ulogin_point_logs')
+ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC;
+```
+
+**정상 사용에서 문제가 되는 크기가 아니다.** 기본값(`SESSION_TTL` 3600초)이면 정상 갱신율은
+기기당 시간당 1회이므로 계정당 하루 24행 남짓이고, 위 1,440은 **60배 여유를 둔 상한**이다.
+그러나 **보존 정책(오래된 로그의 아카이브·삭제)은 아직 없다 — v1.9.0 예정이다.**
+호스팅의 DB 용량이 빡빡하면 위 SQL을 월 1회 확인하는 것을 권장 점검에 넣어라.
+
+> **직접 지울 때 — 이 표는 감사 기록이다.**
+> 침해를 조사할 근거가 사라지므로 습관적으로 비우지 마라. 용량 때문에 꼭 줄여야 하면
+> **기간을 명시해** 지우고, 지운 기간을 따로 기록해 둔다.
+>
+> ```sql
+> -- 90일보다 오래된 시크릿 전달 기록을 지운다 (기간을 반드시 확인하고 실행하라)
+> DELETE FROM `app_ulogin_secret_access_logs`
+> WHERE window_start < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 90 DAY)
+> LIMIT 5000;
+> ```
+>
+> `LIMIT`을 붙인 이유는 공용 호스팅에서 대량 `DELETE`가 잠금·타임아웃을 만들기 때문이다.
+> 남은 행이 없어질 때까지 반복 실행한다. **시각은 전부 UTC 저장이다**([7-5절](#7-5-시각이-9시간-어긋난다)).
+
+#### 기록 자체를 끄는 스위치 — **최고관리자만** 바꿀 수 있다
+
+관리자 콘솔 → 설정 → **`시크릿 전달 감사 기록`**(`secret_access_log`, 기본 **켜짐**)을 끄면
+이 표에 더 이상 행이 쌓이지 않는다.
+
+**이 키 하나만 `superadmin` 전용이다.** 나머지 12개 설정 키는 `admin`도 바꿀 수 있지만,
+이 키를 담은 요청은 `admin` 권한으로 보내면 **403 `FORBIDDEN`** 이 되고 **같은 요청의 다른 키도 함께 저장되지 않는다.**
+시크릿 평문을 볼 수 없는 역할이 시크릿 전달 기록을 끌 수는 있었던 비대칭을 닫은 것이다(v1.4.0 보안 재검증).
+
+**끄는 것을 권하지 않는다.** 이 표가 없으면 시크릿 전달은 다시 무기록이 되고,
+탈취 토큰으로 키를 받아 가도 남는 것이 `sessions.last_seen_at` 하나뿐이다.
+용량이 문제라면 끄는 것보다 위의 기간 삭제가 낫다.
 
 ---
 
@@ -1142,7 +1355,11 @@ define('COOKIE_SECURE', false);
 
 첫 번째가 **JSON**이면 서버는 정상이다. 프론트가 확장자 없는 경로를 쓰고 있는 것이다.
 
-**대응:** `public/assets/api.js` 48행이 `.php`인지 확인한다. 기본값이 이미 `.php`다.
+**대응:** `public/assets/api.js`의 `var API_EXT =` 값이 `'.php'`인지 확인한다. 기본값이 이미 `.php`다.
+
+```bash
+grep -n "var API_EXT" public/assets/api.js     # 기대: var API_EXT = '.php';
+```
 
 ```js
   var API_EXT = '.php';
@@ -1221,7 +1438,7 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'app_ulogin_%';
 ```sql
 ALTER TABLE `app_ulogin_users`    CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ALTER TABLE `app_ulogin_services` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
--- 15개 테이블 전부에 대해 같은 문장을 실행한다
+-- 17개 테이블 전부에 대해 같은 문장을 실행한다 (v1.4.0 기준. 2-3절의 목록이 전수다)
 ```
 
 접속 문자셋은 `server/config.php`의 아래 값이 정한다. 기본값 그대로 두면 된다.
@@ -1424,7 +1641,7 @@ define('TRUSTED_PROXIES', ['10.0.0.1']);   // 프록시의 실제 IP 목록. 비
 
 ```nginx
 # ulogin — 웹에서 절대 열려서는 안 되는 경로
-location ~ ^/ulogin/server/(core|storage)/ {
+location ~ ^/ulogin/server/(core|storage|migrations)/ {
     deny all;
     return 404;
 }
@@ -1433,6 +1650,14 @@ location ~ ^/ulogin/server/(config\.php|config\.sample\.php|schema\.sql|install\
     deny all;
     return 404;
 }
+
+# migrate.php 는 **삭제하지 않는 파일**이라 위 목록에 넣지 않았다 (8-2절).
+# 평소에 닫아 두고 갱신할 때만 여는 운용을 권한다 — 이 화면의 유일한 방어가 접근 통제다.
+# 아래 블록의 주석(#)을 지우면 잠기고, 갱신할 때 다시 주석 처리한 뒤 reload 한다.
+#location = /ulogin/server/migrate.php {
+#    allow 203.0.113.7;   # 운영자 IP 만 허용 (예시 주소다. 자기 IP 로 바꿔라)
+#    deny all;
+#}
 
 # 점으로 시작하는 파일 전면 차단
 location ~ ^/ulogin/.*/\. {
@@ -1468,6 +1693,9 @@ sudo nginx -t && sudo systemctl reload nginx
 <Directory "/var/www/html/ulogin/server/storage">
     Require all denied
 </Directory>
+<Directory "/var/www/html/ulogin/server/migrations">
+    Require all denied
+</Directory>
 <Directory "/var/www/html/ulogin/server">
     <FilesMatch "^(config\.php|config\.sample\.php|schema\.sql|install\.php)$">
         Require all denied
@@ -1479,22 +1707,34 @@ sudo nginx -t && sudo systemctl reload nginx
 **적용 후 반드시 [3절의 4항목](#3-설치-후-보안-확인-4항목)을 다시 확인하라.**
 
 > `core/*.php`는 코드 자체에 직접 실행 가드가 있어 서버 설정이 없어도 404로 죽는다.
-> `server/core/`의 `.php` 파일은 **13개**이고, 그중 `bootstrap.php` **1개**가 `ULOGIN_BOOTSTRAPPED`
-> 상수를 **정의**하며, 나머지 **12개**가 상단에서 그 상수가 없으면 즉시 종료한다
-> (**정의 1 + 검사 12 = 13**, 리더 판정 D-34 / D-43).
+> `server/core/`의 `.php` 파일은 **14개**이고, 그중 `bootstrap.php` **1개**가 `ULOGIN_BOOTSTRAPPED`
+> 상수를 **정의**하며, 나머지 **13개**가 상단에서 그 상수가 없으면 즉시 종료한다
+> (**정의 1 + 검사 13 = 14**, 리더 판정 D-34 / D-43).
+> **v1.4.0에서 `core/transport.php` 하나가 늘어 13개 → 14개다.**
 >
 > 파일이 늘거나 줄면 이 세 숫자를 함께 고쳐야 한다. 다시 세는 명령은 아래 한 줄이다.
 >
 > ```bash
-> ls -1 server/core/*.php | wc -l                                      # 13 = 전체
+> ls -1 server/core/*.php | wc -l                                      # 14 = 전체
 > grep -l "define('ULOGIN_BOOTSTRAPPED'"  server/core/*.php | wc -l    #  1 = 정의부
-> grep -l "defined('ULOGIN_BOOTSTRAPPED')" server/core/*.php | wc -l   # 13 = 정의부 포함
+> grep -l "defined('ULOGIN_BOOTSTRAPPED')" server/core/*.php | wc -l   # 14 = 정의부 포함
 > ```
 >
-> 세 번째 명령이 13을 내는 것은 `bootstrap.php`가 `if (!defined(...)) { define(...) }` 형태로
-> **자기 상수를 중복 정의하지 않기 위해** 같은 검사를 쓰기 때문이다. **404로 종료하는 가드를 가진 것은 12개**다.
+> 세 번째 명령이 14를 내는 것은 `bootstrap.php`가 `if (!defined(...)) { define(...) }` 형태로
+> **자기 상수를 중복 정의하지 않기 위해** 같은 검사를 쓰기 때문이다. **404로 종료하는 가드를 가진 것은 13개**다.
 >
-> **`storage/` · `schema.sql` · `config.php`는 웹서버 설정에만 의존한다** — 그래서 위 스니펫이 필요하다.
+> **`core/transport.php`의 가드만 조건이 둘이다** — `ULOGIN_BOOTSTRAPPED` **또는** `ULOGIN_MIGRATE_CTX`가
+> 있으면 통과한다. `server/migrate.php`가 `core/bootstrap.php`를 거치지 않으면서 이 파일 하나만
+> `require`하기 때문이다(HTTPS·프록시 판정을 `/api/*`와 같은 조건식으로 하기 위해서다 —
+> [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션) ⑧). 브라우저로 직접 열면 두 상수가 모두 없으므로
+> 다른 `core/` 파일과 똑같이 **404**다.
+>
+> **`storage/` · `migrations/` · `schema.sql` · `config.php`는 웹서버 설정에만 의존한다** —
+> 그래서 위 스니펫이 필요하다. `server/migrations/*.sql`은 **DDL 텍스트**이므로
+> 노출되면 `schema.sql`이 노출된 것과 같은 정보를 준다.
+> `migrations/lib.php`는 직접 실행 가드가 없다 — `migrate.php`·`install.php`가
+> `require`로 읽는 파일이고 `core/`의 `ULOGIN_BOOTSTRAPPED` 가드 체계 밖에 있다.
+> **함수 정의만 있어 브라우저로 열면 빈 화면이 나오지만, 그것은 방어가 아니라 우연이다.**
 
 #### 캐시 헤더 3종 — `.htaccess`가 무시되면 이것도 함께 사라진다 (v1.2.0 / 리더 판정 D-85)
 
@@ -1864,7 +2104,8 @@ define('MAIL_FROM', 'no-reply@example.com');   // 서비스 도메인과 같아�
 
 ### 7-14. `payload`가 비어 있다 (`{}`)
 
-**에러도 경고도 없이 빈 객체가 온다.** 아래 3가지를 **순서대로** 확인하라.
+**에러도 경고도 없이 빈 객체가 온다.** 아래 **4가지**를 **순서대로** 확인하라.
+**④는 v1.4.0에서 새로 생긴 원인이다** — 그 전에는 이 상황에서 시크릿이 그대로 나갔다.
 
 **① 미가입 — 그 서비스에 `user_services` 행이 없다** (리더 판정 D-48)
 
@@ -1909,6 +2150,48 @@ WHERE user_id = (SELECT id FROM `app_ulogin_users` WHERE username = 'hong')
 
 확인: 관리자 콘솔 → 회원 상세 → 서비스 목록에서 상태를 본다.
 또는 회원 본인의 마이페이지 → 서비스 탭에서 `membership_status`로 보인다.
+
+**④ 서비스 자체가 비활성이다 — `services.status = 'disabled'`** (v1.4.0 / 리더 판정 D-152)
+
+**회원이 아니라 서비스가 꺼져 있는 경우다.** ①②③과 달리 **회원 쪽에는 아무 이상이 없다.**
+
+v1.3.0까지 이 상태에서 `GET /api/auth/session`은 **시크릿을 그대로 내보냈다.**
+v1.4.0은 그것을 닫았고, 그 결과 **끄는 순간부터 `payload`가 `{}`가 된다.**
+HTTP 상태는 200 그대로이고 세션도 살아 있다 — 그래서 "로그인은 되는데 키만 없다"로 보인다.
+
+확인: 관리자 콘솔 → **서비스** 탭에서 그 `service_id`의 상태를 본다.
+`활성`이 아니면 이 원인이다. 다시 `활성`으로 바꾸면 그다음 요청부터 `payload`가 돌아온다.
+
+> **`비활성`은 시크릿 차단 스위치이고 토큰 회수 도구가 아니다. 사고 대응이라면 이 구분이 중요하다.**
+>
+> 끄는 동안은 **모든 토큰**에서 `payload`가 `{}`가 된다 — 탈취된 토큰도 포함이다(실측).
+> 그러나 **다시 `활성`으로 바꾸면 그 사이에 있던 탈취 토큰도 함께 되살아난다.**
+> 끄고 켜는 것으로 토큰이 죽지는 않는다. 침해를 의심해 껐다면 **끈 상태를 유지해야 한다.**
+>
+> | 하려는 것 | 쓸 수 있는가 | 쓰는 방법 |
+> |---|---|---|
+> | 지금 이 서비스로 시크릿이 나가는 것을 멈춘다 | **된다** | 서비스 상태를 `비활성`으로 |
+> | 끄는 동안 연동 앱의 세션이 죽지 않게 한다 | **된다** | 세션은 그대로 200이고, 재활성 시 정상 사용자는 복구된다 |
+> | 특정 토큰(회원 1명)을 끊는다 | **된다** | 관리자 콘솔 → 회원 상세 → **세션 회수** |
+> | 그 서비스의 전 사용자를 한 번에 끊는다 | **아직 없다** | 회원 단위로 반복해야 한다. 서비스·전역 단위 일괄 회수는 **v1.9.0 예정**(미해결 High) |
+> | 껐다 켜서 탈취 토큰을 죽인다 | **안 된다** | 위와 같이 복구된다. `services.session_ttl`(상한 7일)까지 살 수 있다 |
+>
+> 그래서 침해 대응의 순서는 **① 서비스 `비활성` → ② 대상 회원의 세션 회수 → ③ 필요하면 시크릿 값 교체**다.
+> ②를 건너뛰고 ①만 되돌리면 공격자의 토큰이 그대로 동작한다.
+
+같은 서비스로 **새로 로그인**해 보면 더 빨리 갈린다.
+
+| 새 로그인 결과 | 판정 |
+|---|---|
+| `400 SSO_INVALID_SERVICE` | **서비스가 비활성이다.** ④가 원인이다 |
+| 200인데 `payload`가 `{}` | 서비스는 살아 있다. ①②③으로 돌아가라 |
+
+> **끄고 켜는 사이에 `refresh`를 돈 세션은 서비스별 TTL이 아니라 전역 기본값
+> (`SESSION_TTL` / `REFRESH_TTL`)을 받는다.** 재활성 뒤의 회전부터 다시 서비스 값을 쓴다.
+> 동작상 문제는 없고 수명만 달라진다.
+
+> **`role`이 `admin` 이상인 토큰이 있으면 [3-5절](#3-5-헬스체크로-설치-상태를-한-번에-확인한다-v140-신설)의
+> 헬스체크가 `counts.services_active`를 알려준다.** 그 값이 예상보다 작으면 ④를 먼저 보라.
 
 ### 7-15. 관리자 API가 403을 낸다
 
@@ -1956,6 +2239,86 @@ DELETE FROM `app_ulogin_rate_limits` WHERE bucket LIKE 'login:%';
 
 **같은 IP에서 여러 계정을 테스트하면** IP 버킷이 먼저 걸려 계정 락아웃보다 앞서 `RATE_LIMITED`가 나온다.
 정상 동작이다 (리더 판정 D-15).
+
+#### 로그인이 아니라 **토큰 갱신**(`/api/auth/refresh`)이 `RATE_LIMITED`라면 (v1.4.0 신설)
+
+v1.4.0은 이 경로에 전용 레이트리밋을 걸었다. 그 전에는 전역 `api:ip` 300회/60초만 있었다.
+
+| 버킷 | 값 | 무엇을 막는가 |
+|---|---|---|
+| `refresh:ip` | **120회 / 60초** | 한 IP에서 오는 갱신 폭주 |
+| `refresh:user` | **60회 / 3600초** | 한 계정의 갱신 횟수. 시크릿 전달 로그의 행 증가를 실제로 묶는 쪽이다 |
+
+**429를 받은 refresh 토큰은 죽지 않는다**(실측). 재로그인으로 보내지 말고
+응답의 `retry_after`(초)만큼 기다린 뒤 같은 토큰으로 다시 시도하면 200이 된다.
+연동 앱을 만드는 쪽의 처리는 `AI_INTEGRATION_GUIDE.md`의 에러 처리 절에 있다.
+
+##### 정상 사용자가 `refresh:user`에 걸리는 조건 — 자기 배포의 값으로 계산하라
+
+**조건식은 이것 하나다.**
+
+```
+한 계정의 시간당 갱신 횟수 = 그 계정이 로그인한 기기 수 × (3600 ÷ 실효 session_ttl)
+
+이 값이 60을 넘으면 그 계정은 429를 받는다.
+```
+
+**`실효 session_ttl`은 두 곳에서 온다** — 서비스에 값이 있으면 **서비스 값이 이기고**,
+없으면 전역 기본값(관리자 콘솔 → 설정 → `기본 access 토큰 수명(초)`, 없으면 `config.php`의 `SESSION_TTL`)을 쓴다.
+둘 다 **60초 ~ 604800초(7일)** 범위다. 자기 배포의 값은 관리자 콘솔 → 서비스 탭에서 그 서비스의
+`session_ttl`을 먼저 보고, 비어 있으면 설정 탭의 값을 본다.
+
+| 실효 `session_ttl` | 기기 1대의 시간당 갱신 | **429 없이 가능한 최대 기기 수** |
+|---|---|---|
+| **3600초 (기본값)** | 1회 | **60대** |
+| 1800초 (30분) | 2회 | 30대 |
+| 600초 (10분) | 6회 | 10대 |
+| 300초 (5분) | 12회 | 5대 |
+| 60초 (설정 가능한 최소값) | 60회 | **1대** — 두 번째 기기가 로그인하면 걸린다 |
+
+**기본값에서는 걸리지 않는다.** 정상 갱신율의 **60배** 여유가 있다.
+위험한 배포는 **`session_ttl`을 5분 이하로 내리고 한 계정을 여러 기기가 공유하는 경우**뿐이다.
+
+> **갱신을 만료 직전이 아니라 미리 도는 클라이언트는 위 값보다 자주 갱신한다.**
+> 예를 들어 수명의 절반마다 갱신하는 앱은 표의 두 배로 센다 — `session_ttl` 600초 + 기기 10대면
+> 시간당 120회가 되어 걸린다. 연동 앱의 갱신 주기를 모르면 **표의 절반**을 안전선으로 잡으라.
+
+> **창은 고정 구간이다 — 슬라이딩이 아니다.** 3600초 창은 **UTC 정시에 리셋된다**
+> (버킷의 창 시작 = `time()`을 창 길이로 내림한 값). 그래서 한도에 닿은 계정은
+> 응답의 `retry_after`가 알려주는 **다음 정시까지만** 기다리면 풀린다.
+> 두 창에 걸쳐 몰아 쓰면 한 시간 안에 60회를 넘길 수 있지만, **하루 총량은 여전히 24창 × 60 = 1,440**이다.
+
+##### 값을 바꾸려면 — **설정 키가 아니라 코드다**
+
+**이 두 한도는 관리자 콘솔에 없다.** 설정 키로 노출되어 있지 않으므로 파일을 고쳐야 한다.
+
+| 버킷 | 어느 파일 | 어디 |
+|---|---|---|
+| `refresh:ip` 120 / 60초 | `server/api/auth/refresh.php` | 파일 상단의 `rate_limit('refresh:ip:' . client_ip(), 120, 60);` 한 줄 |
+| `refresh:user` 60 / 3600초 | `server/core/auth.php` | `rotate_refresh()` 함수 안의 `rate_limit('refresh:user:' . …, 60, 3600);` 한 줄 |
+
+세 번째 인자가 **창의 길이(초)**, 두 번째가 **그 창에서 허용하는 횟수**다.
+두 줄 모두 바로 위에 값의 근거가 주석으로 적혀 있다 — **바꾸기 전에 읽으라.**
+`refresh:user`를 올리면 `secret_access_logs`의 계정당 하루 상한도 같은 배수로 올라간다
+([4-8절](#4-8-로그-테이블은-자동으로-줄지-않는다--저장소-계획-v140)).
+**대안을 먼저 보라** — 대개는 `session_ttl`을 올리는 것이 맞는 조치다.
+
+##### 이미 걸린 계정을 즉시 풀기
+
+`refresh:user`는 IP가 아니라 **계정** 단위이므로 `bucket LIKE 'login:%'`로는 지워지지 않는다.
+
+```sql
+DELETE FROM `app_ulogin_rate_limits` WHERE bucket LIKE 'refresh:%';
+```
+
+특정 회원만 풀려면 그 회원의 숫자 `id`(관리자 콘솔 → 회원 상세)를 쓴다.
+
+```sql
+DELETE FROM `app_ulogin_rate_limits` WHERE bucket = 'refresh:user:123';
+```
+
+**연동 앱이 갱신을 루프로 돌리고 있다면** 이것은 앱 쪽 결함이다. 버킷을 지워도 다시 찬다 —
+`access_token`이 만료되기 전에 한 번만 갱신하도록 앱을 고쳐야 한다.
 
 ### 7-17. 설치 도중 "설치 정보가 유실되었습니다(세션 만료)"
 
@@ -2030,6 +2393,7 @@ v1.1.0의 최소 요구 버전은 **7.2.0**이다. 이보다 낮으면 차단된
 | `FORCE_HTTPS is on but BASE_URL is not configured` | `BASE_URL`이 비어 있다 | 평문으로 들어온 **전 요청** | [2-4절](#2-4-4단계--사이트--전송-보안-가장-중요한-화면)대로 `BASE_URL`을 채운다 |
 | `COOKIE_SECURE is on but the request is not HTTPS` | **평문 HTTP 요청에 `Secure` 쿠키를 내보내려 했다** (리더 판정 D-75). 브라우저는 평문 연결에서 `Secure` 쿠키를 저장하지 않으므로, 그대로 두면 "로그인 API는 200인데 세션이 안 붙는" 조용한 실패가 된다. v1.1.0부터 그 자리에서 멈춘다 | **쿠키를 내보내는 요청만** — 로그인·로그아웃·CSRF 발급. 경계는 인증 방식이 아니라 `Set-Cookie` 발행 여부다: `Authorization: Bearer` **조회**는 200이지만 **로그아웃·탈퇴·현재 세션 끊기는 Bearer로도 500**이다 (엔드포인트별 표와 재시도 금지 안내는 7-7절) | [7-7절](#7-7-쿠키가-저장되지-않는다--로그인이-유지되지-않는다--로그인만-500이다) |
 | `invalid "path" cookie option rejected` (또는 `"domain"`) | `COOKIE_PATH`·`COOKIE_DOMAIN`에 쿠키 구분자(`,` `;` 공백 탭 등)가 들어 있다. PHP 7.2에서만 조용히 통과해 쿠키 속성 주입이 됐던 값이다 (리더 판정 D-65) | **쿠키를 내보내는 요청만** | `server/config.php`를 `define('COOKIE_PATH', '/');` / `define('COOKIE_DOMAIN', '');`로 되돌린다 |
+| `PDOException: SQLSTATE[42S02]` · `Base table or view not found` | **v1.4.0 이상의 파일을 올렸는데 스키마 마이그레이션을 돌리지 않았다.** 새 코드가 `app_ulogin_schema_migrations` · `app_ulogin_secret_access_logs`를 `SELECT`하는데 그 테이블이 DB에 없다 | **그 테이블을 읽는 요청만.** 로그인은 성공하는데 관리자 로그 화면·헬스체크 상세만 깨지는 식으로 **비대칭으로** 나타난다 | `{설치루트}/server/migrate.php`를 한 번 돌린다 → [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션) |
 
 > **로그에 `invalid COOKIE_SAMESITE`만 있고 500은 없다면** 그것은 오류가 아니라 경고다.
 > `COOKIE_SAMESITE`에 `Lax`·`Strict`·`None` 밖의 값(오타 포함)이 들어가 **`Lax`로 강제**된 것이다.
@@ -2060,6 +2424,12 @@ define('TRUSTED_PROXIES', []);
 **서버 오류 로그를 못 찾겠으면** [7-10절](#7-10-500-오류만-나오고-원인을-모르겠다)의 `DEBUG` 임시 활성화
 절차를 쓴다. 확인이 끝나면 **반드시 다시 끈다.**
 
+> **v1.4.0부터는 `DEBUG`를 켜기 전에 헬스체크를 먼저 열어라.**
+> `admin` 이상 토큰으로 `{설치루트}/server/api/health.php`를 열면 `checks` 9항목이
+> `db` · `schema` · `storage` · `secret_enc_key` · `proxy_config`를 한 번에 판정해 준다 —
+> 위 표의 원인 대부분이 그 아홉 줄 안에 있다.
+> **`DEBUG=true`는 그것으로도 안 잡힐 때의 수단이다**([3-5절](#3-5-헬스체크로-설치-상태를-한-번에-확인한다-v140-신설)).
+
 ---
 
 ## 8. 새 버전으로 갱신하기
@@ -2073,17 +2443,43 @@ define('TRUSTED_PROXIES', []);
 | 단계 | 무엇을 하는가 | 실패하면 무엇이 보이는가 |
 |---|---|---|
 | 1 | 버전 문자열 일괄 치환 (`?v=` · `version.txt`) | 일부 자산만 옛 것으로 남는다 |
-| 2 | 업로드 — **덮어쓰면 안 되는 파일 3종을 지킨다** | 전 API 500 / 시크릿 복호화 불가 |
+| 2 | 업로드 → **곧바로 스키마 마이그레이션** (`server/migrate.php`) | 덮어쓰면 안 되는 3종을 잃으면 전 API 500 / 시크릿 복호화 불가. **마이그레이션을 건너뛰면 새 테이블·컬럼을 읽는 요청이 500** |
 | 3 | `version.txt`로 **업로드가 됐는지** 확인 | 값이 그대로면 업로드가 안 된 것이다 |
 | 4 | Network 탭에서 자산 URL의 `?v=` 확인 | 옛 값이면 옛 HTML을 보고 있다 |
 | 5 | `curl`로 API 응답 헤더 확인 | `no-store` 단독이면 **PHP 옛 코드**다 |
 | 6 | 그래도 그대로면 → opcache 진단 | — |
 | 7 | `Ctrl+Shift+R`는 **최후 수단이지 해결책이 아니다** | — |
 
-**DB는 건드리지 않는다.** `schema.sql`은 전부 `CREATE TABLE IF NOT EXISTS`이고,
-v1.2.0은 테이블·컬럼을 하나도 바꾸지 않았다. 스키마가 바뀌는 버전에서는 별도
-`migrate_{from}_to_{to}.sql`이 버전 폴더에 함께 들어 있으며, 그때는 이 절의 2단계 앞에
-그 파일 적용이 추가된다. **v1.2.0에는 그 파일이 없다** — 없으면 마이그레이션이 없다는 뜻이다.
+### v1.4.0부터 DB가 바뀐다 — 이 절에서 가장 중요한 변화
+
+**v1.3.0까지는 "DB는 건드리지 않는다"가 맞았다.** `schema.sql`이 전부
+`CREATE TABLE IF NOT EXISTS`였고, v1.1.0·v1.2.0·v1.3.0은 테이블·컬럼을 하나도 바꾸지 않았다.
+
+**v1.4.0은 바꾼다.** 테이블 2개(`app_ulogin_schema_migrations` ·
+`app_ulogin_secret_access_logs`), 컬럼 1개(`service_secrets.allow_public`),
+인덱스 3개가 늘었다.
+
+그리고 v1.3.0까지 이 서버에는 **스키마를 바꾸는 실행 경로가 아예 없었다.**
+`server/` 전체에 `ALTER TABLE`이 0건이었고, 설치기는 `CREATE TABLE IF NOT EXISTS`만
+돌았다. v1.4.0이 그 경로를 만들었다 — **`server/migrate.php`** 다.
+
+| | 신규 설치 | 기존 설치본 갱신 |
+|---|---|---|
+| 스키마가 가는 길 | `install.php`가 `schema.sql`을 적용 | **`migrate.php`가 `migrations/`를 적용** |
+| 마이그레이션 파일 | 적용하지 않고 `baseline`으로 **기록만** 한다 | 순서대로 **적용**한다 |
+| 이 절의 2단계 | 해당 없음 (설치 절차는 [1절](#1-파일-업로드)부터) | **반드시 돈다** |
+
+**파일만 올리고 멈추면 어떻게 되는가.** 새 코드는 새 테이블·컬럼을 `SELECT`한다.
+그 테이블이 없으면 **그것을 읽는 요청이 500**이 된다. 로그인 자체는 살아 있을 수 있으므로
+"일부 화면만 깨진다"로 보이고, 원인을 찾기 어렵다.
+그 상태는 **[3-5절](#3-5-헬스체크로-설치-상태를-한-번에-확인한다-v140-신설)의 헬스체크
+`checks.schema`가 `ok:false`** 로 알려준다.
+
+> **v1.3.0 이하의 이 문서가 예고한 `migrate_{from}_to_{to}.sql` 방식은 채택되지 않았다.**
+> 그 방식은 파일을 손으로 phpMyAdmin에 붙여 넣는 것을 전제하고,
+> **어디까지 적용됐는지 기록이 남지 않는다.** v1.4.0은 대신
+> `server/migrations/{0001,0002}_*.sql` + 러너 구조를 택했다 — 적용 이력이 DB에 남고,
+> 중간에 실패해도 몇 번째 문장까지 갔는지 알 수 있다. 상세는 [8-2절](#8-2-2단계--업로드와-스키마-마이그레이션)이다.
 
 ### 8-1. 1단계 — 버전 문자열 일괄 치환
 
@@ -2107,17 +2503,20 @@ v1.2.0은 테이블·컬럼을 하나도 바꾸지 않았다. 스키마가 바�
 php tools/bump_asset_version.php <새버전> --version-txt=<새버전>_<YYYYMMDD>
 ```
 
-실제 값 예시 (v1.2.0을 v1.3.0으로 올리는 경우):
+실제 값 예시 (v1.3.0을 v1.4.0으로 올리는 경우):
 
 ```bash
-php tools/bump_asset_version.php 1.3.0 --dry-run
-php tools/bump_asset_version.php 1.3.0 --version-txt=1.3.0_20260901
+php tools/bump_asset_version.php 1.4.0 --dry-run
+php tools/bump_asset_version.php 1.4.0 --version-txt=1.4.0_20260901
 ```
+
+**`--version-txt=`의 값에는 날짜가 붙고 앞의 버전 인자에는 붙지 않는다.**
+두 값의 형식이 다르다 — 그래서 스크립트가 자동으로 추론하지 않는다.
 
 릴리스마다 폴더를 따로 두고 관리한다면 `--dir=`로 대상을 명시한다.
 
 ```bash
-php tools/bump_asset_version.php 1.3.0 --dir=/path/to/ulogin --dry-run
+php tools/bump_asset_version.php 1.4.0 --dir=/path/to/ulogin --dry-run
 ```
 
 옵션은 이것뿐이다.
@@ -2162,7 +2561,7 @@ public/admin.html                 3        0        3        0        0
 종료코드를 셸에서 확인하는 방법:
 
 ```bash
-php bump_asset_version.php 1.3.0 --dir=../v1.3.0_20260901
+php bump_asset_version.php 1.4.0 --dir=../v1.4.0_20260901
 echo "종료코드=$?"
 ```
 
@@ -2188,9 +2587,17 @@ echo "종료코드=$?"
 > 전자는 브라우저 캐시를 깨기 위한 URL 파라미터이고, 후자는 연동 앱이 클라이언트 라이브러리의
 > API 세대를 판별하는 문자열이다.
 
-### 8-2. 2단계 — 업로드 (덮어쓸 것과 절대 덮어쓰면 안 될 것)
+### 8-2. 2단계 — 업로드와 스키마 마이그레이션
 
 **갱신 사고는 거의 전부 이 단계에서 난다.** 폴더를 통째로 덮어쓰면 설치 시 생성된 파일이 사라진다.
+
+> **이 단계는 둘로 나뉘고, 중간에서 멈추면 안 된다.**
+>
+> **(가) 파일 업로드** → **(나) `server/migrate.php` 1회 실행**
+>
+> (가)만 하고 멈춘 서버는 **새 코드가 아직 없는 테이블·컬럼을 읽는 상태**다.
+> 두 작업 사이의 시간이 곧 장애 시간이므로 **이어서 하라.**
+> v1.4.0으로 올릴 때 (나)를 건너뛰면 D-151이 막으려던 사고가 그대로 난다.
 
 #### 덮어써야 하는 것
 
@@ -2198,6 +2605,8 @@ echo "종료코드=$?"
 |---|---|
 | `server/api/**` · `server/core/**` | 코드 본체 |
 | `server/config.sample.php` · `server/schema.sql` | 템플릿·DDL. 실제 값은 들어 있지 않다 |
+| **`server/migrate.php`** | 스키마 마이그레이션 러너. **v1.4.0 신규.** 갱신할 때마다 새 것으로 올린다 |
+| **`server/migrations/**`** | 마이그레이션 SQL + `lib.php` + `.htaccess`. **v1.4.0 신규.** `.htaccess`가 점으로 시작해 FTP에서 숨겨지기 쉽다 |
 | `server/.htaccess` · `server/core/.htaccess` · `server/storage/.htaccess` · `server/storage/mail/.htaccess` | 접근 차단 규칙 |
 | `public/**` (HTML 8개 · `assets/` 4개 · `.htaccess` · `version.txt`) | 화면과 자산. **`version.txt`도 반드시 함께 올린다** |
 | `examples/**` (HTML 2개 · `README.md` · **`.htaccess`**) | 데모. 필요 없으면 아예 올리지 않아도 된다. 올린다면 **`.htaccess`를 함께 올려라** — 점(`.`)으로 시작해 FTP 클라이언트에서 숨겨지기 쉽고, 이 파일이 없으면 `callback.html`이 캐시된다([7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)) |
@@ -2216,8 +2625,15 @@ echo "종료코드=$?"
 | **`server/storage/.installed`** | 위와 같은 잠금의 두 번째 마커다. 둘 중 하나만 남아도 잠금은 유효하다 |
 | `server/storage/mail/` | `log` 드라이버를 쓰면 **비밀번호 재설정 링크가 그대로 담긴 파일**이 여기 쌓인다. 갱신과 무관하게 정리 대상이다([3-2절](#3-2-log-드라이버를-쓴다면--storagemail-정리)). 새 버전으로 덮어써서 지우는 것 자체는 피해가 없지만, **`.installed`가 같은 폴더 아래 있으므로 `storage/`를 통째로 덮어쓰면 잠금이 풀린다** |
 
+> **`server/storage/.migrate_throttle`은 지워도 된다** (v1.4.0에서 생기는 파일이다).
+> `migrate.php`의 시도 제한 카운터이고, 인증에 성공하면 러너가 스스로 지운다.
+> 지우면 카운터가 초기화될 뿐 잠금이 풀리거나 데이터를 잃지는 않는다.
+> **위의 3파일과 성격이 다르므로 같은 취급을 하지 마라.**
+
 > **`server/install.php`는 새 버전에서도 패키지에 들어 있다. 갱신 시에는 올리지 마라.**
-> 설치는 이미 끝났고 v1.2.0에는 마이그레이션이 없으므로 설치기를 쓸 일이 없다.
+> 설치는 이미 끝났고, **스키마를 바꾸는 일은 `install.php`가 아니라 `migrate.php`가 한다.**
+> 설치기는 `CREATE TABLE IF NOT EXISTS`만 돌기 때문에 **이미 있는 테이블에 컬럼을 더하지 못한다** —
+> 갱신에는 쓸 수 없는 도구다. 이 둘을 혼동하지 마라.
 > 실수로 올렸다면 **즉시 삭제하라**([2-9절](#2-9-installphp-삭제-필수)).
 > 위의 잠금 파일 2개가 남아 있으면 설치기는 "이미 설치가 완료된 서버입니다"로 막히지만,
 > **그것은 두 번째 방어선이고 첫 번째 방어선은 파일을 올리지 않는 것이다.**
@@ -2241,6 +2657,293 @@ server/storage/.installed
 ```
 
 전체 파일 상태는 [부록 점검표](#부록--설치-후-파일-상태-점검표)와 대조한다.
+
+#### (나) 업로드 직후 — 스키마 마이그레이션을 한 번 돌린다 (v1.4.0 신설)
+
+**v1.4.0 이후의 모든 갱신에서 이 단계를 거친다.** 바뀔 스키마가 없는 버전이면
+러너가 「미적용 0건」이라고 답하고 끝난다 — **돌려서 손해 보는 일은 없고,
+빼먹으면 원인을 찾기 어려운 500이 남는다.**
+
+##### ① 먼저 DB 백업을 받는다 — 이 순서를 바꾸지 마라
+
+**`down` 마이그레이션은 없다.** MySQL은 DDL에 트랜잭션이 걸리지 않아
+`CREATE`·`ALTER`가 암묵적 커밋을 일으키고, 중간에 실패해도 앞 문장은 되돌아가지 않는다.
+
+**반쪽짜리 `down`을 제공하지 않은 것은 판단이다** — 있다는 사실 자체가 백업을 건너뛰게 만든다.
+그래서 **공용 호스팅에서 신뢰할 수 있는 복구 수단은 DB 전체 덤프뿐**이고,
+적용 화면의 버튼 문구가 「**백업을 받았습니다 — 적용**」인 이유도 그것이다.
+
+phpMyAdmin이라면 [내보내기] → 형식 `SQL` → 전체 테이블. 셸이 있다면:
+
+```bash
+mysqldump -u <<DB사용자>> -p ulogin_db > ulogin_db_backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+받은 파일의 **크기가 0이 아닌지** 확인하라. 여기까지가 ①이다.
+
+##### ② 두 가지 입구 — 웹이 정본, CLI는 있으면 편한 쪽
+
+공용 호스팅에는 셸도 cron도 보장되지 않는다. 그래서 **웹 화면이 정본**이다.
+
+| 입구 | 주소 / 명령 | 인증 |
+|---|---|---|
+| **웹** (정본) | `{설치루트}/server/migrate.php` | **매 요청** `superadmin` 아이디·비밀번호를 POST로 함께 보낸다 |
+| **CLI** | `php server/migrate.php status\|apply\|verify` | **없다.** 셸 접근 자체가 이미 더 큰 권한이다 |
+
+**웹 화면의 인증은 세션을 만들지 않는다.** 로그인 폼이 있지만 쿠키가 생기지 않고,
+`apply` 버튼을 누를 때 **아이디·비밀번호를 다시 입력해야 한다.** 불편이 아니라 설계다 —
+세션 쿠키가 없으므로 CSRF로 이 화면을 대신 조작할 수 없고, 잊고 열어 둔 탭이 권한으로 남지도 않는다.
+
+**미인증 `GET`은 아무것도 알려주지 않는다.** 버전·미적용 목록·DB 상태·PHP 버전 전부
+로그인 폼 뒤에 있다. 저장소가 공개돼 있어 그 정보가 정찰 재료가 되기 때문이다.
+
+**방어는 셋이다.**
+
+| 방어 | 값 |
+|---|---|
+| 시도 제한 | **5회 / 900초**(15분). 파일 기반(`server/storage/.migrate_throttle`). 초과하면 HTTP 429 |
+| 계정 락아웃 | `users.locked_until`을 존중한다 — `login.php`로 잠긴 계정은 이 화면에서도 잠긴다 |
+| 실패 기록 | `login_logs`에 `fail_migrate_auth`로 남는다 → 관리자 콘솔 `로그` 탭에서 보인다(라벨: 「실패 · 스키마 갱신 화면 인증」) |
+
+> **`server/storage/`에 쓸 수 없는 배포에서는 이 화면이 열리지 않는다 — 503으로 거부한다.**
+> 횟수를 셀 수 없으면 시도 제한이 사라지는데, 이 화면은 매 요청 `superadmin` 비밀번호를 받으므로
+> **제한 없는 비밀번호 시도대**가 된다. 그래서 조용히 통과시키지 않고 멈춘다(fail-closed).
+> **올바른 비밀번호도 막힌다** — 정답과 오답이 같은 응답을 받아야 오라클이 되지 않기 때문이다.
+> 화면에 원인과 함께 CLI 대안(`php server/migrate.php status`)이 안내된다.
+> `server/storage/`가 웹 서버에게 쓰기 가능한지 확인하면 그 자리에서 풀린다 —
+> 헬스체크의 `checks.storage`가 `ok:false`면 이 상태다([3-5절](#3-5-헬스체크로-설치-상태를-한-번에-확인한다-v140-신설)).
+> **v1.4.0 초기 구현은 여기서 통과시켰다**(시도당 1초 지연으로만 떨어졌다). 같은 라운드의 보안
+> 재검증이 그것을 fail-open으로 판정해 503으로 바꿨다 — 옛 서술을 기억하고 있다면 갱신하라.
+
+##### ③ `status` — 무엇이 미적용인지 먼저 본다
+
+브라우저로 `{설치루트}/server/migrate.php`를 열고 `superadmin` 계정으로 인증한다.
+로그인 폼 하나만 보이는 것이 정상이다 — 인증 전에는 상태를 보여 주지 않는다.
+
+셸이 있으면:
+
+```bash
+php server/migrate.php status
+```
+
+상태값은 **7종**이다. **「미적용·미완료 N건」의 N은 아래에서 「진행을 막는가」가 「예」인 것의 합이다.**
+
+| 값 | 뜻 | 진행을 막는가 |
+|---|---|---|
+| `baseline` | 신규 설치라 `schema.sql`이 이미 이 형태다 — 적용하지 않는다 | 아니오 |
+| `applied` | 적용 완료 | 아니오 |
+| `pending` | 아직 적용되지 않았다 | **예** |
+| `partial` | 부분 적용. `statements_done/total`이 어디까지 갔는지 말해 준다 | **예** |
+| `failed` | 실패. 몇 번째 문장까지 갔는지 + 사유가 남는다 | **예** |
+| `checksum-mismatch` | **적용된 뒤 파일이 바뀌었다.** 진행을 거부한다 | **예** |
+| `orphan` | DB에 기록은 있는데 파일이 없다 — 올린 코드가 기록보다 낡았을 수 있다 | **예** |
+
+**v1.3.0 → v1.4.0 갱신의 정상 출력은 `0001`·`0002` 두 건이 `pending`, 「미적용·미완료 2건」이다.**
+`0001`은 v1.4.0 기반(테이블 2개·인덱스 3개), `0002`는 `service_secrets.allow_public` 컬럼이다.
+
+##### ④ `apply` — 백업을 받은 뒤에만 누른다
+
+웹 화면에서 **미적용이 1건 이상일 때만** 「적용」 카드가 나타난다.
+아이디·비밀번호를 다시 넣고 「**백업을 받았습니다 — 적용**」을 누른다.
+
+셸이라면:
+
+```bash
+php server/migrate.php apply
+```
+
+CLI는 적용 뒤 `verify`까지 이어서 돌고 결과를 함께 출력한다.
+
+| 종료코드 | 뜻 |
+|---|---|
+| `0` | 정상. 미적용 0건이고 `schema.sql`과 일치한다 |
+| `1` | **미적용이 남았거나 스키마가 `schema.sql`과 다르다** |
+| `2` | 사용법·환경 오류(`config.php` 없음, DB 접속 실패 등) |
+
+**정상 결과는 `0001`·`0002` 각각 `OK`, 그리고 `verify: schema.sql 과 동일`이다.**
+
+**다시 돌려도 안전하다.** 이미 적용된 파일은 `건너뜀(applied)`으로 표시되고 아무것도 실행하지 않는다.
+모든 DDL 문장이 바로 앞에 `-- @skip-if:` 가드를 갖고 있어(`table-exists` ·
+`column-exists` · `index-exists` · `never`) **이미 있는 것을 다시 만들려 하지 않는다.**
+러너는 **가드 없는 DDL이 하나라도 있으면 그 파일 전체를 거부한다** —
+재적용 가능성이 문서의 약속이 아니라 구조로 강제돼 있다.
+
+##### ⑤ 중간에 끊겼다면 — 같은 명령을 다시 돌린다
+
+MySQL의 DDL은 되돌아가지 않으므로, 러너는 **롤백에 기대지 않고 어디까지 갔는지를 DB에 남긴다.**
+문장 하나가 끝날 때마다 `statements_done`을 올리고, 프로세스가 죽으면 행이 `running`으로
+남아 그 자체가 기록이 된다(상태표에는 `partial`로 보인다).
+
+| 증상 | 상태값 | 재개 방법 |
+|---|---|---|
+| 브라우저를 닫았다 / 타임아웃 | `partial` (`3/7 문장까지 적용됐다`) | **같은 `apply`를 다시 돌린다.** 가드가 이미 적용된 문장을 건너뛴다 |
+| SQL 오류로 멈췄다 | `failed` (문장 위치 + 사유) | 사유를 고친 뒤 `apply`를 다시 돌린다 |
+| 적용 뒤 파일을 손으로 고쳤다 | `checksum-mismatch` | **파일을 원래대로 되돌린다.** 파일 원문의 SHA-256이 기록과 어긋나면 진행하지 않는다 |
+| 코드가 기록보다 낡았다 | `orphan` | 올린 버전 폴더가 맞는지 확인한다. DB에 있는 리비전의 파일이 패키지에 없는 상태다 |
+
+**`failed`에는 사유가 남는다.** 웹 화면의 상태표 「비고」 열과 CLI 출력에 그대로 보인다.
+가장 흔한 원인은 DB 사용자에게 `ALTER`·`INDEX` 권한이 없는 것이다 —
+공용 호스팅에서 DB를 제어판으로 만들면 보통 다 붙어 있지만, 없으면 호스팅사에 요청해야 한다.
+
+> **`checksum` 검증은 `failed`·`running` 상태에서는 생략된다.**
+> 부분 적용된 파일을 손으로 고치는 그 순간에만 이 방어가 꺼진다는 뜻이다.
+> **`partial`·`failed` 상태에서 마이그레이션 파일을 편집하지 마라.**
+
+##### ⑥ `verify` — 두 설치 경로가 같은 곳에 도달했는지 대조한다
+
+신규 설치는 `schema.sql`을 지나고 기존 설치본은 `migrations/`를 지난다.
+**두 경로가 모두 이 대조를 통과해야 같은 스키마에 도달한 것이다.**
+
+웹 화면은 열 때마다 자동으로 대조해 「두 경로 대조 (verify)」 카드에 보여 준다. 셸이라면:
+
+```bash
+php server/migrate.php verify
+```
+
+기대 출력:
+
+```
+OK — 살아 있는 DB 가 schema.sql 과 같은 형태다.
+```
+
+**이 대조가 무엇을 보는지 정확히 알아야 한다. 「동일합니다」는 「모든 것이 같다」가 아니다.**
+
+| 비교하는 것 (이것이 전부다) | 비교하지 **않는** 것 (「동일합니다」가 나와도 다를 수 있다) |
+|---|---|
+| 테이블 집합 (양방향 — 없는 것 · 남는 것) | **인덱스의 `UNIQUE` 여부** ← 가장 중요하다 |
+| 컬럼 집합 (양방향) | **컬럼 기본값(`DEFAULT`)** |
+| 컬럼의 기본 타입 (`bigint` · `varchar` …) | **부호 여부(`UNSIGNED`)** |
+| `VARCHAR`·`CHAR`의 길이 | **컬럼 순서(`ORDINAL_POSITION`)** |
+| 컬럼의 `NULL` 허용 여부 | **인덱스 접두길이**(`` `col`(20) `` 의 `20`) |
+| 인덱스 이름 (양방향) | 컬럼 `COMMENT` |
+| 인덱스의 구성 컬럼과 그 순서 | `ENGINE` · `ROW_FORMAT` · `COLLATION` |
+| | `AUTO_INCREMENT` 등 `EXTRA` · 정수 표시폭 · 데이터(행) |
+
+**왜 이렇게 좁은가.** 러너는 `schema.sql`을 파싱할 때 **인용 문자열을 먼저 통째로 지운다**
+(`COMMENT '…'`와 `DEFAULT '…'`가 함께 사라진다). 인덱스를 읽는 정규식이 `UNIQUE KEY`와
+평범한 `KEY`를 **같은 자리에 담고**, 접두길이 `(20)`을 떼어 이름만 남긴다.
+살아 있는 DB 쪽은 `DATA_TYPE`·문자열 길이·`IS_NULLABLE` **셋만** 읽는다.
+그래서 위 오른쪽 열은 **고장이 아니라 설계된 맹점**이다(2026-09-01 코드 확인 + 실증).
+
+> **오른쪽 열의 첫 줄이 가장 나쁘다.** QA가 격리 DB에서 실증했다 —
+> `uq_auth_codes_hash`를 **`UNIQUE`에서 평범한 `KEY`로 바꿔도** `verify`는 「동일합니다」를 낸다.
+> `users.points`의 `DEFAULT 0`을 `999`로 바꿔도, `users.id`에서 `UNSIGNED`를 떼도 통과한다.
+> (대조군: `users.username`의 `VARCHAR(50)`을 `VARCHAR(40)`으로 바꾸면 **잡는다** — 러너는 정상 동작한다.)
+>
+> **`UNIQUE`는 성능이 아니라 데이터 정합성 제약이다.** 사라지면 오류 없이 중복이 쌓인다.
+> `uq_auth_codes_hash`는 SSO code의 재사용·경쟁 삽입을 DB 층에서 막는 마지막 장치이고,
+> `uq_secret_access_bucket`이 `UNIQUE`가 아니면 시크릿 전달 로그의 시간 버킷이 **요청당 1행 INSERT로
+> 조용히 되돌아간다.** `uq_users_username` · `uq_users_email`도 같은 자리다.
+
+**그래서 `verify`와 별개로 한 번은 직접 세어야 한다.** DB 콘솔(phpMyAdmin의 SQL 탭 등)에서:
+
+```sql
+SELECT TABLE_NAME, INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS cols
+FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME LIKE 'app_ulogin_%'
+  AND NON_UNIQUE = 0
+  AND INDEX_NAME <> 'PRIMARY'
+GROUP BY TABLE_NAME, INDEX_NAME
+ORDER BY TABLE_NAME, INDEX_NAME;
+```
+
+**17행이 나와야 한다.** `server/schema.sql`의 `UNIQUE KEY` 정의가 17개다(2026-09-01 실측 —
+`grep -c "UNIQUE KEY" server/schema.sql`로 다시 셀 수 있다. `PRIMARY KEY`는 이 계수에 없다).
+행이 적으면 그 인덱스가 어딘가에서 평범한 `KEY`로 만들어진 것이고, **`verify`는 그것을 잡아 주지 않는다.**
+같은 방식으로 테이블 수도 확인할 수 있다 — `TABLE_NAME LIKE 'app_ulogin_%'`인 `information_schema.TABLES`가
+**17행**이어야 한다([2-3절](#2-3-3단계--스키마-적용)).
+
+이 목록을 넓히는 것(특히 `UNIQUE` 여부를 `verify`에 넣는 것)은 **v1.5.0 과제**다.
+그때까지는 위 SQL이 그 자리를 메운다.
+
+> **컬럼 주석은 두 경로에서 갈릴 수 있다.** v1.4.0이 `login_logs.result`의 주석을
+> 넓혔지만 기존 설치본에는 반영되지 않는다. 동작에는 영향이 없다.
+> **DB 주석을 열거값의 정본으로 삼지 마라** — 정본은 `AI_INTEGRATION_GUIDE.md`와 API 계약서다.
+>
+> **컬럼 순서도 실제로 갈렸다.** `service_secrets.allow_public`은 신규 설치에서 10번째,
+> 마이그레이션 `0002`를 지난 기존 설치본에서는 **맨 끝**이다(`ADD COLUMN`에 `AFTER` 절이 없다).
+> 코드가 컬럼을 **이름으로만** 읽으므로 동작 영향은 없다. `mysqldump`로 두 설치본을
+> 비교하는 운영자에게만 보이며, 이것도 `verify`가 잡지 않는 항목이다.
+
+##### ⑦ `migrate.php`는 배포 후에도 지우지 않는다 — 그래서 접근 통제가 유일한 방어다
+
+**`install.php`와 다르다** (리더 판정 D-156의 8). 설치기는 한 번 쓰고 지우지만,
+러너는 **다음 버전에서 또 필요하다.** v1.5.0부터 v2.3.0까지 아홉 버전이 예정돼 있고
+그중 여럿이 스키마를 바꾼다. 지웠다가 다시 올리는 운용은 "그때 다시 올려야 한다"를
+기억하는 데 의존하고, 그 기억은 실패한다.
+
+**대신 그 파일은 다음을 갖는다.**
+
+- 미인증 `GET`은 로그인 폼 외에 아무것도 내보내지 않는다
+- 시도 제한 5회/900초 · 계정 락아웃 존중 · 실패의 `login_logs` 기록
+- `FORCE_HTTPS`가 켜져 있으면 **평문 HTTP 요청을 403으로 거부한다**(리다이렉트가 아니다)
+
+**그래도 접근 통제가 이 화면의 유일한 방어라는 사실은 변하지 않는다.**
+비밀번호를 아는 사람이 없어야 한다는 것이 전제이고, 그 전제는 코드가 지켜 주지 않는다.
+권장 운용은 셋이다.
+
+| 무엇을 | 어떻게 |
+|---|---|
+| **`superadmin` 비밀번호를 길게** | 이 화면은 그 계정 하나만 받는다. 그 비밀번호가 유일한 문턱이다 |
+| **평소에 닫아 둔다** | 웹서버 설정으로 IP를 제한하거나 접근을 막고, 갱신할 때만 연다 — [7-9절](#7-9-htaccess가-무시되는-환경-nginx--allowoverride-none)의 nginx 스니펫에 주석 처리된 블록을 두었다. `.htaccess`를 쓸 수 있다면 `server/.htaccess`에 `<Files "migrate.php">` 블록으로 같은 것을 한다 |
+| **로그를 본다** | 관리자 콘솔 `로그` 탭 → 로그인 로그 → **`결과` 드롭다운에서 「실패 · 스키마 갱신 화면 인증」** 을 고른다(DB에 저장되는 값은 `fail_migrate_auth`다). 여기 행이 쌓이면 누군가 이 화면을 두드리고 있다는 뜻이다 |
+
+##### ⑧ HTTPS와 프록시 — 이 화면만 리다이렉트하지 않고 거부한다
+
+`FORCE_HTTPS`가 켜진 서버에서 **평문 HTTP로 이 화면을 열면 403**이다.
+같은 설정에서 `/api/*`는 301로 리다이렉트하고 `install.php`는 설치 잠금으로 403인데,
+**이 화면만 「리다이렉트하지 않고 거부」한다.** 이유는 두 가지다.
+
+1. 301로 `POST`를 되던지면 **브라우저가 비밀번호를 다시 보내면서**, 평문 전송이
+   이미 한 번 일어난 사실을 가린다. 자격증명은 재전송이 아니라 **폐기**가 맞다
+2. 리다이렉트 목적지를 만들려면 호스트가 필요한데, `HTTP_HOST`는 클라이언트가 정하는
+   값이라 그대로 쓰면 호스트 헤더 주입이 된다
+
+**올바른 주소는 `Location` 헤더가 아니라 응답 본문에 글자로만 적힌다.**
+`https://`로 다시 열어라. **평문으로 비밀번호를 이미 보냈다면 그 비밀번호는 노출된 것으로 보고 바꿔라.**
+
+**프록시·CDN 뒤에서도 이 화면은 열린다 — 단 [3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다)의 두 상수를 짝으로 채웠을 때만이다.**
+
+이 화면은 `X-Forwarded-Proto`를 `/api/*`와 **같은 판정 함수로** 본다.
+판정이 `server/core/transport.php` 한 곳에 있고 `migrate.php`가 그 파일만 `require`한다 —
+조건식을 복제하지 않으면서 두 경로의 판정을 일치시킨 결과다(D-51·D-67).
+**`TRUST_PROXY`/`TRUSTED_PROXIES` 설정에 따른 동작은 아래 네 가지뿐이고, 전부 실측했다.**
+
+| `config.php` 상태 | `X-Forwarded-Proto: https`를 받은 이 화면 | 같은 설정의 `/api/*` |
+|---|---|---|
+| `TRUST_PROXY=true` + `TRUSTED_PROXIES`에 **프록시의 실제 IP** | **열린다** (200) | 200 |
+| `TRUST_PROXY=false` (프록시 뒤인데 안 켰다 / 위조된 헤더) | **403** | 리다이렉트(301) |
+| `TRUST_PROXY=true` + `TRUSTED_PROXIES`에 **다른 IP** (헤더가 신뢰하지 않는 홉에서 왔다) | **403** | 리다이렉트(301) |
+| `TRUST_PROXY=true` + `TRUSTED_PROXIES=[]` (**설정 모순**) | **500** (fail-closed. 사유는 서버 로그) | 500 |
+
+**헤더 없이 평문으로 직접 접근하면 네 경우 모두 403이다**(설정 모순 배포는 500).
+즉 **위조 헤더로 이 화면을 여는 우회는 없다** — 신뢰하는 홉에서 온 헤더만 본다.
+
+> **`TRUST_PROXY=false`인 채 프록시 뒤에 두면 이 화면은 403에서 벗어나지 못한다.**
+> 그것이 정상 동작이다(서버가 보는 것은 평문 HTTP다). 고치는 자리는 이 화면이 아니라
+> `config.php`의 두 줄이다 — [3-3절](#3-3-프록시cdn-뒤라면--trust_proxy--trusted_proxies-짝이다).
+> **갱신 시간 동안만 `FORCE_HTTPS`를 내리는 방법을 쓰지 마라.** 되돌리는 것을 잊으면 그 자체가 결함이고,
+> 두 상수를 올바로 채우면 필요하지 않다. 셸이 있으면 CLI(`php server/migrate.php apply`)는 언제나 쓸 수 있다 —
+> CLI는 전송 판정을 아예 거치지 않는다.
+>
+> **v1.4.0의 초기 구현은 이 화면에서 `X-Forwarded-Proto`를 보지 않았고**, 그래서 정상 프록시
+> 배포에서도 403이 됐다. 같은 라운드의 보안 재검증이 그것을 결함으로 판정해 판정 함수를
+> `core/transport.php`로 추출했다. **「프록시 뒤에서는 CLI로 돌려라」는 옛 서술이다** — 지금은 필요하지 않다.
+
+##### ⑨ 마이그레이션 후 확인 2가지
+
+```bash
+# 1) 러너 자신의 대조
+php server/migrate.php verify        # 기대: OK — 살아 있는 DB 가 schema.sql 과 같은 형태다
+
+# 2) 헬스체크 (셸이 없으면 이것만으로도 된다)
+curl -sS '{설치루트}/server/api/health.php' -H 'Authorization: Bearer <<관리자ACCESS_TOKEN>>'
+# 기대: data.checks 의 schema 항목이 ok:true, data.schema.pending 이 []
+```
+
+`data.schema.pending`이 비어 있지 않으면 아직 적용되지 않은 것이 있다.
+그 원소는 `"0002 (pending)"` 같은 **사람이 읽는 문자열**이다 — 파싱하지 마라.
 
 ### 8-3. 3단계 — 업로드가 실제로 됐는지 확인 (`version.txt`)
 
@@ -2489,11 +3192,19 @@ HTML이 캐시되고 있다는 확정 증거이고, 조치는
 | 1 | `version.txt`가 새 값 | `curl -sS {설치루트}/public/version.txt` |
 | 2 | 자산 요청 URL에 새 `?v=` | F12 → Network → `login.html` 새로고침 |
 | 3 | API 응답에 `Pragma: no-cache` | 8-5절의 `curl` 한 줄 |
-| 4 | `server/config.php`가 그대로 있다 | FTP로 존재 확인. 브라우저로 열어 **내용이 보이지 않는지**도 함께([3절](#3-설치-후-보안-확인-4항목)) |
-| 5 | `server/.install.lock` · `server/storage/.installed`가 그대로 있다 | FTP로 존재 확인 |
-| 6 | `server/install.php`가 **없다** | 브라우저로 `{설치루트}/server/install.php` → `404` |
-| 7 | 임시 진단 파일을 삭제했다 | `{설치루트}/server/opcheck_*.php` → `404` |
-| 8 | 로그인 1회가 정상 | 로그인 → `payload` 수신 → 로그아웃까지 한 번 종주 |
+| 4 | **미적용 마이그레이션이 0건이다** | `php server/migrate.php status` → 「미적용·미완료 0건」. 셸이 없으면 `migrate.php`를 웹으로 열어 상태표를 본다 |
+| 5 | **`verify`가 통과한다** | `php server/migrate.php verify` → `OK — 살아 있는 DB 가 schema.sql 과 같은 형태다`. 웹은 「두 경로 대조」 카드가 「동일합니다」 |
+| 6 | **헬스체크 `checks` 9개가 전부 `ok:true`** | `curl -sS {설치루트}/server/api/health.php -H 'Authorization: Bearer <<관리자ACCESS_TOKEN>>'` → [3-5절](#3-5-헬스체크로-설치-상태를-한-번에-확인한다-v140-신설) |
+| 7 | `server/config.php`가 그대로 있다 | FTP로 존재 확인. 브라우저로 열어 **내용이 보이지 않는지**도 함께([3절](#3-설치-후-보안-확인-4항목)) |
+| 8 | `server/.install.lock` · `server/storage/.installed`가 그대로 있다 | FTP로 존재 확인 |
+| 9 | `server/install.php`가 **없다** | 브라우저로 `{설치루트}/server/install.php` → `404` |
+| 10 | **`server/migrations/`가 웹에서 열리지 않는다** | 브라우저로 `{설치루트}/server/migrations/` 와 `{설치루트}/server/migrations/0001_v140_foundation.sql` → 둘 다 `403`/`404` |
+| 11 | 임시 진단 파일을 삭제했다 | `{설치루트}/server/opcheck_*.php` → `404` |
+| 12 | 로그인 1회가 정상 | 로그인 → `payload` 수신 → 로그아웃까지 한 번 종주 |
+
+> **4·5·6·10번은 v1.4.0에서 추가된 항목이다.** 4·5를 건너뛰면 스키마가 낡은 채로
+> 운영에 들어가고, 그 증상은 [7-21절](#7-21-설치는-정상이었는데-모든-api가-500이다)의
+> `Base table or view not found` 행으로 나타난다.
 
 ---
 
@@ -2504,15 +3215,20 @@ HTML이 캐시되고 있다는 확정 증거이고, 조치는
 | `server/config.php` | **예** (설치기 생성) | `0600` | **차단** |
 | `server/config.sample.php` | 예 (템플릿) | — | **차단** |
 | `server/install.php` | **아니오 — 삭제** | — | (없음) |
+| `server/migrate.php` | **예 — 지우지 않는다** (v1.4.0 신규) | — | **접근 통제 권장.** 삭제하지 않는 파일이므로 평소에 닫아 두는 것이 이 화면의 유일한 방어다([8-2절](#8-2-2단계--업로드와-스키마-마이그레이션) ⑦) |
 | `server/.install.lock` | 예 | `0600` | **차단** |
 | `server/schema.sql` | 예 | — | **차단** |
+| `server/migrations/*.sql` | 예 (2개, v1.4.0 신규) | — | **차단** — DDL 텍스트다. 노출되면 `schema.sql` 노출과 같다 |
+| `server/migrations/lib.php` | 예 (v1.4.0 신규) | — | **차단** — `.htaccess`에만 의존한다. 직접 실행 가드가 없다 |
+| `server/migrations/.htaccess` | 예 (v1.4.0 신규) | — | **차단** (자기 자신). 점(`.`)으로 시작해 FTP에서 숨겨지기 쉽다 |
 | `server/.htaccess` | 예 | — | **차단** |
-| `server/core/*.php` | 예 (13개) | — | **차단** (코드 가드 + `.htaccess`) |
+| `server/core/*.php` | 예 (**14개** — v1.4.0에서 `core/transport.php`가 늘었다) | — | **차단** (코드 가드 + `.htaccess`) |
 | `server/core/.htaccess` | 예 | — | **차단** |
 | `server/storage/` | 예 | `0700` | **차단** |
 | `server/storage/.installed` | 예 | `0600` | **차단** |
+| `server/storage/.migrate_throttle` | **경우에 따라** — `migrate.php` 인증에 실패한 적이 있으면 남는다. 성공하면 러너가 지운다 | `0600` | **차단** |
 | `server/storage/mail/` | 예 | `0700` | **차단** |
-| `server/api/**/*.php` | 예 (32개) | — | **공개** (정상 경로) |
+| `server/api/**/*.php` | 예 (**33개** — v1.4.0에서 `api/health.php`가 늘었다) | — | **공개** (정상 경로) |
 | `public/*.html` | 예 (8개) | — | **공개** |
 | `public/assets/*` | 예 (4개) | — | **공개** |
 | `public/version.txt` | 예 | — | **공개** (버전 문자열 한 줄. [8-3절](#8-3-3단계--업로드가-실제로-됐는지-확인-versiontxt)의 배포 반영 확인 수단) |
@@ -2530,7 +3246,9 @@ HTML이 캐시되고 있다는 확정 증거이고, 조치는
 | `README.md` | 아키텍처 개요 · API 요약 · 권한 모델 · 운영 · **알려진 제한** · 미검증 항목 |
 | `AI_INTEGRATION_GUIDE.md` | 다른 AI 에이전트가 이 서버에 연동할 때 읽는 자립형 단일 문서 |
 | `examples/README.md` | 로컬 앱 연동 3분 가이드 |
-| `CHANGELOG.md` | 버전 변경 이력 |
+| `tools/README.md` | 릴리스 도구 2개(`bump_asset_version.php` · `php72_scan.php`). **서버에 올리지 않는다** |
+| `CHANGELOG.md` | 버전 변경 이력. **v1.4.0이 무엇을 바꿨는지는 그 문서의 `## v1.4.0` 절이 정본이다** |
+| `docs/PORTFOLIO.md` | 이 프로젝트를 만든 방법 — 라운드 구조 · 검증 방법론 · 실측 수치 |
 
 ---
 
@@ -2538,6 +3256,25 @@ HTML이 캐시되고 있다는 확정 증거이고, 조치는
 
 | 날짜 | 변경 내용 | 사유 |
 |---|---|---|
+| 2026-09-01 (검증 후속) | **2-3절의 테이블 수를 15 → 17로 정정.** 나열 목록에 `schema_migrations` · `secret_access_logs` 2행 추가, 판정 문장을 「**17줄**이 전부 성공」으로 바꾸고 **「15줄 이상이니 됐다」로 넘기지 마라**를 명시. 다시 세는 `grep` 1줄 추가 | **보안 재검증 E-7 (Medium).** 이 문장은 운영자가 설치 화면을 보면서 대조하는 **판정 기준**이다. 실제는 17개이므로 「15줄이 전부 성공이면 정상」은 틀린 규칙이고, **16줄(1건 실패)에서도 통과로 읽힐 수 있었다.** 빠지는 두 표는 마이그레이션 기반과 시크릿 감사 기록이다 |
+| 2026-09-01 (검증 후속) | **8-2절 ⑧의 프록시 서술을 전면 교체.** 「이 화면은 `X-Forwarded-Proto`를 보지 않는다 / 프록시 뒤에선 403이다 / CLI로 돌려라」를 **설정 4조합 × 이 화면 · `/api/*` 대조 표**로 바꿨다. 절 제목도 「예외적으로 403이 난다」 → 「리다이렉트하지 않고 거부한다」 | **QA Q14-10.** 라운드 후반에 `server/core/transport.php`가 신설되어 이 화면이 `/api/*`와 **같은 판정 함수**를 쓰게 됐다 — 옛 서술이 남으면 프록시 뒤 운영자가 **셸이 없는 배포에서 CLI를 찾아 헤매고**, 문서가 「권하지 않는다」면서 적어 둔 **`FORCE_HTTPS` 내리기**를 시도한다 |
+| 2026-09-01 (검증 후속) | **8-2절 ⑦의 「`fail_migrate_auth`를 필터한다」를 실제 UI 문구로 교체** — `결과` 드롭다운의 **「실패 · 스키마 갱신 화면 인증」**. ②의 방어 표에도 라벨을 병기 | **QA Q14-6.** 검증 시점에는 그 옵션이 화면에 없어 운영자가 드롭다운에서 찾지 못했다. **같은 라운드의 프론트 수정이 옵션과 라벨을 넣었고**, 문서 담당이 `public/admin.html` · `public/mypage.html`을 직접 읽어 **`result` 11값이 두 화면의 `<select>`와 라벨맵에 모두 있는 것을 확인**했다. 그래서 「필터한다」는 서술을 유지하고, **DB 값이 아니라 화면에 보이는 문구**를 적는 쪽으로만 고쳤다 |
+| 2026-09-01 (검증 후속) | **8-2절 ②의 「`storage/`에 쓸 수 없으면 1초 지연으로 떨어지고 무제한 시도를 막지 못한다」를 「503으로 거부한다」로 정정** (올바른 비밀번호도 막힌다 = 오라클이 아니다) | **보안 재검증 V14b-M-2.** 그 fail-open이 방금 닫은 High(`V14-H-2`)를 조건부로 만들었다. 코드가 fail-closed로 바뀌었고 문서가 옛 동작을 설명하고 있었다 |
+| 2026-09-01 (검증 후속) | **8-2절 ⑥의 `verify` 비교표를 「비교하지 않는 것 3개」에서 실제 맹점으로 확장.** 인덱스 `UNIQUE` 여부 · 컬럼 기본값 · `UNSIGNED` · 컬럼 순서 · 인덱스 접두길이를 추가하고, **왜 좁은가**(인용 문자열 선삭제 · `UNIQUE KEY`와 `KEY`를 같은 자리에 담는 정규식 · 살아 있는 쪽은 3필드만 읽음)를 적었다. **`UNIQUE` 17개를 직접 세는 SQL**과 테이블 17개 확인법을 함께 넣었다 | **리더 판정 D-175 / QA Q14-9.** 「비교하지 않는 것이 3개」라고 읽은 사람은 **나머지 5개를 비교된다고 믿는다.** 그중 `UNIQUE` 상실은 데이터 정합성 제약이 사라지는 것이고 **오류 없이 중복이 쌓인다** — QA가 `uq_auth_codes_hash`를 평범한 `KEY`로 바꿔 「동일합니다」가 나오는 것을 실증했다 |
+| 2026-09-01 (검증 후속) | **7-14절 ④에 「`비활성`은 시크릿 차단 스위치이고 토큰 회수 도구가 아니다」 블록 신설** — 할 수 있는 것/없는 것 5행 표 + 사고 대응 순서(**① 비활성 → ② 대상 회원 세션 회수 → ③ 시크릿 교체**) | **보안 재검증 C절 — 배포 승인의 조건**(D-162). **껐다 켜면 그 사이의 탈취 토큰도 함께 되살아난다**(실측). 그 사실이 `CHANGELOG.md`에만 있었고, **사고 대응 중에 운영자가 여는 문서는 이 절이다.** 없으면 D-152가 만든 도구가 있지도 않은 보증으로 읽힌다 |
+| 2026-09-01 (검증 후속) | **4-8절 신설 — 「로그 테이블은 자동으로 줄지 않는다」.** 자동 정리되는 5표 / 누적되는 4표, `secret_access_logs`의 잔여 상한(계정당 하루 **1,440행**, IP당 `min(172,800, 1,440 × 계정 수)`), 용량 측정 SQL, 기간을 명시한 수동 삭제, **감사 스위치가 최고관리자 전용**이라는 사실 | 이 라운드가 갱신 경로의 **상한 없음**을 닫았지만 **요청과 1:1인 비율과 보존 정책은 남는다**(각각 v1.5.0 · v1.9.0). 운영자가 저장소 계획을 세울 수 있어야 하고, **끄는 것보다 기간 삭제가 낫다**는 판단 근거도 함께 있어야 한다 |
+| 2026-09-01 (검증 후속) | **7-16절에 「토큰 갱신이 `RATE_LIMITED`라면」 소절 신설** — `refresh:ip` 120/60 · `refresh:user` 60/3600, **429가 토큰을 죽이지 않는다**, `refresh:%` 버킷 삭제 SQL(계정 단위 삭제 포함) | 이 라운드가 만든 새 429다. `session_ttl`을 아주 짧게 두거나 한 계정을 여러 기기가 공유하는 배포는 이 값을 알아야 한다 |
+| 2026-09-01 (검증 후속) | **같은 절에 「정상 사용자가 `refresh:user`에 걸리는 조건」과 「값을 바꾸려면」 2소절 추가** — 조건식 `기기 수 × (3600 ÷ 실효 session_ttl) > 60`, 실효 `session_ttl`의 우선순위(**서비스 값 > 전역 설정 > `SESSION_TTL`**, 둘 다 60~604800초), `session_ttl` 5단계별 **최대 기기 수 표**, 미리 갱신하는 앱은 두 배로 센다는 경고, **창이 고정 구간(UTC 정시 리셋)이라는 사실**, 그리고 **두 한도가 설정 키가 아니라 코드에 있다**(`api/auth/refresh.php` · `core/auth.php`의 `rotate_refresh()`)는 것 | **리더 추가 지시 + 계약 담당 의견.** 값 자체는 동의하되 **배포 문서가 조건식을 알려야 한다** — 운영자가 자기 배포의 `session_ttl`과 기기 수로 계산할 수 있어야 하고, 콘솔에서 못 바꾸는 값이라면 **어느 파일의 어느 함수인지**까지 있어야 한다. 코드를 읽어 확인했다(`rate_limit($bucket, $max, $windowSec)`은 `count > max`에서 429이므로 표의 경계값은 「그 수까지 통과」다) |
+| 2026-09-01 (검증 후속) | **코드가 움직여 낡은 수치 4곳 정정** — 2-8절 전역 설정 `11개 → 12개`와 「설치기 11 / 콘솔 12」 → **12 / 13**, `config.php` 상수 `51개 → 54개`(`config.sample.php`와 같은 집합임을 대조 확인), 7-9절 `core/*.php` **13 → 14**(정의 1 + 검사 13)와 `transport.php`의 **두 문맥 가드** 설명, 부록 점검표의 같은 값, 7-4절 SQL 주석의 `15개 → 17개` | 전부 이 라운드의 코드 변경으로 낡은 값이다. **문서가 스스로 「다시 세는 명령」을 제시하는 자리이므로 값이 틀리면 그 명령의 기대값도 틀린다** |
+| 2026-09-01 | **문서 제목을 `v1.4.0_20260901`로.** 목차에 「파일만 올려서는 안 된다」 경고 신설 | 버전 폴더 변경 + 이 라운드가 DB를 바꾼다 |
+| 2026-09-01 | **8절 서두를 고쳤다** — 종전 「**DB는 건드리지 않는다**」가 v1.4.0에서 거짓이 된다. 신규 설치와 기존 설치본의 스키마 경로를 가르는 표 신설. v1.3.0 이하가 예고한 `migrate_{from}_to_{to}.sql` 방식이 **채택되지 않았다**는 사실 명기 | **리더 판정 D-151.** 그 문장을 그대로 두면 운영자가 마이그레이션을 건너뛴다 — D-151이 막으려던 사고가 문서 때문에 그대로 난다 |
+| 2026-09-01 | **8-2절을 「업로드」에서 「업로드와 스키마 마이그레이션」으로 확장** (하위절 ①~⑨ 신설: 백업 우선 · 두 입구와 인증 · `status` 7상태 · `apply` · 부분 적용 재개 · `verify` · **삭제하지 않는 이유와 접근 통제** · `FORCE_HTTPS` 403과 프록시 한계 · 사후 확인 2가지) | **리더 판정 D-151 · D-156의 8 · V14-H-3.** 종전 8-2절은 파일 업로드만 다뤘다. **업로드 후 `migrate.php`를 돌려야 한다**가 빠지면 새 코드가 없는 테이블을 읽어 500이 난다 |
+| 2026-09-01 | **3-5절 헬스체크 신설** — 익명 프로브 / `admin` 상세 2단계, `checks` 9항목 표, 「상세는 항상 200」, `counts`가 `null`인 이유, 담기지 않는 것 | **리더 판정 D-154(3).** 그전까지 진단의 유일한 수단이 운영 `config.php`에서 `DEBUG=true`를 켜는 것이었고 **이 문서가 스스로 그것을 위험하다고 경고**하고 있었다 |
+| 2026-09-01 | **7-14절에 원인 ④ 신설** — 「서비스 자체가 `disabled`」. 새 로그인으로 갈리는 판정 표 포함 | **리더 판정 D-152.** v1.3.0까지 이 상태에서 시크릿이 그대로 나갔다. v1.4.0이 닫았으므로 **`payload={}`의 원인이 하나 늘었다** |
+| 2026-09-01 | **7-21절에 `Base table or view not found` 행 신설** + 「`DEBUG`를 켜기 전에 헬스체크를 먼저」 안내 | 마이그레이션 미실행이 만드는 500은 **비대칭으로** 나타난다(로그인은 되는데 일부 화면만 깨진다) — 로그 문장으로 구분할 수 있어야 한다 |
+| 2026-09-01 | **7-9절 스니펫에 `migrations/` 추가**(nginx `(core\|storage\|migrations)` · Apache `<Directory>`), `migrate.php` IP 제한 블록을 주석으로 제시, `lib.php`에 직접 실행 가드가 없다는 사실 명기 | **v1.4.0 알려진 제한.** `.htaccess`가 무시되는 환경의 노출 대상이 하나 늘었다 |
+| 2026-09-01 | **1-2절·7-1절의 `api.js` 줄 번호 참조 3곳을 심볼 참조로 바꿨다** (`40행`·`48행` → `var ULOGIN_API_BASE =`·`var API_EXT =` 선언) | **D-92.** 그 두 값은 지금은 맞지만 파일이 편집되면 조용히 낡는다. 이 프로젝트에서 이미 같은 일이 한 번 있었다(`docs/PORTFOLIO.md` 6-8절) |
+| 2026-09-01 | 1-1절 트리·URL 표에 `migrate.php` · `migrations/` · `api/health.php` 추가(`api/` 32개 → **33개**). 부록 점검표에 5행 추가, `api/**` 32 → **33**. 8-8 체크리스트 8항목 → **12항목**(마이그레이션 2 · 헬스체크 1 · `migrations/` 노출 1) | 신규 파일이 어느 목록에도 없었다 |
 | 2026-08-28 (검증 후속) | **5-4절 복붙 코드 2곳의 `<script src>`에 `?v=1.2.0` 추가** + 지우면 안 되는 이유 주석. 8-1절 `#### 스크립트가 건드리지 않는 것` 표에 **연동 앱(제3자 HTML)** 행 신설 | **보안 감사 V12-M-1.** 그 2곳만 `?v=`가 없었고(다른 4개 문서는 올바른 형태였다), v1.2.0이 새로 건 `immutable`이 그 URL에 걸려 **연동 앱이 최대 1년 옛 클라이언트에 고정되고 서버 쪽 철회 수단이 없다.** 이월 M-7(PKCE 난수 폴백)이 바로 그 파일에 있어 고쳐도 도달하지 않는다 |
 | 2026-08-28 (검증 후속) | **7-9절에 `##### 이 설정이 없을 때 실제로 깨지는 것은 "링크·주소창 재진입"뿐이다` 신설.** 8-4절 진단 표의 `옛 ?v= 값` 행도 두 갈래로 분리 | **리더 판정 D-95.** QA가 `mod_headers` 없는 환경을 별도로 만들어 확인했다 — **그 환경에서도 일반 새로고침으로는 반영된다**(최상위 문서를 항상 재검증하기 때문). 이 구분이 문서에 없어서 사용자가 "새로고침해도 안 된다"와 "링크로 들어가면 안 된다"를 구분해 신고할 수 없었다 |
 | 2026-08-28 (검증 후속) | **7-9절 스니펫을 `examples/`까지 확장** — nginx `location ^~ {설치경로}/examples/` · Apache `<Directory ".../examples">` · 호스팅사 문안 1행 · `curl` 확인 4번째 줄. 규칙 표에 `examples/` 의 `*.html` 행 추가 + **보안 헤더 5종을 넣지 않는 이유** | **리더 판정 D-96(3) / QA Q12-1.** 스니펫이 `public/`만 덮어 `.htaccess`가 무시되는 환경의 `examples/`에는 대책이 0이었다. `examples/callback.html`은 복귀 주소 화이트리스트 **기본값**이라 SSO 실참여자다. 정책은 신설된 `{설치루트}/examples/.htaccess`와 같게 맞췄다 |

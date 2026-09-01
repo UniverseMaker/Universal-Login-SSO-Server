@@ -39,6 +39,8 @@ if (!function_exists('admin_log_write')) {
  * 앞의 11개는 계약 §8-22 의 목록이며 **순서까지 그대로**다.
  * 리더 판정 D-40 으로 `auth_code_ttl` 을 12번째로 **맨 뒤에 추가**했다 — 중간에 끼우면
  * 기존 11개의 `items` 인덱스가 밀려 관리자 화면의 표 순서가 바뀐다.
+ * v1.4.0 후속으로 `secret_access_log` 를 **13번째로 맨 뒤에** 더했다. 같은 규칙이다.
+ * **새 키는 언제나 맨 뒤다.** 지금 total 은 13 이다.
  */
 $DEFS = [
     'allow_register'       => ['bool',   '신규 가입 허용',              'ALLOW_REGISTER',       null, null],
@@ -59,6 +61,14 @@ $DEFS = [
     // 하한 30초: 로그인 → 리다이렉트 → exchange 왕복이 끝나야 한다. 더 낮추면 느린 회선에서
     // 정상 로그인이 SSO_CODE_EXPIRED 로 실패한다. authorize.php:114 도 0 이하를 무효로 본다.
     'auth_code_ttl'        => ['int',    'SSO code 수명(초)',            'AUTH_CODE_TTL',        30,   600],
+    // v1.4.0 후속: core/logger.php 가 setting_get('secret_access_log') 로 읽는데 여기
+    // 정의가 없어 **DB 에 직접 INSERT 하지 않으면 끌 수 없었다.** D-40 의 auth_code_ttl
+    // 과 같은 형태의 결함이다(코드가 읽는데 정의가 없다). 그래서 같은 처리를 한다 —
+    // **13번째로 맨 뒤에.** 중간에 끼우면 앞 12개의 items 인덱스가 밀려 관리자 화면의
+    // 표 순서가 바뀐다(D-40 후속이 확인한 그 이유 그대로).
+    // 폴백 상수 SECRET_ACCESS_LOG 의 정의와 기본값(true)의 근거는 core/bootstrap.php
+    // 의 가드 블록에 있다. logger.php 도 같은 상수를 폴백으로 읽는다.
+    'secret_access_log'    => ['bool',   '시크릿 전달 감사 기록',        'SECRET_ACCESS_LOG',    null, null],
 ];
 
 /** DB 의 현재 행. settings_all() 은 정적 캐시라 PUT 직후 값이 낡는다 — 직접 읽는다. */
@@ -145,6 +155,32 @@ if (!array_key_exists('settings', $body) || !is_array($body['settings'])) {
 }
 $reason = v_string($body, 'reason', 0, 255, false);
 $input  = $body['settings'];
+
+// -----------------------------------------------------------------
+// 감사 스위치만 superadmin — 보안 재검증 V14b-M-4
+//
+// 실측 대조: `admin` 은 `GET secrets.php?action=reveal` 이 **403** 인데
+// `PUT {secret_access_log:false}` 는 **200** 이었다. 시크릿 평문을 볼 자격이 없는
+// 역할이 시크릿 전달 기록을 끌 자격은 있었다는 뜻이다. `admin` 은 시크릿 CRUD
+// (게이트 설정 포함)를 할 수 있으므로 구체적 경로가 성립한다 —
+//   ① secret_access_log=false  ② 게이트를 비우고 allow_public=true
+//   ③ 자기가 만든 하위 등급 계정으로 로그인해 payload 로 키를 받는다
+// **③이 남는 표가 바로 ①이 끈 표다.**
+//
+// reveal 을 superadmin 으로 묶은 것이 D-7 이므로, 그 기록을 끄는 것도 같은 등급이어야
+// 한다. 나머지 12개 키는 종전 그대로 `admin` 이다 — 이 키 하나만 다르다.
+//
+// 값 검증·부분 업데이트 루프보다 **앞에** 둔다. 루프 안에서 던지면 앞선 키가
+// 이미 반영된 채로 403 이 나가 부분 적용이 된다.
+//
+// 응답은 기존 FORBIDDEN(403)이다 — 새 에러 코드를 만들지 않는다.
+// -----------------------------------------------------------------
+if (array_key_exists('secret_access_log', $input) && !role_gte(ctx_global_role($ctx), 'superadmin')) {
+    throw new AppError('FORBIDDEN', 403, [
+        'field'   => 'secret_access_log',
+        'message' => '시크릿 전달 감사 기록은 최고관리자만 변경할 수 있습니다.',
+    ]);
+}
 
 $rows      = admin_settings_rows($keys);
 $updated   = [];

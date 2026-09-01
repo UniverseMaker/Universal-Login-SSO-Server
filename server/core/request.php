@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 // 직접 실행 차단 — 리더 판정 D-34. bootstrap.php 를 거치지 않은 요청은 존재하지 않는 파일이다.
 if (!defined('ULOGIN_BOOTSTRAPPED')) {
+    // X-Powered-By 제거 — D-154(2). 이 경로는 bootstrap.php 를 거치지 않는다.
+    header_remove('X-Powered-By');
     http_response_code(404);
     exit;
 }
@@ -103,8 +105,11 @@ function client_ip(): string
     $proxies = defined('TRUSTED_PROXIES') && is_array(TRUSTED_PROXIES) ? TRUSTED_PROXIES : [];
 
     // 리더 판정 D-53: 프록시 헤더 신뢰의 주 게이트는 TRUST_PROXY 하나로 통일한다.
-    // bootstrap.php 의 trust_proxy_headers() 와 기준이 달라지면, 한쪽은 X-Forwarded-* 를
-    // 무시하는데 다른 쪽은 신뢰하는 상태가 되어 레이트리밋·락아웃이 IP 위조로 우회된다.
+    // **core/transport.php 의 trust_proxy_headers()** 와 기준이 달라지면, 한쪽은
+    // X-Forwarded-* 를 무시하는데 다른 쪽은 신뢰하는 상태가 되어 레이트리밋·락아웃이
+    // IP 위조로 우회된다. (그 함수는 v1.4.0 후속까지 bootstrap.php 안에 있었고
+    // 보안 재검증 V14b-M-3 로 transport.php 로 옮겨졌다 — 여기 아래 세 줄이
+    // 그 함수와 **같은 조건식**이다. 합치는 것은 별건으로 남겨 두었다.)
     $trustProxy = defined('TRUST_PROXY') && TRUST_PROXY;
 
     if ($trustProxy && $proxies !== [] && in_array($remote, $proxies, true)) {
@@ -302,7 +307,23 @@ function v_enum(array $in, string $key, array $allowed, bool $required = false, 
 }
 
 /**
+ * 페이징 상한. 리더 판정 D-154(1).
+ *
+ * `per_page` 는 100 으로 clamp 하면서 `page` 에는 상한이 없었다. `page=999999` 면
+ * `OFFSET 19999980` 이 되고, MySQL 은 **버릴 2천만 행을 먼저 읽는다**(딥 오프셋).
+ * 인증이 필요한 관리자 목록이라 익명 DoS 는 아니지만, 관리자 콘솔의 페이저가
+ * 번호 버튼을 그려 **정상 조작으로 도달할 수 있는 경로**다.
+ *
+ * 10000 을 고른 근거: per_page 상한 100 과 곱해 `OFFSET 1000000` 이 최대치가 된다.
+ * 로그 100만 건 너머를 페이저로 넘겨 보는 조작은 실재하지 않는다 — 그 범위는
+ * 검색·기간 필터로 좁혀서 본다. per_page 와 같이 **에러가 아니라 clamp** 로 처리한다:
+ * 400 을 내면 페이저가 그린 버튼이 깨지고, 그것은 계약 §1 의 per_page 규약과도 어긋난다.
+ */
+const PAGE_MAX = 10000;
+
+/**
  * 페이징 파라미터. 계약 §1 — per_page 최대 100, 초과 시 clamp.
+ * page 도 PAGE_MAX 로 clamp 한다 (v1.4.0, D-154(1)).
  * @return array{0:int,1:int,2:int} [page, per_page, offset]
  */
 function page_params(array $in, int $defaultPerPage = 20): array
@@ -311,6 +332,9 @@ function page_params(array $in, int $defaultPerPage = 20): array
     $per  = (int) (in_raw($in, 'per_page') ?? $defaultPerPage);
     if ($page < 1) {
         $page = 1;
+    }
+    if ($page > PAGE_MAX) {
+        $page = PAGE_MAX;   // 딥 오프셋 차단. 에러가 아니라 clamp 한다
     }
     if ($per < 1) {
         $per = $defaultPerPage;

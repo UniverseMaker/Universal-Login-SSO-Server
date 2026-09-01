@@ -20,5 +20,8 @@ json_out([
     'user'       => serialize_user($ctx['user'], $ctx['user_service']),
     'session'    => serialize_session($ctx['session'], true),
     'expires_in' => $expiresIn,
-    'payload'    => json_object(build_payload($ctx['session']['service_id'] ?? null, $ctx['grades'])),
+    // build_payload() 가 services.status 를 직접 확인한다 (D-152). 이 파일은 소유자가
+    // 없는 얇은 엔드포인트라, 판정을 여기 두면 다음 수정에서 빠진다.
+    'payload'    => json_object(build_payload($ctx['session']['service_id'] ?? null, $ctx['grades'],
+                        $ctx['user_service'], ['source' => 'session', 'session' => $ctx['session']])),
 ]);

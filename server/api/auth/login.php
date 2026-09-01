@@ -12,7 +12,10 @@ require_once __DIR__ . '/../../core/bootstrap.php';
 only_method('POST');
 
 // 2) 레이트리밋 — 인증보다 먼저. 무차별 대입을 인증 전에 막는다.
-rate_limit('login:ip:' . client_ip(), 10, 300);
+//    D-153: 한도 도달을 login_logs 에 남긴다. **입력 파싱보다 앞에 둔 위치는 그대로다** —
+//    뒤로 옮기면 깨진 본문을 보내 VALIDATION_FAILED 로 빠져나가는 우회가 생긴다.
+//    그래서 이 버킷의 로그에는 username 이 없다(아직 읽지 않았다). ip + 시각은 남는다.
+rate_limit_logged('login:ip:' . client_ip(), 10, 300);
 
 // 3) 입력
 $in       = body_json();
@@ -22,7 +25,7 @@ $remember = (bool) v_bool($in, 'remember', false, false);
 $devLabel = v_string($in, 'device_label', 1, 80);
 $serviceId = v_string($in, 'service_id', 1, 64);
 
-rate_limit('login:user:' . mb_strtolower($loginId, 'UTF-8'), 5, 300);
+rate_limit_logged('login:user:' . mb_strtolower($loginId, 'UTF-8'), 5, 300, null, $loginId, $serviceId);
 
 $service = $serviceId !== null ? service_require($serviceId) : null;
 
@@ -134,5 +137,7 @@ json_out([
     'expires_in'         => $issued['expires_in'],
     'refresh_expires_in' => $issued['refresh_expires_in'],
     // 비어도 {} — service_id 컨텍스트가 없으면 빈 객체다 (계약 §3-5)
-    'payload'            => json_object(build_payload($service['service_id'] ?? null, $grades)),
+    // 4번째 인자는 D-153 시크릿 전달 감사의 문맥이다. 응답 shape 에는 영향이 없다.
+    'payload'            => json_object(build_payload($service['service_id'] ?? null, $grades, $us,
+                                ['source' => 'login', 'session' => $issued['row']])),
 ]);

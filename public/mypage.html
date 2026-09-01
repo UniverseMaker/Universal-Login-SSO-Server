@@ -15,7 +15,7 @@
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
 <meta http-equiv="Cache-Control" content="no-store">
-<link rel="stylesheet" href="assets/style.css?v=1.3.0">
+<link rel="stylesheet" href="assets/style.css?v=1.4.0">
 </head>
 <body>
 <div class="page">
@@ -283,6 +283,12 @@
                   <option value="fail_status">실패 · 계정 상태</option>
                   <option value="fail_ratelimit">실패 · 시도 횟수 초과</option>
                   <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
+                  <option value="fail_client_auth">실패 · 연동 앱 인증</option>
+                  <!-- 옵션 문구는 LOGIN_RESULT 맵과 글자 단위로 같아야 한다.
+                       값 집합은 server/api/me/login_logs.php 의 v_enum 목록이 정본이다. -->
+                  <option value="fail_migrate_auth">실패 · 서버 관리 화면 인증</option>
+                  <option value="fail_refresh_reuse">주의 · 만료된 로그인 정보 재사용</option>
+                  <option value="fail_refresh_revoked">안내 · 로그아웃된 기기의 자동 재접속</option>
                   <option value="logout">로그아웃</option>
                 </select>
                 <span class="field-error"></span>
@@ -372,8 +378,8 @@
   <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
 </div>
 
-<script src="assets/api.js?v=1.3.0"></script>
-<script src="assets/ui.js?v=1.3.0"></script>
+<script src="assets/api.js?v=1.4.0"></script>
+<script src="assets/ui.js?v=1.4.0"></script>
 <script>
 /* ============================================================================
  * mypage.html — 마이페이지 (탭: 정보 / 보안 / 포인트 / 세션 / 로그인 이력 / 서비스 / 탈퇴)
@@ -468,26 +474,84 @@
   var ROLE_RANK = { user: 0, manager: 10, admin: 20, superadmin: 30 };
 
   /**
-   * D-37 — 로그인 이력 result 라벨.
-   * 값 집합은 server/api/me/login_logs.php:22-23 의 v_enum 화이트리스트 6개와 동일하다
-   * (schema 의 login_logs.result 열거값). `ui.js` 의 LABELS 에는 이 맵이 없어 화면 로컬로 둔다 —
+   * D-37 — 로그인 이력 result 라벨. **사용자 어투**로 쓴다(관리자 콘솔과 문구가 다르다).
+   *
+   * 값 집합의 정본은 `server/api/me/login_logs.php` 의 `v_enum` 화이트리스트이고
+   * `server/api/admin/logs.php` 의 `$results` 배열과 항상 같다.
+   * `ui.js` 의 LABELS 에는 이 맵이 없어 화면 로컬로 둔다 —
    * 그대로 badge() 에 넣으면 영문이 노출된다.
+   *
+   * **여기와 아래 `<select id="lg-result">` 는 항상 같이 고쳐라.** 라벨만 넣고 필터 옵션을
+   * 빼면 값이 표에는 보이는데 걸러낼 수 없고, 반대면 원시 문자열이 표에 그대로 나온다.
+   *
+   * **다시 셀 때 `log_login(` 만 grep 하면 틀린다** — 아래 셋을 전부 봐야 한다.
+   * 종전 이 주석이 적어 둔 `grep -rhno "log_login('[a-z_]*'"` 는 1)번만 훑고
+   * 2)·3)을 놓쳐 실제 11값 중 8값만 돌려준다:
+   *   1) `log_login(` 호출의 **1번 인자에 있는 문자열 리터럴 전부** — 두 값이
+   *      삼항 연산자 안에 있어(`server/core/auth.php`) 위 패턴에 걸리지 않는다
+   *   2) `server/migrate.php` 의 `login_logs` **직접 INSERT**(`core/` 를 못 써서
+   *      `log_login()` 을 호출하지 않는다)
+   *   3) 위 서버 화이트리스트 2곳 · `server/schema.sql` 의 `result` COMMENT
    */
   var LOGIN_RESULT = {
     success: '성공',
     fail_credential: '실패 · 비밀번호 불일치',
     fail_locked: '실패 · 계정 잠김',
     fail_status: '실패 · 계정 상태',
+    fail_ratelimit: '실패 · 시도 횟수 초과',
     /* D-46 — D-31(차단 회원 로그인 거부) 전용 값. `fail_status`(계정 자체가 정지/휴면/탈퇴)와
        원인이 다르다. 계정은 정상이고 **그 서비스만** 막힌 경우이므로 문구를 분리한다. */
     fail_service_blocked: '실패 · 서비스 이용 제한',
-    fail_ratelimit: '실패 · 시도 횟수 초과',
+    /* v1.4.0 — 연동 앱이 SSO 코드를 교환할 때 앱 자신의 자격증명(`service_secret`)이
+       틀린 경우다. **회원의 비밀번호가 틀린 것이 아니다.** 내 계정 이력에 이 줄이
+       보이면 내가 쓰는 앱의 설정 문제이지 내 비밀번호 문제가 아니라는 뜻이므로,
+       `fail_credential`(비밀번호 불일치)과 문구를 분명히 갈라 놓는다. */
+    fail_client_auth: '실패 · 연동 앱 인증',
+    /* `server/migrate.php`(DB 갱신 화면)의 최고관리자 인증 실패다. 이 표에 도달하는
+       이유: 그 화면은 계정이 존재하면 `user_id` 를 실어 기록하고, 이 API 는
+       `WHERE user_id = ?` 로만 거른다. 최고관리자 본인 이력에만 나타난다.
+       "로그인"이 아니라 "서버 관리 화면"이었다는 점이 사용자에게 중요한 정보다. */
+    fail_migrate_auth: '실패 · 서버 관리 화면 인증',
+    /* ── 아래 두 값은 이름이 닮았지만 뜻이 정반대다. 사용자에게도 갈라 보여야 한다 ──
+       reuse   = 이미 무효가 된 로그인 정보가 **다시 제시**됐다. 그래서 이 계정의
+                 모든 기기가 로그아웃됐다. 사용자가 알아야 하는 사건이다(주의).
+       revoked = 사용자가 직접 로그아웃 · 비밀번호 변경 · 세션 정리를 한 **뒤에**
+                 그 기기의 앱이 자동으로 재접속을 시도한 것이다. 정상이다(안내).
+       종전에는 네 정상 경로가 전부 reuse 로 기록돼 사용자가 자기 이력에서
+       "토큰 탈취" 로 읽히는 줄을 봤다. 그것이 갈라졌으므로 문구도 갈라 둔다. */
+    fail_refresh_reuse: '주의 · 만료된 로그인 정보 재사용',
+    fail_refresh_revoked: '안내 · 로그아웃된 기기의 자동 재접속',
     logout: '로그아웃'
   };
 
-  /** 성공/실패/로그아웃을 색으로도 구분한다(텍스트 라벨과 병행 — 색만으로 구분하지 않는다). */
+  /**
+   * 이력 표에서 마우스를 올렸을 때 나오는 설명. 라벨만으로 뜻이 갈리지 않는 값에만 붙인다.
+   */
+  var LOGIN_RESULT_TITLE = {
+    fail_refresh_reuse: '이미 무효가 된 로그인 정보가 다시 사용됐습니다. 안전을 위해 이 계정의 모든 기기를 '
+      + '로그아웃했습니다. 내가 한 일이 아니라면 비밀번호를 바꿔 주세요.',
+    fail_refresh_revoked: '로그아웃 · 비밀번호 변경 · 세션 정리 뒤에 그 기기의 앱이 자동으로 재접속을 '
+      + '시도한 기록입니다. 정상이며 조치할 것이 없습니다.',
+    fail_migrate_auth: '서버 관리 화면(DB 갱신)에서 인증에 실패한 기록입니다. 로그인 화면이 아닙니다.'
+  };
+
+  /**
+   * 성공/실패/로그아웃을 색으로도 구분한다(텍스트 라벨과 병행 — 색만으로 구분하지 않는다).
+   *
+   * **`fail` 로 시작하는지로 갈라서는 안 된다** — `fail_refresh_revoked` 는 이름만
+   * `fail` 이고 사용자에게는 정상 안내다. 그것을 `fail_refresh_reuse`(주의)와 같은
+   * 빨강으로 칠하면 정말 봐야 하는 줄이 묻힌다.
+   */
+  var LOGIN_RESULT_CLASS = {
+    success: 'text-success',
+    logout: 'text-muted',
+    fail_refresh_revoked: 'text-muted'
+  };
+
   function loginResultClass(result) {
-    if (result === 'success') { return 'text-success'; }
+    if (Object.prototype.hasOwnProperty.call(LOGIN_RESULT_CLASS, result)) {
+      return LOGIN_RESULT_CLASS[result];
+    }
     if (String(result).indexOf('fail') === 0) { return 'text-danger'; }
     return 'text-muted';
   }
@@ -1091,11 +1155,13 @@
    *       → { items[{id,result,service_id,ip,user_agent,created_at}],
    *           total, page, per_page }
    *
-   *  응답 필드는 server/api/me/login_logs.php:64-81 을 직접 읽어 확인했다.
+   *  응답 필드는 server/api/me/login_logs.php 의 json_out() 블록을 직접 읽어 확인했다.
    *  - 최상위 키 4개: items / total / per_page / page
    *  - items[] 는 정확히 6키. **username_input 은 없다**(같은 파일 9-10행 주석:
    *    본인 로그에서는 의미가 없고 오타로 입력한 타인의 아이디가 노출될 수 있다)
-   *  - `result` 는 6개 열거값(위 LOGIN_RESULT 맵과 1:1)
+   *  - `result` 는 서버 `v_enum` 화이트리스트의 열거값(위 LOGIN_RESULT 맵과 1:1).
+   *    **개수를 이 주석에 적지 않는다** — 값이 늘어날 때 라벨맵보다 주석이 먼저 낡는다.
+   *    정본은 `server/api/me/login_logs.php` 의 그 배열이다
    *  - `from`/`to` 는 서버가 `YYYY-MM-DD` 만 받고 checkdate 까지 본다(:26-36).
    *    `to` 는 그 날짜를 **포함**한다(:51-53)
    *
@@ -1119,9 +1185,12 @@
     var t = tableNode(['시각', '결과', 'IP', 'User-Agent', '서비스']);
 
     items.forEach(function (it) {
-      /* 라벨 + 색 병행. 맵에 없는 값이면 원문을 그대로 보여준다(감추지 않는다). */
-      var resultCell = el('td', { class: ['nowrap', loginResultClass(it.result)] },
-        LOGIN_RESULT[it.result] || dash(it.result));
+      /* 라벨 + 색 병행. 맵에 없는 값이면 원문을 그대로 보여준다(감추지 않는다).
+         뜻이 닮은 값에는 설명을 title 로 붙인다(LOGIN_RESULT_TITLE). */
+      var resultCell = el('td', {
+        class: ['nowrap', loginResultClass(it.result)],
+        title: LOGIN_RESULT_TITLE[it.result] || null
+      }, LOGIN_RESULT[it.result] || dash(it.result));
 
       t.tbody.appendChild(el('tr', null, [
         el('td', { class: 'nowrap' }, fmtDate(it.created_at)),

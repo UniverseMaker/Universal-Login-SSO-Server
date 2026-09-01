@@ -66,6 +66,36 @@ DirectoryIndex index.html
   Header always set Permissions-Policy "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), usb=()"
 
   # ---------------------------------------------------------------------
+  # X-Powered-By 제거 (v1.4.0 / 리더 판정 D-156(4))
+  #
+  # ▣ 왜 서버 쪽 header_remove() 로 끝나지 않는가
+  #   server/ 의 PHP 는 부트스트랩에서 header_remove('X-Powered-By') 를 부르지만,
+  #   이 디렉토리의 **정적 파일**(*.html · assets/*.css · assets/*.js · version.txt)은
+  #   PHP 인터프리터를 아예 거치지 않는다. 그 응답에 헤더를 붙이는 주체는
+  #   웹서버이거나 호스팅 사업자의 전역 설정이고, PHP 코드는 그 자리에 없다.
+  #   즉 "PHP 에서 지웠다"는 사실은 이 디렉토리에 대해서는 아무것도 증명하지 않는다.
+  #
+  # ▣ 두 줄인 이유 (하나만 쓰면 절반이 남는다)
+  #   `Header unset` 은 정상 응답(headers_out)에서,
+  #   `Header always unset` 은 오류 응답(err_headers_out)에서 지운다. 서로 다른 표다.
+  #   화면 디렉토리는 404·403 을 흔하게 낸다 — 한쪽만 쓰면 그쪽에 그대로 남는다.
+  #
+  # ▣ 한계 — mod_headers 가 없으면 **조용히 아무 일도 일어나지 않는다** (D-83)
+  #   이 두 줄은 이 파일의 다른 헤더와 같은 <IfModule mod_headers.c> 안에 있다.
+  #   모듈이 없거나 AllowOverride None · nginx · LiteSpeed 비호환 모드면
+  #   500 이 나지 않는 대신 지우지도 않는다. 오류가 없다는 것을
+  #   "제거됐다"로 읽지 마라 — 확인은 실제 응답 헤더로만 한다:
+  #     curl -sSD- -o /dev/null https://{설치루트}/public/login.html | grep -i powered
+  #   그런 환경에서는 서버 설정에 같은 지시를 직접 넣어야 한다(INSTALL.md).
+  #
+  # ▣ 이것은 심층 방어이지 취약점 수정이 아니다.
+  #   버전 지문을 지우는 것뿐이고, 이 저장소는 공개돼 있어 소스 자체는 어차피 읽힌다.
+  #   그래도 지우는 이유는 자동 스캐너의 표적 목록에서 빠지기 때문이다.
+  # ---------------------------------------------------------------------
+  Header unset X-Powered-By
+  Header always unset X-Powered-By
+
+  # ---------------------------------------------------------------------
   # Content-Security-Policy
   #
   # ▣ 'unsafe-inline' 이 script-src 에 들어간 이유 (타협이다. 숨기지 않는다)
