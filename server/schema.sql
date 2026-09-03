@@ -162,6 +162,30 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_user_services` (
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
+-- ---------------------------------------------------------------------
+-- [알려진 차이 — 이 테이블의 컬럼 **순서**는 두 설치 경로에서 영구히 다르다]
+--
+--   신규 설치는 이 파일 그대로 만들어지므로 `allow_public` 이 `is_masked` 다음에 온다.
+--   기존 설치본은 마이그레이션 0002 의 `ADD COLUMN` 으로 그 컬럼을 **맨 끝에** 얻었고,
+--   그래서 `allow_public` 뒤에 와야 할 컬럼들이 한 칸씩 앞으로 당겨져 있다.
+--
+--   **동작에는 영향이 없고, 고치지 않기로 판정했다.** 근거:
+--    · 이 테이블에 접근하는 코드는 전부 **컬럼 이름**으로 읽고 쓴다.
+--      `SELECT *` 는 연관 배열로 받고, INSERT 는 컬럼 목록을 명시한다.
+--      서수 위치에 기대는 자리(FETCH_NUM · 컬럼 목록 없는 VALUES)는 한 곳도 없다.
+--      다시 확인하려면: grep -rn 'T_SECRETS\|service_secrets' server --include=*.php
+--    · 되돌리려면 `MODIFY COLUMN … AFTER …` 가 필요한데 MySQL 은 컬럼 재배치를
+--      **제자리에서 못 한다** — 테이블을 통째로 복사한다. 이 테이블에 든 것은
+--      **복호화 불가능해지면 끝인 AES 암호문**이다. 얻는 것이 두 설치본의 스키마 덤프가
+--      나란히 같아 보이는 것뿐인데 그 대가로 암호문 테이블을 재작성하지 않는다.
+--    · 러너의 skip-if 가드에는 "컬럼이 이 위치에 있는가" 가 없다. 가드를 `never` 로
+--      두면 `migrate.php apply` 를 다시 돌릴 때마다 그 복사가 되풀이된다.
+--
+--   `migrate.php verify` 는 컬럼 순서를 보지 않는다(D-175 맹점). 대신 v1.5.0 테스트
+--   스위트가 `information_schema` 를 직접 대조해 **매 실행 이 차이를 이름까지 열거**한다
+--   (`tests/tier3_live/t_20_migration_paths.php` 의 soft 목록). 목록에 **여기 적히지 않은
+--   항목이 새로 뜨면 그것은 이 알려진 차이가 아니라 새 드리프트다** — 그때 조사하라.
+-- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `app_ulogin_service_secrets` (
   `id`                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `service_id`        VARCHAR(64)     NOT NULL,

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ko"><head><title>fixture</title></head><body>
+<!-- PLANTED: no such file -> chk_page_links -->
+<a href="does_not_exist.html">gone</a>
+<a href="index.html">self</a>
+<script>
+  // PLANTED: no server/api/ghost/missing.php -> chk_endpoints
+  api('/api/ghost/missing');
+  api('/api/auth/login');
+  api('/api/admin/logs');
+  // PLANTED: no server response carries .data.no_such_field -> wiring reverse check
+  err.data.no_such_field;
+</script>
+</body></html>

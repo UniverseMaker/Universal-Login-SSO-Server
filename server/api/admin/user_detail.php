@@ -170,8 +170,11 @@ if (!function_exists('admin_revoke_service_sessions')) {
      * 전체에서 로그아웃되면 그것은 계정 정지(`users.status`)와 구분되지 않는다.
      * SQL `service_id = ?` 는 NULL 행에 매치되지 않으므로 전역 세션은 자동으로 제외된다.
      *
-     * `revoke_reason` 은 스키마 COMMENT 에 열거된 값 중 `'admin'` 을 쓴다
-     * (`schema.sql:196`). 새 사유 문자열은 schema 소유자의 COMMENT 갱신이 필요하다.
+     * `revoke_reason` 은 스키마 COMMENT 에 열거된 값 중 `'admin'` 을 쓴다.
+     * 그 열거는 schema.sql 의 `app_ulogin_sessions` 테이블 `revoke_reason` 컬럼 COMMENT 다
+     * (행 번호는 적지 않는다 — 편집 한 번에 낡는다(D-92). 파일명 + 컬럼명으로 가리킨다.
+     *  다시 찾으려면: grep -n 'revoke_reason' server/schema.sql).
+     * 새 사유 문자열은 schema 소유자의 COMMENT 갱신이 필요하다.
      *
      * @return int 회수된 세션 수
      */

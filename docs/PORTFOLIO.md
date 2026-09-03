@@ -1512,6 +1512,125 @@ DB는 프로젝트 폴더 밖의 별도 datadir·별도 포트로 올렸다.
 **"막혔다"는 결과는 두 원인에서 나온다** — 방어가 동작했거나, 시험이 잘못됐거나.
 전자로 읽으면 결함이 그대로 남는다. **이 라운드에서 실제로 그 갈림길에 두 번 섰다.**
 
+### 6-10. 검증을 버리지 않고 자산으로 만들었다 — v1.5.0
+
+**앞의 6-1 ~ 6-9는 전부 일회용이었다.** 각 라운드가 하네스를 만들고, 숫자를 리포트에 적고,
+**코드를 버렸다.** 리포트 90여 건 중 20건 이상이 그런 하네스를 언급하는데
+**저장소에는 그 코드가 하나도 없었다.** 쿠키 헤더 71케이스, 폭발반경 64요청,
+`schema.sql` 무수정 적용 — 전부 "그때 확인했다"로만 남았다.
+
+**그 대가를 v1.4.0 한 라운드가 치렀다.** 그 라운드에서 나온 결함 넷이 전부
+**테스트로 잡히는 종류**였다. v1.5.0은 그래서 기능을 하나도 추가하지 않고
+**검증 자체를 저장소에 넣는 데만 쓴 라운드**다.
+
+#### 만든 것 — 3티어 89케이스, 의존성 0
+
+| 티어 | 케이스 | 필요한 것 | 이 문서의 어느 절을 코드로 만든 것인가 |
+|---|---|---|---|
+| 1 정적 | 21 | 없음 | QA가 매 라운드 손으로 하던 경계면 교차 대조 · [6-5](#6-5-토크나이저-스캐너를-만들고-스캐너를-먼저-검증했다)의 스캐너 위임 |
+| 2 순수 단위 | 44 | 없음 | [6-3](#6-3-두-분기의-set-cookie-헤더를-바이트로-대조했다)의 쿠키 불변식 · 3축 등급 · fail-closed |
+| 3 실측 | 24 | 실 MySQL/MariaDB | [6-2](#6-2-실-mariadb--실-http로-설치기-8단계를-완주했다)의 스키마 적용 · 폭발반경 · [6-9](#6-9-동시성은-순차-시도로-증명되지-않는다--v140-라운드의-새-기법)의 동시성 |
+
+**PHP CLI 하나면 돈다.** Composer도 PHPUnit도 빌드도 네트워크도 쓰지 않는다 —
+이 프로젝트의 「의존성 0」 제약을 검증 계층에도 그대로 적용했다.
+`tools/`와 같은 층이라 **서버에 올라가지 않는다.**
+
+#### ① 러너가 자기 검사기를 먼저 검증한다 — 양성 23 / 음성 16
+
+[6-7](#6-7-검사기를-먼저-믿지-않았다)의 규약을 **매 실행의 0단계로 굳혔다.**
+
+| 픽스처 | 무엇 | 실패하면 |
+|---|---|---|
+| **양성 23** | 일부러 깨뜨린 미니 설치 루트 · 쿠키 변이 7종 · 어긋난 스키마 5종 | 검사기가 **못 잡으면** 종료코드 4 |
+| **음성 16** | 결함이 하나도 없는 통제군 | 검사기가 **잡으면** 실패 (= 과검출) |
+
+**음성 대조군을 함께 둔 것이 이 설계의 절반이다.** 과검출하는 게이트는 며칠 안에 사람이
+무시하게 되고, **무시되는 게이트는 없는 게이트다.** 통제군에는 검사기를 속이기 쉬운
+**합법** 패턴을 모았다 — 배열 리터럴의 trailing comma(함수 호출의 7.3+ 것과 `grep`으로 구분 불가),
+과거 릴리스를 가리키는 정당한 주석, 문자열 안의 `//`, 주석 안의 `href=`.
+
+**첫 실행에서 검사기 6종의 결함이 잡혔고 그중 3건은 「없는 결함을 지어내는」 방향이었다.**
+상대 링크를 스크립트 폴더 기준으로 풀어 404를 지어낸 것, 와일드카드 표기와 메서드를
+팬텀 함수로 신고한 것, 자기 픽스처를 실제 코드로 훑어 결함으로 보고한 것.
+**음성 대조군이 없었으면 셋 다 결함 리포트에 실렸을 것이다.**
+
+#### ② 종료코드 `3`과 `4` — "0건"이 증거가 아닐 때를 위한 자리
+
+| 코드 | 의미 | 조치 대상 |
+|---|---|---|
+| `0` | 전부 통과. **그리고 1건 이상 실제로 실행됐다** | — |
+| `1` | 실패 있음 | 산출물 |
+| `2` | 사용법 오류 | 명령 |
+| **`3`** | **한 건도 실행되지 않았다** | **환경** |
+| **`4`** | **러너 자신이 고장이다** | **러너** |
+
+**왜 이 둘을 `0`·`1`에 합치지 않았는가.** 이 저장소에서 「0건」이 「결함 없음」이 아니라
+「검사기가 눈멀었음」이었던 적이 **누적 27번**이다(이전 라운드들의 집계 21건 + 이 라운드의
+자기검증이 잡은 6건). "통과"와 "아무것도 안 돌았다"가 같은 종료코드를 쓰면
+**회귀 게이트는 조용히 항상 통과한다** — 그리고 그 사실은 아무도 눈치채지 못한다.
+
+`4`는 성질이 다르다. **본 실행을 하기 전에** 난다. 러너가 자기 검사기를 믿을 수 없는
+상태에서 낸 "0건"은 증거가 아니므로 **아예 판정을 내지 않는다.** `1`로 뭉개면
+운영자가 "고칠 코드"를 찾으러 가는데, 고쳐야 하는 것은 러너다.
+
+#### ③ 복원한 하네스를 **그대로 믿지 않았다** — 이 라운드에서 가장 값이 나간 판단
+
+원래 계획은 v1.1.0의 쿠키 71케이스를 그대로 옮기는 것이었다.
+옮긴 뒤 **변이를 심어 봤더니 오라클이 못 잡았다.**
+
+심은 변이는 지어낸 것이 아니라 **감사 `V11-L-1`의 실제 사고**다 — 쿠키 **이름**이 URL
+인코딩되어 `ulogin[sid]`가 7.2에서만 `ulogin%5Bsid%5D`로 나가고 로그인이 조용히 깨진 것.
+못 잡은 이유는 허무할 만큼 단순했다: **71케이스의 이름이 전부 `ULOGIN_SID` 류라
+`rawurlencode`가 항등이었다.** 오라클은 이름을 검사하고 있었지만 **검사가 발화할 입력이 없었다.**
+
+이름이 항등이 아닌 케이스를 넣어 86으로 늘렸고, 지금 그중 **10건**이 그 자리다.
+
+```bash
+php -r "require 'tests/lib/cookie_oracle.php'; \$c=cookie_cases(); echo count(\$c);"   # 86
+```
+
+**71을 그대로 저장했다면 "v1.1.0의 하네스를 복원했다"고 적으면서, 실제로는 그 하네스가
+잡았어야 할 사고를 못 잡는 코드를 남겼을 것이다.** 그리고 아무도 그것을 몰랐을 것이다 —
+71케이스가 전부 초록이었을 테니까.
+
+**복원은 옮기는 작업이 아니라 검증하는 작업이다.** 6-7의 「검사기를 먼저 믿지 않는다」가
+자기 자신에게 적용된 자리다.
+
+#### ④ 스위트가 첫날 잡은 것 — 6건, 그리고 잡은 뒤에 한 일
+
+| # | 무엇 | 유형 |
+|---|---|---|
+| N-1 | `install.php` 머리 주석이 **존재하지 않는 함수**를 가리켰다 | 팬텀 식별자 — 이 저장소에서 두 번째다 |
+| N-2 | 주석의 **줄 번호 인용 6건이 전부 낡았다** (최대 156행) | 위치 안내 부패 |
+| N-3 | 업그레이드 경로의 컬럼 COMMENT가 **11값 중 7값**에서 멈춰 있었다 | 두 설치 경로 드리프트 |
+| N-4 | 컬럼 순서가 두 경로에서 다르다 | 같은 종류, **고치지 않기로 판정** |
+| N-5 | 독스트링의 **사실 오류** — 같은 파일 안에서 두 서술이 모순 | 문서 부패 |
+| N-6 | 응답 필드 17개에 소비자가 없다 | 배선 |
+
+**N-3이 D-175의 실증이다.** `migrate.php verify`는 이 차이를 **통과시킨다** —
+대조 전에 인용 문자열을 선삭제하는데 COMMENT는 통째로 문자열이라 양쪽에서 사라진다.
+**`verify`가 초록인 것과 두 경로가 같은 것은 다른 명제다.** 그 사실을 문서에 적는 것으로
+끝내지 않고 스위트가 `information_schema`를 직접 읽게 만들었기 때문에 드러났다.
+
+**N-1이 드러낸 것은 함수명 오류보다 나빴다.** 그 주석은 설치기의 잠금 파일을 둘로 적고
+있었는데 **실제 차단 조건은 셋이다**(`config.php` 포함 — 락 파일만 지우고 재실행하는
+우회를 막는다). 표제만 읽은 운영자는 두 파일을 지우고 "왜 아직 안 열리지"를 겪는다.
+
+**그리고 테스트가 대상 코드를 고치지 않았다.** 발견은 전부 보고로 넘겼고 수정은 그 파일의
+소유자가 했다. 반대 방향도 지켜졌다 — 티어 3의 테이블 계수기가 `schema.sql` **주석 안의**
+`CREATE TABLE` 문자열까지 세어 실패를 냈을 때, 백엔드 담당은 **테스트를 고치는 대신 자기
+주석의 표현을 바꿨다.** 대상을 고치려고 테스트를 고치기 시작하면 안전망이 무너진다.
+
+#### ⑤ 커버리지를 과장하지 않는 것이 이 라운드의 산출물이다
+
+`tests/README.md`는 **각 티어가 무엇을 못 잡는지**를 잡는 것과 같은 분량으로 적고,
+안전망 **바깥**을 `C-1` ~ `C-14`로 따로 열거한다. 그중 가장 나쁜 자리는 **`C-11`** 이다 —
+**SSO 3단 종주(`authorize` → `code` → `exchange`)와 PKCE 왕복이 미검증**이다.
+SSO가 이 시스템의 존재 이유인데 스위트가 그것을 종주하지 못한다.
+
+**「테스트가 생겼으니 안전하다」는 이 스위트가 뒷받침하지 않는 문장이고,
+그 문장을 쓰지 않는 것이 여기서의 정직함이다.**
+
 ---
 
 ## 7. 개발 과정
@@ -1526,7 +1645,13 @@ v1.2.0  배포 반영·캐시 무효화 → [보안 감사 4회차 + QA] → 후
 v1.3.0  공개 준비 — 개인정보 정리 · 스크린샷 · 문서
 v1.4.0  격차 조사 3건 → 구현 → [보안 감사 5회차: 배포 보류]
                      → 같은 폴더에서 수정(D-63) → [보안 재검증 6회차] → 문서
+v1.5.0  회귀 안전망 — 테스트 스위트 신설 → [스위트가 결함 6건 발견] → 수정 → 문서
 ```
+
+**v1.5.0은 검증자가 앞에 선 첫 라운드다.** 구현이 먼저 있고 검증이 뒤따르던 순서가
+뒤집혔다 — 만든 것이 **검증 자체**이고, 그 검증이 첫 실행에서 대상 코드의 결함 6건을 냈다.
+**그리고 테스트 담당은 그 6건을 하나도 고치지 않았다.** 전부 보고로 넘겼고
+수정은 그 파일의 소유자가 했다. 자기가 감시하는 코드를 자기가 고치는 검사기는 검사기가 아니다.
 
 **v1.4.0에서 라운드 구조가 한 단계 늘었다 — 「격차 조사」가 앞에 붙었다.**
 아키텍처·보안·운영 세 방향으로 무엇이 없는지를 먼저 훑고(리포트 3개),
@@ -1550,11 +1675,15 @@ v1.4.0  격차 조사 3건 → 구현 → [보안 감사 5회차: 배포 보류]
 
 모든 설계 판단을 **번호가 붙은 판정**으로 남겼다.
 
-| 실측 | 값 |
-|---|---|
-| 판정 문서 파일 | **14개** |
-| 판정 번호 | **D-0 ~ D-109** (전 번호가 판정 문서에 최소 1회 등장 — 실측) |
-| 에이전트 리포트 | **53개** |
+| 실측 | v1.3.0 시점 | **v1.5.0 시점** |
+|---|---|---|
+| 판정 문서 파일 | 14개 | **22개** |
+| 판정 번호 | D-0 ~ D-109 | **D-0 ~ D-182** (전 번호가 판정 문서에 최소 1회 등장 — 실측) |
+| 에이전트 리포트 | 53개 | **82개** |
+
+> **이 세 값의 정본은 [8절 「관리 기록」](#8-정량-지표)이다.** v1.3.0 판에는 이 자리에 한 열만
+> 있었고 그 값이 그대로 굳어 있었다 — 같은 사실을 두 곳에 적으면 한쪽이 반드시 낡는다.
+> 두 열로 만든 이유가 그것이다: 왼쪽은 **그 시점의 기록**이고, 오른쪽만 갱신 대상이다.
 
 판정 문서의 구속력을 명시했다 — **API 계약서보다 우선한다.**
 그리고 **계약서와 코드가 다르면 코드가 정답**이라는 규칙을 함께 뒀다.
@@ -1604,61 +1733,89 @@ v1.4.0  격차 조사 3건 → 구현 → [보안 감사 5회차: 배포 보류]
 ## 8. 정량 지표
 
 **전부 실측이다.** 아래 명령은 저장소 루트에서 실행한다.
-측정 시점은 **v1.4.0 라운드의 코드·문서 편집을 모두 마친 뒤**(2026-09-01)다.
-**v1.3.0 값을 옮겨 적지 않았다** — 같은 명령을 두 폴더에 다시 돌려 얻은 값이다.
+측정 시점은 **v1.5.0 라운드의 코드·문서 편집을 모두 마친 뒤**(2026-09-01)다.
+**v1.4.0 값을 옮겨 적지 않았다** — 같은 명령을 두 폴더에 나란히 돌려 얻은 값이다.
 
-**계수에서 두 폴더를 뺀다.** `docs/`(포트폴리오·스크린샷 35장)와 `tools/`(릴리스 도구)는
-**서버에 올리는 물건이 아니다.** 이 표의 "배포물"은 호스팅에 업로드하는 것 —
-`server/` · `public/` · `examples/`와 루트 문서 — 을 가리킨다. `tools/`는 별도 행으로 뺐다.
+> **v1.4.0 판의 값 6개가 틀려서 이 라운드에서 정정했다.** 같은 명령을 v1.4.0 폴더에
+> 다시 돌려 확인한 것이다. `core/` 모듈을 **13**으로 적어 `core/transport.php`를
+> 빠뜨렸고(그 라운드의 `CHANGELOG.md`는 14로 맞게 적고 있었다), 그 하나가
+> 「PHP 파일」과 「배포물 파일」로 각각 전파됐다. 레이트리밋 버킷은 **14**로 적혀 있으나
+> 그 라운드가 이미 16으로 늘렸고, `login_logs.result`도 **10**이 아니라 11이었다.
+> 「코드 라인」·「문서 라인」이 어긋난 것은 다른 이유다 — 그 값을 잰 뒤에
+> 마감 라운드가 `AI_INTEGRATION_GUIDE.md`와 `schema.sql`을 더 편집했다.
+> **아래 「v1.4.0」 열은 그 폴더에 지금 명령을 다시 돌려 얻은 값이지, 그 문서에 적혀 있던 값이 아니다.**
+
+**계수에서 세 폴더를 뺀다.** `docs/`(포트폴리오·스크린샷)와 `tools/`(릴리스 도구),
+그리고 **`tests/`(회귀 스위트, v1.5.0 신설)** 는 **서버에 올리는 물건이 아니다.**
+이 표의 "배포물"은 호스팅에 업로드하는 것 — `server/` · `public/` · `examples/`와 루트 문서 —
+을 가리킨다. `tools/`와 `tests/`는 별도 행으로 뺐다.
 
 ### 코드와 파일
 
-| 항목 | 값 | 측정 명령 |
-|---|---|---|
-| 배포물 파일 | **85** (v1.3.0: 79) | `find . -type f -not -path "./.git/*" -not -path "./docs/*" -not -path "./tools/*" \| wc -l` |
-| PHP 파일 (배포물) | **50** (v1.3.0: 47) | `find . -name "*.php" -type f -not -path "./tools/*" \| wc -l` |
-| API 엔드포인트 파일 | **33** (v1.3.0: 32) | `find server/api -name "*.php" \| wc -l` |
-| `core/` 내부 모듈 | **13** (변화 없음) | `find server/core -name "*.php" \| wc -l` |
-| 마이그레이션 SQL | **2** (v1.3.0: 0) | `ls -1 server/migrations/*.sql \| wc -l` |
-| 화면 (HTML) | **8** (변화 없음 — v1.4.0은 새 화면을 만들지 않았다) | `ls public/*.html \| wc -l` |
-| 프론트 자산 (CSS·JS) | **4** (변화 없음 — 새 화면 로직은 기존 인라인 블록에 들어갔다) | `ls public/assets \| wc -l` |
-| `.htaccess` (배포물) | **7** (v1.3.0: 6 — `server/migrations/.htaccess` 추가) | `find . -name ".htaccess" -not -path "./.git/*" -not -path "./tools/*" \| wc -l` |
-| 릴리스 도구 (`tools/`) | PHP **2** + `README.md` + `.htaccess` | `ls -a tools` — **서버에 올리지 않는다** |
-| 코드 라인 (php·js·css·html·sql, 배포물) | **24,926** (v1.3.0: 21,922) | `find . -type f -not -path "./.git/*" -not -path "./tools/*" \( -name "*.php" -o -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.sql" \) -exec cat {} + \| wc -l` |
-| 문서 라인 (`.md` 6종) | **12,444** (v1.3.0: 11,105) | `wc -l README.md INSTALL.md AI_INTEGRATION_GUIDE.md CHANGELOG.md examples/README.md tools/README.md` |
+**아래 명령의 제외 목록에 `./tests/*` 가 새로 들어갔다.** v1.4.0 열의 값도 **같은(새) 명령**으로
+그 폴더에 다시 재서 얻은 것이다 — v1.4.0에는 `tests/`가 없으므로 결과가 달라지지 않는다.
 
-> **배포물 파일 +6의 내역:** `server/migrate.php` · `server/migrations/`의 4개
-> (SQL 2 + `lib.php` + `.htaccess`) · `server/api/health.php`. 화면과 자산은 늘지 않았다.
+| 항목 | v1.4.0 | **v1.5.0** | 측정 명령 |
+|---|---|---|---|
+| 배포물 파일 | 86 | **87** | `find . -type f -not -path "./.git/*" -not -path "./docs/*" -not -path "./tools/*" -not -path "./tests/*" \| wc -l` |
+| PHP 파일 (배포물) | 51 | **51** | `find . -name "*.php" -type f -not -path "./tools/*" -not -path "./tests/*" \| wc -l` |
+| API 엔드포인트 파일 | 33 | **33** | `find server/api -name "*.php" \| wc -l` |
+| `core/` 내부 모듈 | 14 | **14** | `find server/core -name "*.php" \| wc -l` |
+| 마이그레이션 SQL | 2 | **3** | `ls -1 server/migrations/*.sql \| wc -l` |
+| 화면 (HTML) | 8 | **8** | `ls public/*.html \| wc -l` |
+| 프론트 자산 (CSS·JS) | 4 | **4** | `ls public/assets \| wc -l` |
+| `.htaccess` (배포물) | 7 | **7** | `find . -name ".htaccess" -not -path "./.git/*" -not -path "./tools/*" -not -path "./tests/*" \| wc -l` |
+| 릴리스 도구 (`tools/`) | PHP 2 + `README.md` + `.htaccess` | **변화 없음** | `ls -a tools` — **서버에 올리지 않는다** |
+| **회귀 테스트 (`tests/`)** | 0 | **58 파일** | `find tests -type f \| wc -l` — **서버에 올리지 않는다** |
+| 코드 라인 (php·js·css·html·sql, 배포물) | 25,557 | **25,670** | `find . -type f -not -path "./.git/*" -not -path "./tools/*" -not -path "./tests/*" \( -name "*.php" -o -name "*.js" -o -name "*.css" -o -name "*.html" -o -name "*.sql" \) -exec cat {} + \| wc -l` |
+| 테스트 PHP 라인 (픽스처 제외) | 0 | **6,273** (27파일) | `find tests -name "*.php" -not -path "*fixtures*" -exec cat {} + \| wc -l` |
+| 픽스처 | 0 | **29파일 / 449줄** | `find tests/fixtures -type f \| wc -l` |
+
+> **배포물 파일 +1의 내역:** `server/migrations/0003_login_logs_result_comment.sql` 하나다.
+> 화면·자산·API 파일은 늘지 않았다.
+
+> **코드 라인 +113의 내역이 전부 설명된다** — `0003` SQL 49행 + `schema.sql` 주석 24행 +
+> 편집한 PHP 4파일의 주석 30행 + `install.php` 주석 10행. **실행 코드는 0행이다**
+> (주석·공백을 뺀 토큰 열의 SHA-256이 5파일 전부 v1.4.0과 같다).
+
+문서 라인은 이 라운드에서 세는 대상이 하나 늘었다 — `tests/README.md`.
+
+| 항목 | v1.4.0 | **v1.5.0** | 측정 명령 |
+|---|---|---|---|
+| 문서 라인 (`.md` 7종) | 12,920 (6종) | **13,818** (7종) | `wc -l README.md INSTALL.md AI_INTEGRATION_GUIDE.md CHANGELOG.md examples/README.md tools/README.md tests/README.md` |
 
 > **문서 라인에서 이 파일(`docs/PORTFOLIO.md`)은 뺐다.** 자기 줄 수를 자기 안에 적으면 다음 편집이
-> 그 숫자를 스스로 거짓으로 만든다. `tools/README.md`는 v1.3.0에서 새로 생긴 저장소 문서이고
-> `INSTALL.md`·`CHANGELOG.md`가 독자를 그리로 보내므로 **6종에 포함했다** —
-> 그래서 이 행의 라벨이 `5종`이 아니라 `6종`이다.
+> 그 숫자를 스스로 거짓으로 만든다. `tools/README.md`와 **`tests/README.md`** 는 저장소 문서이고
+> `README.md`·`INSTALL.md`가 독자를 그리로 보내므로 **세는 대상에 포함했다** —
+> 그래서 이 행의 라벨이 v1.5.0에서 `6종`이 아니라 `7종`이다.
+> v1.4.0 열은 그 폴더의 6종 합계이므로 **두 열은 세는 파일 수가 다르다.**
 
 ### API와 데이터
 
 | 항목 | 값 | 측정 명령 |
 |---|---|---|
-| DB 테이블 | **17** (v1.3.0: 15) | `grep -c "CREATE TABLE IF NOT EXISTS" server/schema.sql` |
+| DB 테이블 | **17** (v1.4.0과 같다) | `grep -c "CREATE TABLE IF NOT EXISTS" server/schema.sql` |
 | 엔드포인트 — 메서드 × 경로 조합 (`HEAD` 포함) | **45** (v1.3.0: 43) | `grep -rho "only_method([^)]*)" server/api \| grep -o "'" \| wc -l` (÷2) |
 | 엔드포인트 — 논리 (계약서 기준) | **49** (v1.3.0: 47) | 계약서 계수 `11+2+10+1+24+1` — **인용** |
-| 에러 코드 | **31** (변화 없음) | `grep -o "'[A-Z_]\{4,\}' *=>" server/core/response.php \| wc -l` |
-| 설정 상수 (`config.sample.php`) | **54** (v1.3.0: 51 — `T_MIGRATIONS` · `T_SECRET_ACCESS` · `SECRET_ACCESS_LOG`) | `grep -c "^define(" server/config.sample.php` |
+| 에러 코드 | **31** (v1.4.0과 같다) | `grep -o "'[A-Z_]\{4,\}' *=>" server/core/response.php \| wc -l` |
+| 설정 상수 (`config.sample.php`) | **54** (v1.4.0과 같다) | `grep -c "^define(" server/config.sample.php` |
 | 관리자 전역 설정 키 | **13** (v1.3.0: 12 — `secret_access_log`이 **맨 뒤**에) | `server/api/admin/settings.php` 의 정의 목록 |
-| 로그인 로그 `result` 열거 | **10** (v1.3.0: 7) | v1.3.0의 7종 + `fail_client_auth` · `fail_migrate_auth` · `fail_refresh_reuse` |
-| 레이트리밋 버킷 (고유 이름) | **14** (v1.3.0: 12 — `exchange:clientauth` · `health:ip` 추가) | 아래 펜스 블록의 명령 |
+| 로그인 로그 `result` 열거 | **11** (v1.3.0: 7) | v1.3.0의 7종 + `fail_client_auth` · `fail_migrate_auth` · `fail_refresh_reuse` · `fail_refresh_revoked`. **v1.4.0 판이 10으로 적어 네 번째를 빠뜨렸다** — `schema.sql` 의 COMMENT 와 `admin/logs.php` 의 `$results` 가 둘 다 11값이다 |
+| 레이트리밋 버킷 (고유 이름) | **16** (v1.3.0: 12 — `exchange:clientauth` · `health:ip` · `refresh:ip` · `refresh:user` 추가) | 아래 펜스 블록의 명령. **v1.4.0 판이 14로 적어 `refresh:` 두 버킷을 빠뜨렸다** |
 | 관리자 콘솔 탭 | **6** (변화 없음. `로그` 탭의 서브탭이 2 → **3**) | 대시보드 · 회원 · 서비스 · 시크릿 · 로그 · 설정 |
 | 마이페이지 탭 | **7** | 정보 · 보안 · 포인트 · 세션 · 로그인 이력 · 서비스 · 탈퇴 |
 | 웹 설치기 단계 | **8** (변화 없음) | |
 | 스키마 마이그레이션 러너 명령 | **3** | `status` · `apply` · `verify` |
+| **회귀 테스트 케이스** | **89** (티어 1 `21` + 티어 2 `44` + 티어 3 `24`) | `php tests/run.php` 요약 줄의 `executed`. 자기검증 39는 별도 |
+| **회귀 테스트 종료코드** | **5** | `0` `1` `2` `3`(한 건도 안 돌았다) `4`(러너가 고장) |
 | 마이그레이션 상태값 | **7** | `baseline` `applied` `pending` `partial` `failed` `checksum-mismatch` `orphan` |
 
 레이트리밋 버킷을 다시 세는 명령은 표에 넣지 않았다 — **파이프가 섞이면 그 행이 쪼개진다**([6-7](#6-7-검사기를-먼저-믿지-않았다)).
 
 ```bash
 grep -rhoE "rate_limit(_logged)?\(\s*'[^']*'" server/ \
-  | sed "s/.*('//" | sed "s/'$//" | sort -u | wc -l    # → 14
-# 같은 명령을 v1.3.0 폴더에 돌리면 12다. 두 값을 나란히 재서 얻었다.
+  | sed "s/.*('//" | sed "s/'$//" | sort -u | wc -l    # → 16
+# 같은 명령을 v1.3.0 폴더에 돌리면 12 다. 두 값을 나란히 재서 얻었다.
 ```
 
 ### 검증
@@ -1679,8 +1836,8 @@ grep -rhoE "rate_limit(_logged)?\(\s*'[^']*'" server/ \
 | **v1.4.0의 미해결 Critical / High** | **라운드 신규 발견은 전부 닫혔다** — 5회차 High 3 · 6회차 신규 High 1 + Medium 4 · QA High 3 · Low/문서. **그러나 6회차 이후의 수정은 독립 재검증을 받지 않았다**(보안 7회차 · QA 2회차 미실행)이므로 **「미해결 High 0」을 확정 판정으로 단언하지 않는다.** 이월 격차는 별개다 — Critical 1(`SECRET_ENC_KEY` 회전) · High 5(세션 절대 수명 · HSTS · 2FA · `secret.reveal` 제한 · 일괄 회수) | 전수는 [`../CHANGELOG.md`](../CHANGELOG.md)의 `v1.4.0` 절 「검증 라운드가 어떻게 끝났나」 |
 | QA 통과 항목 | v1.0.0 **61** · v1.1.0 **88** · v1.2.0 **47** | 각 리포트의 집계표 — **인용**(항목 표는 각 절에 있다) |
 | 런타임 단위 어서션 (v1.0.0 2회차) | **208 PASS** | QA 리포트 — **인용** |
-| PHP 문법 검사 | **53/53** | `php -l` 전 파일 — 배포물 **51**(`core/transport.php` 추가) + `tools/` 2. 실패 0. 고의로 깨뜨린 파일을 먹여 검사기가 실제로 잡는 것을 먼저 확인했다 |
-| 7.2 호환 스캐너 | **ERROR 0**, 규칙 50종 | `php tools/php72_scan.php server tools` → ERROR 0 / NOTE 2, 종료코드 0. 양성 픽스처 50/50 발화 · 음성 픽스처 오탐 0 |
+| PHP 문법 검사 | **80/80** | `php -l` — `server/` **51** + `tools/` **2** + `tests/` **27**(픽스처 제외). 실패 0. 고의로 깨뜨린 파일을 먹여 검사기가 실제로 잡는 것을 먼저 확인했다. **픽스처를 뺀 이유:** `tests/fixtures/positive/` 에 **일부러 파싱이 깨지는 파일**이 들어 있고, 그것을 잡아내는 것이 자기검증의 역할이다 |
+| 7.2 호환 스캐너 | **ERROR 0**, 규칙 50종 | `php tools/php72_scan.php server tools tests --exclude=fixtures` → **ERROR 0 / NOTE 6**, 종료코드 0. NOTE 6건은 전부 기지 항목(`extends Exception` 3 · `setcookie` 3번째 인자 비리터럴 1 · `proc_open` 배열 2). 양성 픽스처 50/50 발화 · 음성 픽스처 오탐 0. **이제 티어 1이 매 실행 이 명령을 위임 실행한다** |
 | 쿠키 두 분기 헤더 대조 | **50케이스 / 운영 경로 25/25 바이트 동일** | 보안 감사 3회차 독립 재현 |
 | DDL 실적용 | **17/17 테이블** | 임시 MariaDB 10.4.32, 무수정 적용 |
 | **두 설치 경로가 같은 스키마에 도달하는가** | **두 담당이 각자** `information_schema` 직접 비교 — **291항목**과 **321항목**(세는 집합이 다르다: 후자는 인덱스를 `SEQ_IN_INDEX` 단위로 펼치고 `TABLES` 메타를 포함한다). 동작에 영향을 주는 축은 양쪽 다 차이 0 | 신규(`schema.sql`) vs 기존(`migrations/`). **러너의 `verify`를 쓰지 않는 독립 하네스** — 러너가 자기 자신을 채점하면 대조가 아니다. 넓게 센 쪽이 찾은 차이 2건은 컬럼 주석과 컬럼 순서이고 **둘 다 `verify`가 비교하지 않는 항목**이다(위 5-8절) — 코드가 컬럼을 이름으로만 읽으므로 동작 영향 0. **인용** |
@@ -1689,27 +1846,37 @@ grep -rhoE "rate_limit(_logged)?\(\s*'[^']*'" server/ \
 | `X-Powered-By` 부재 | **9경로 전부 0** (200·403·404). 대조군은 전부 1 | 실 Apache 2.4.58에 서버 수준 주입을 걸고, **그 두 줄만 뺀 사본**을 대조군으로 — **인용** |
 | 응답 shape 대조 (v1.3.0 동시 기동) | **26케이스 SAME / DIFF 0** | 알려진 DIFF 1건(`exchange` 401→400)은 별도 확인 — **인용** |
 
+| DOM id 참조 정합 | **258 참조 / 미존재 0** | `$('#id')` ↔ 실제 `id` 전수 — **인용** |
+| `innerHTML` 계열 실사용 | **0건** | 매치는 전부 "쓰지 않는다" 주석 + 금지 가드 — **인용** |
+| 관리자 헬퍼 사본 본문 동일성 | 함수 10종 · 사본 35개 · **SHA-256 불일치 0건** | 가드 사본이 갈라지면 그 경로로 뚫린다 — **인용** |
+| **회귀 스위트 전체** (v1.5.0 신설) | **pass 89 / fail 0 / skip 0 / exit 0** | `php tests/run.php` — 실 MariaDB 10.4.32(포트 3307). 시작 상태는 `fail 1`(N-1)이었다 — **인용** |
+| 회귀 스위트 (DB 없이) | **pass 65 / fail 0 / exit 0** · 약 6초 | `php tests/run.php --tier=1,2` — **직접 재현** |
+| 러너 자기검증 | **양성 23 전건 검출 / 음성 16 전건 침묵** | DB 없으면 양성 18 / 32 — **직접 재현** |
+| 종료코드 분기 | `--bogus` → **2** · `--tier=9` → **2** · DB 없이 `--tier=3` → **3**(`skip 24`) | 세 가지 전부 — **직접 재현** |
+| 쿠키 불변식 케이스 (저장소에 남은 것) | **86** — 그중 **10건**이 이름 인코딩 변이를 잡는 자리 | `php -r "require 'tests/lib/cookie_oracle.php'; echo count(cookie_cases());"` — **직접 재현** |
+| 실행 토큰 diff (v1.5.0이 편집한 PHP 5파일) | **전건 0** | 주석·공백을 뺀 토큰 열의 SHA-256을 v1.4.0 파일과 비교. **검사기 민감도(함수명 1개 변경 → DIFF)·둔감도(주석만 추가 → SAME)를 먼저 확인했다** — **직접 재현** |
+
 > **「인용」 표시가 있는 행은 이 문서를 쓴 담당이 다시 재지 않았다.** 실 Apache·다중 워커·
-> 두 서버 동시 기동이 필요한 측정이고, 그 환경은 코드 담당과 보안 담당이 만들었다.
+> 두 서버 동시 기동·실 MySQL이 필요한 측정이고, 그 환경은 코드 담당과 검증 담당이 만들었다.
 > **명령 하나로 재현되는 값은 전부 다시 쟀다** — 위 「코드와 파일」·「API와 데이터」 표의 모든 행,
-> `php -l` 52/52, 자산 `?v=` 24참조, 그리고 이 절의 레이트리밋 버킷 14다.
-> [6-8](#6-8-인용과-재현을-구분한다)의 규약이다.
-| DOM id 참조 정합 | **258 참조 / 미존재 0** | `$('#id')` ↔ 실제 `id` 전수 |
-| `innerHTML` 계열 실사용 | **0건** | 매치는 전부 "쓰지 않는다" 주석 + 금지 가드 |
-| 관리자 헬퍼 사본 본문 동일성 | 함수 10종 · 사본 35개 · **SHA-256 불일치 0건** | 가드 사본이 갈라지면 그 경로로 뚫린다 |
+> `php -l` 80/80, `php72_scan` ERROR 0 / NOTE 6, 자산 `?v=` 24참조, 레이트리밋 버킷 16,
+> 그리고 이 표의 **「직접 재현」 여섯 행**이다. [6-8](#6-8-인용과-재현을-구분한다)의 규약이다.
+>
+> **v1.4.0 판에서는 이 안내문이 표 중간을 가르고 있었다** — 뒤의 세 행이 머리열 없는 별도
+> 표로 떨어져 렌더됐다. 이 라운드에서 묶어 고쳤다.
 
 ### 관리 기록
 
 | 항목 | 값 | 근거 |
 |---|---|---|
-| 판정 문서 | **22개** | 릴리스별 5 · 5 · 3 · 8 · **1** — **내부 기록 실측 · 인용** |
-| 판정 번호 | **D-0 ~ D-165** | v1.4.0의 D-150~D-165가 한 파일에 세 블록으로 이어 붙었다. 본문과 `CHANGELOG.md`가 인용하는 `D-nn`이 이 범위 안에 있다 |
-| 에이전트 리포트 | **73개** | 2026-09-01 문서 라운드 마감 시점 — **내부 기록 실측 · 인용** |
-| 릴리스 | **5** | `v1.0.0` · `v1.1.0` · `v1.2.0` · `v1.3.0` · `v1.4.0` — 저장소에서 확인 가능한 유일한 행이다 |
+| 판정 문서 | **22개** (v1.4.0과 같다) | 릴리스별 5 · 5 · 3 · 8 · **1**. v1.5.0은 v1.4.0과 같은 로드맵 파일을 쓴다 — **내부 기록 실측** |
+| 판정 번호 | **D-0 ~ D-182** | v1.4.0·v1.5.0의 D-150~D-182가 한 파일에 다섯 블록으로 이어 붙었다. 본문과 `CHANGELOG.md`가 인용하는 `D-nn`이 이 범위 안에 있다 |
+| 에이전트 리포트 | **82개** | v1.5.0 마감 시점. 세는 규칙은 「내부 기록의 `.md` 전체(106) − 판정 문서(22) − 계약·스펙(2)」이다 — **내부 기록 실측** |
+| 릴리스 | **6** | `v1.0.0` · `v1.1.0` · `v1.2.0` · `v1.3.0` · `v1.4.0` · `v1.5.0` — 저장소에서 확인 가능한 유일한 행이다 |
 
 > **앞 세 행은 재계수 명령을 실을 수 없다.** 판정 문서와 에이전트 리포트는 **저장소에 포함되지 않는
 > 내부 작업 기록**이기 때문이다. 그래서 다른 표와 달리 측정 명령 대신 **인용**임을 밝혀 둔다 —
-> 클론한 저장소에서 이 두 숫자를 검증할 방법은 없다. 저장소가 직접 증명하는 것은 **릴리스 4개**와,
+> 클론한 저장소에서 이 두 숫자를 검증할 방법은 없다. 저장소가 직접 증명하는 것은 **릴리스 번호**와,
 > 본문·`CHANGELOG.md`가 실제로 인용하는 **판정 번호들**뿐이다.
 
 ---
@@ -1761,7 +1928,13 @@ grep -rhoE "rate_limit(_logged)?\(\s*'[^']*'" server/ \
 
 우선순위 순이다. 각 항목이 **왜 이번에 안 들어갔는지**도 함께 적는다.
 
-**v1.4.0에서 닫힌 항목을 먼저 표시한다 — 이 표가 실제로 소진되는지 보이는 것이 요점이다.**
+**v1.5.0에서 닫힌 항목 — 아래 표의 8번이다.**
+
+| # | 항목 | v1.5.0의 처리 |
+|---|---|---|
+| 8 | 회귀 테스트 러너 (의존성 0) | **닫혔다.** `tests/` — 3티어 **89케이스**, PHP CLI 하나로 돈다. **첫 실행에서 대상 코드의 결함 6건을 냈다.** 다만 **커버리지를 과장하지 않는 것**을 함께 산출물로 삼았다 — 덮지 못하는 자리를 `C-1` ~ `C-14`로 열거했고, 그중 **`C-11`(SSO 3단 종주 미검증)이 남은 가장 큰 구멍**이다. 상세는 [6-10](#6-10-검증을-버리지-않고-자산으로-만들었다--v150) |
+
+**v1.4.0에서 닫힌 항목 — 이 표가 실제로 소진되는지 보이는 것이 요점이다.**
 
 | # | 항목 | v1.4.0의 처리 |
 |---|---|---|
@@ -1791,6 +1964,14 @@ grep -rhoE "rate_limit(_logged)?\(\s*'[^']*'" server/ \
 | 10 | **2FA + 백업코드** | 컬럼만 있고 기능이 없다. **둘을 쪼갤 수 없다** — 백업코드 없는 2FA는 기기 분실이 영구 잠김이 된다 | **v1.6.0** |
 | 11 | **`CAN_MAP` 17개를 실제 호출부에 배선** | 정의만 되고 호출이 0건이다. 그래서 커스텀 역할이 불가능하다 | **v1.7.0** |
 | 12 | **동의 이력이 실제로 쌓이게** | 기본 설치본의 동의 이력이 **항상 0행**인데 화면은 동의를 받은 것처럼 보인다 | **v1.8.0** |
+
+**v1.5.0이 새로 잡은 것** — 스위트를 만들면서 드러난 자리다.
+
+| # | 항목 | 왜 필요한가 | 배정 |
+|---|---|---|---|
+| 13 | **SSO 3단 종주(`authorize` → `code` → `exchange`)와 PKCE 왕복을 티어 3에 넣는다** | **SSO가 이 시스템의 존재 이유인데 회귀 스위트가 그것을 종주하지 못한다**(`C-11`). 막고 있는 것은 어려움이 아니라 시드다 — 서비스 1 + 시크릿 1 + `redirect_uri` 허용목록만 만들면 되고, `t_50_regression_walk.php`의 패턴을 늘리면 된다. **그때까지 SSO 경로를 건드리는 변경은 스위트가 초록이어도 검증된 것이 아니다** | **다음 라운드 1순위** |
+| 14 | **`tests/`에 `.htaccess`가 없다** | `tools/`에는 있고 `tests/`에는 없다. 실수로 업로드되면 **두 번째 방어선이 없다.** 그 폴더에는 일부러 깨뜨린 설치 루트 사본(`fixtures/positive/root/`)이 들어 있어 노출의 성격도 `tools/`보다 나쁘다 | 미배정 |
+| 15 | **`mig_table_ddl_from_schema()`의 정규식에 줄머리 고정이 없다** | 주석 안에 `CREATE TABLE IF NOT EXISTS`와 백틱 테이블명을 함께 적으면 **마이그레이션이 그 주석을 DB에 넣는다.** 같은 파일의 `mig_parse_guard()`는 정확히 이 이유로 이미 줄머리를 고정했고 그 이유까지 주석에 적어 두었는데, **옆 함수에 그 교훈이 적용되지 않았다** | 미배정 |
 
 ---
 
@@ -1956,6 +2137,21 @@ The premise was to enumerate what static analysis **cannot** catch, then build f
   claim when you cannot, never write line numbers into reports, and **never let a document
   assert facts about its own state** — the next edit makes it a lie. That happened three
   times here; once the very edit adding the claim broke it
+- **v1.5.0: stop throwing the verification away.** Every bullet above was single-use. Reports
+  quoted the numbers; the harnesses themselves were never committed — more than twenty reports
+  reference a harness whose code is nowhere in the repository. v1.5.0 added no features and spent
+  the entire round turning that work into `tests/`: **three tiers, 89 cases, one PHP CLI and
+  nothing else.** Three things make it more than a test folder. **(a)** The runner validates its
+  own checkers before every run — 23 planted defects that must be caught, 16 clean controls that
+  must stay silent; a checker that over-reports gets ignored within days, and an ignored gate is
+  no gate. **(b)** "Everything passed" and "nothing ran" get **different exit codes** (`3`), as
+  does "the runner itself is broken" (`4`) — in this repository a reported zero has meant a blind
+  checker 27 times. **(c)** The restored harness was not trusted as restored: planting the actual
+  historical mutation into the recovered 71 cookie cases showed the oracle **could not catch it**,
+  because all 71 names happened to be `rawurlencode`-identity. Copying them across unchanged would
+  have shipped a green suite that could not see the very bug it was written for.
+  The README enumerates what the suite does **not** cover in as much detail as what it does;
+  the SSO round trip is still outside it, and that is stated rather than glossed
 
 ### Process
 
@@ -1978,23 +2174,27 @@ rather than a batch of edits.
 
 | | |
 |---|---|
-| Deployable files / PHP files | **85 / 50** |
-| API endpoint files · `core` modules · screens | **33 · 13 · 8** |
-| Lines of code (php·js·css·html·sql) | **24,926** |
-| Lines of documentation (6 files, excluding this one) | **12,444** |
+| Deployable files / PHP files | **87 / 51** (`tests/` excluded — it is not uploaded) |
+| API endpoint files · `core` modules · screens | **33 · 14 · 8** |
+| Lines of code (php·js·css·html·sql, deployable only) | **25,670** |
+| Lines of documentation (7 files, excluding this one) | **13,818** |
+| **Regression suite** | **58 files · 3 tiers · 89 cases · zero dependencies** (6,273 lines of PHP outside fixtures) |
 | DB tables · config constants · error codes | **17 · 54 · 31** |
 | Endpoints — method × path combinations | **45** incl. `HEAD` (**44** without; **47** summary-table rows; **49** logical — all four bases stated, none unified) |
 | Security findings through v1.3.0 | **42** (Critical 3 · High 5 · Medium 18 · Low 16), deploy blockers **8 / 8 fixed**, **0 / 0 unresolved** |
 | v1.4.0 — closed from already-published code | Critical **1** · High **2** |
 | v1.4.0 — introduced and closed in the same round | High **3** (audit round 5 returned **hold deployment**) |
-| **v1.4.0 unresolved Critical / High** | **verdict pending** — re-verification was still running when this file was written. See `CHANGELOG.md` |
+| **v1.4.0 unresolved Critical / High** | **verdict pending** — re-verification was still running when that round's file was written. See `CHANGELOG.md` |
+| **v1.5.0 — API changes** | **0.** The five server PHP files this round touched are comment-only; their execution-token SHA-256 is identical to v1.4.0. The suite found **6 defects on its first run**, all fixed by the owning agent, none by the test author |
 | Audit rounds · QA rounds | **6 · 3** (no independent QA report exists for the v1.3.0 or v1.4.0 rounds) |
-| `php -l` | **52 / 52**, 0 failures |
-| Compat scanner rules · self-validation | **50 · 50/50 fired, 0 false positives** |
+| `php -l` | **80 / 80**, 0 failures (`server/` 51 + `tools/` 2 + `tests/` 27, fixtures excluded — one fixture is deliberately unparseable) |
+| Compat scanner rules · self-validation | **50 · 50/50 fired, 0 false positives**. On `server tools tests`: **ERROR 0 / NOTE 6**, exit 0 |
+| **Regression suite result** | **pass 89 / fail 0 / skip 0 / exit 0** with a live MariaDB; **pass 65 / exit 0** without one. Runner self-check: **23 positive fixtures all caught, 16 negative controls all silent** |
+| **Runner exit codes** | **5** — `0` `1` `2` **`3` (nothing ran)** **`4` (the runner itself is broken)**. Splitting `3` and `4` out of `0` is the point of the design |
 | Cookie branch comparison | **50 cases, 25/25 byte-identical on operational paths** |
 | Two install paths reach the same schema | **291 and 321 `information_schema` items compared by two owners independently** (different counting sets) — no behavioural difference on either; both harnesses avoid the runner's own `verify` |
 | Concurrency reproduction (`V14-H-2`) | sequential 7 → `429×2`; **4 workers × 16 concurrent → `429×0` (the defect)**; after the fix, 16 → `429×11` and 40 → `429×35` |
-| Decision documents · decision numbers · agent reports | **22 · D-0…D-165 · 73** |
+| Decision documents · decision numbers · agent reports | **22 · D-0…D-182 · 82** |
 
 ### Known limits, stated plainly
 

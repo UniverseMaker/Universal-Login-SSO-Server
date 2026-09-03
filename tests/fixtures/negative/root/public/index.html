@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko"><head><title>negative control</title></head><body>
+<a href="index.html">self</a>
+<a href="https://example.invalid/elsewhere.html">external, not our file</a>
+<script>
+  // 주석 안의 링크: href="never_exists.html" 는 판정 대상이 아니어야 한다
+  api('/api/auth/login');
+  api('/api/admin/logs');
+  api('/api/me');
+
+  // login_logs.result 라벨 맵 + 필터 옵션. 서버가 쓰는 세 값을 전부 덮는다.
+  var LOGIN_RESULT_LABELS = {
+    success: '성공',
+    fail_credential: '자격 불일치',
+    logout: '로그아웃'
+  };
+
+  // 응답 필드를 전부 읽는다 -> chk_unconsumed_response_fields 가 조용해야 한다
+  var u = res.user;
+  var tok = res.access_token;
+  var pts = res.points;
+  var items = res.items;
+  var total = res.total;
+
+  var url = 'https://example.invalid/x//y';
+</script>
+<select id="lg-result">
+  <option value="success">성공</option>
+  <option value="fail_credential">자격 불일치</option>
+  <option value="logout">로그아웃</option>
+</select>
+</body></html>

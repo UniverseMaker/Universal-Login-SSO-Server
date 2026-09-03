@@ -350,6 +350,17 @@ function mig_index_exists(PDO $pdo, $table, $index)
  *
  * 라고만 적고, 실행 시점에 이 함수가 schema.sql 의 정본 DDL 로 바꿔 넣는다.
  * 정의는 schema.sql 한 곳뿐이다.
+ *
+ * **`^` + `m` 으로 줄머리에 고정한다 — 같은 파일의 `mig_parse_guard()` 와 같은 이유다.**
+ * 고정하지 않으면 schema.sql 의 **주석 안에서 DDL 을 인용한 한 줄**까지 정의로 읽는다.
+ * `.*?` 가 최단 일치라 매치는 그 주석에서 시작해 아래의 진짜 정의를 통째로 삼키고,
+ * 결과는 `CREATE TABLE … 형태로 적는다.\n-- …\nCREATE TABLE …` 라는 문법 오류 DDL 이다.
+ * 재현: schema.sql 머리에 `` CREATE TABLE IF NOT EXISTS `app_ulogin_users` `` 를 인용한
+ * 주석 한 줄을 넣으면 이 함수가 그 주석부터 매치한다(고정 후에는 정본 DDL 을 돌려준다).
+ * 결과적으로 **주석이 DB 로 들어간다** — 조용히 틀리는 종류다.
+ *
+ * 대가: **들여쓴 `CREATE TABLE` 은 보이지 않는다.** schema.sql 의 17개 정의는 전부
+ * 줄머리에 있고(들여쓴 정의 0건), 정본 스키마의 규약이 그것이다.
  */
 function mig_table_ddl_from_schema($schemaFile, $table)
 {
@@ -362,8 +373,8 @@ function mig_table_ddl_from_schema($schemaFile, $table)
         $cache = (string) $sql;
     }
     $m  = [];
-    $re = '/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`' . preg_quote((string) $table, '/')
-        . '`.*?\n\)\s*ENGINE[^;]*/is';
+    $re = '/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`' . preg_quote((string) $table, '/')
+        . '`.*?\n\)\s*ENGINE[^;]*/ims';
     if (preg_match($re, $cache, $m) !== 1) {
         throw new RuntimeException('schema.sql 에서 `' . $table . '` 테이블 정의를 찾지 못했습니다.');
     }
@@ -581,7 +592,22 @@ function mig_safe_error(Throwable $e)
 // 어느 쪽이든 한 명령으로 드러난다.
 // =====================================================================
 
-/** schema.sql 파싱 → [table => ['columns'=>[name=>[type,len,null]], 'indexes'=>[name=>'col1,col2']]] */
+/**
+ * schema.sql 파싱 → [table => ['columns'=>[name=>[type,len,null]], 'indexes'=>[name=>'col1,col2']]]
+ *
+ * **`^` + `m` 으로 줄머리에 고정한다 — `mig_parse_guard()`·`mig_table_ddl_from_schema()` 와 같은 이유다.**
+ * 아래의 본문 루프가 `--` 로 시작하는 줄을 건너뛰므로 "주석이 컬럼으로 들어가는" 사고는
+ * 원래도 없었지만, **주석이 인용한 테이블명이 정본에 없으면 결과가 크게 어긋난다**:
+ * 매치가 그 주석에서 시작해 아래 첫 진짜 정의의 `\n) ENGINE` 까지 삼키므로
+ * **유령 테이블 하나가 생기고 진짜 테이블 하나가 사라진다.**
+ * 재현: schema.sql 머리에 `` CREATE TABLE IF NOT EXISTS `app_ulogin_ghost` ( `` 를 인용한
+ * 주석을 넣으면 `app_ulogin_ghost`(컬럼 36개)가 생기고 `app_ulogin_users` 가 없어졌다.
+ * 이 함수는 **두 설치 경로의 스키마 드리프트를 잡는 게이트**다 — 멀쩡한 DB 를 두고
+ * "테이블이 없다" 고 보고하는 방향의 오류이므로 게이트로서 가장 나쁘다.
+ *
+ * 대가는 위 두 함수와 같다: **들여쓴 `CREATE TABLE` 은 보이지 않는다.**
+ * 정본 schema.sql 의 정의는 전부 줄머리에 있다.
+ */
 function mig_expected_schema($schemaFile, $prefix)
 {
     $sql = @file_get_contents($schemaFile);
@@ -592,7 +618,7 @@ function mig_expected_schema($schemaFile, $prefix)
 
     $out = [];
     $mm  = [];
-    preg_match_all('/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`([^`]+)`\s*\((.*?)\n\)\s*ENGINE/is', $sql, $mm, PREG_SET_ORDER);
+    preg_match_all('/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+`([^`]+)`\s*\((.*?)\n\)\s*ENGINE/ism', $sql, $mm, PREG_SET_ORDER);
     foreach ($mm as $m) {
         $table = $m[1];
         $body  = $m[2];

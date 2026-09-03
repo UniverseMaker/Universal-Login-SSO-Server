@@ -55,11 +55,15 @@ $DEFS = [
     'mail_driver'          => ['string', '메일 발송 방식 (mail|log)',    'MAIL_DRIVER',          null, null],
     'site_name'            => ['string', '사이트 표시명',                'SITE_NAME',            null, null],
     // D-40: core 가 setting_get('auth_code_ttl') 로 읽는데 여기 정의가 없어 조회·변경이 불가능했다.
-    // 폴백 상수는 api/sso/authorize.php:113 이 쓰는 것과 동일한 AUTH_CODE_TTL(config.sample.php:102 = 60).
+    // 폴백 상수는 api/sso/authorize.php 의 `11) code 발급` 절이 쓰는 것과 같은 AUTH_CODE_TTL 이고,
+    // 그 기본값(60)은 config.sample.php 의 `정책 기본값` 블록에 있다.
+    // 행 번호는 적지 않는다 — 편집 한 번에 낡는다(D-92). 파일명 + 절 이름으로 가리킨다.
+    //   다시 찾으려면: grep -rn 'AUTH_CODE_TTL' server/
     // 상한 600초: SSO code 는 1회용 단기 자격증명이다. 수명이 길어지면 탈취된 code 의
     // 유효 창이 그만큼 넓어진다(RFC 6749 §4.1.2 권고 = 10분 이내).
     // 하한 30초: 로그인 → 리다이렉트 → exchange 왕복이 끝나야 한다. 더 낮추면 느린 회선에서
-    // 정상 로그인이 SSO_CODE_EXPIRED 로 실패한다. authorize.php:114 도 0 이하를 무효로 본다.
+    // 정상 로그인이 SSO_CODE_EXPIRED 로 실패한다. 위의 `11) code 발급` 절도 `$ttl <= 0` 이면
+    // 설정값을 버리고 상수로 되돌리므로, 0 이하는 그쪽에서도 무효다.
     'auth_code_ttl'        => ['int',    'SSO code 수명(초)',            'AUTH_CODE_TTL',        30,   600],
     // v1.4.0 후속: core/logger.php 가 setting_get('secret_access_log') 로 읽는데 여기
     // 정의가 없어 **DB 에 직접 INSERT 하지 않으면 끌 수 없었다.** D-40 의 auth_code_ttl

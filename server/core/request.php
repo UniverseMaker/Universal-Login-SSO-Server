@@ -468,11 +468,29 @@ function cookie_samesite_safe(string $ss): string
 /**
  * `path` · `domain` · `samesite` 에 쿠키 구분자가 섞였는가 — 감사 V11-M-1 / 리더 판정 D-65.
  *
- * PHP 본체(`ext/standard/head.c`)는 이 세 옵션에 `, ; 공백 \t \r \n \013 \014` 가 있으면
- * 쿠키를 **전송하지 않는다**(8.0+ 는 `ValueError`, 7.3~7.4 는 경고 + `false`).
- * 7.2 분기에는 그 층이 존재하지 않으므로 같은 문턱을 코드에 둔다. 없으면
- * `COOKIE_PATH = '/; HttpOnly'` 같은 설정이 **7.2 배포에서만** 조용히 통과해
- * 쿠키 속성 주입이 된다(실측: `httponly=false` 인데 `HttpOnly` 가 붙는다).
+ * **세 옵션의 사정이 같지 않다.** 본체가 막아 주는 것과 여기서만 막는 것을 구분해 적는다 —
+ * 예전 주석은 셋을 묶어 "본체가 전부 거부한다" 고 적었고 그것은 `samesite` 에 대해 **거짓**이었다.
+ *
+ *  - `path` · `domain` : PHP 본체(`ext/standard/head.c`)가 `, ; 공백 \t \r \n \013 \014` 를
+ *    거부한다(8.0+ 는 `ValueError`, 7.3~7.4 는 경고 + `false`). **7.2 의 옵션 배열 없는
+ *    분기에는 그 층이 없으므로** 같은 문턱을 코드에 둔다. 없으면
+ *    `COOKIE_PATH = '/; HttpOnly'` 같은 설정이 **7.2 배포에서만** 조용히 통과해
+ *    쿠키 속성 주입이 된다(실측: `httponly=false` 인데 `HttpOnly` 가 붙는다).
+ *  - `samesite` : **본체는 거르지 않는다. 어느 버전에서도.** 여기가 유일한 방어다.
+ *    같은 파일 `cookie_samesite_safe()` 의 서술이 이쪽과 같은 사실을 말한다 —
+ *    두 주석이 어긋나면 그쪽이 맞다.
+ *    실측(PHP 8.1.27, `php -S` + `headers_list()`):
+ *      setcookie('X','v',['samesite'=>'Lax; Domain=evil.invalid'])
+ *        → 반환 true, 예외 없음, 헤더에 `; SameSite=Lax; Domain=evil.invalid` 가 그대로 실린다
+ *          (`Domain` 이 **실제 속성으로 해석**된다 — 속성 주입 성립)
+ *      같은 자리의 `,` 와 공백도 통과한다. `path`/`domain` 에 같은 값을 주면 `ValueError` 다
+ *    다시 재현하려면: `php -S` 로 위 한 줄을 띄우고 응답의 `Set-Cookie` 를 본다.
+ *    **CLI 에서는 `header()` 가 무동작이라 재현되지 않는다** — 그래서 "안 나오네" 를
+ *    "본체가 막았다" 로 읽으면 안 된다.
+ *
+ * 즉 이 함수는 본체보다 **엄격하다.** 그것이 의도다 —
+ * `samesite` 는 본체가 손대지 않고 8.x/7.2 어느 쪽에서도 통과하므로,
+ * 여기서 막지 않으면 **모든 배포에서** 속성 주입이 열린다.
  *
  * `header()`(SAPI)는 CR/LF 만 막는다. `;` 공백 `,` 는 이 검사가 유일한 방어다.
  *

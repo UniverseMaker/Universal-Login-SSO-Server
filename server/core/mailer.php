@@ -162,10 +162,15 @@ function mail_encode_name(string $s): string
  * 공격자 호스트로 만들어진다 → 피해자가 클릭하면 토큰이 공격자 로그로 넘어간다.
  * 설정이 없으면 **주소를 추측하지 않는다.**
  *
- * 예외를 던지지 않는 이유: register.php:169 와 me/email.php:86 의 호출부는
- * try/catch 로 감싸여 있지 않다. 여기서 던지면 계정은 이미 만들어진 뒤에
+ * 예외를 던지지 않는 이유: api/auth/register.php 의 `6) 이메일 인증 메일` 절과
+ * api/me/email.php 의 `5) 메일` 절에 있는 호출부는 — 둘 다 db_tx() 트랜잭션의
+ * try/catch **바깥**에 있으므로 — try/catch 로 감싸여 있지 않다. 여기서 던지면
+ * 계정은 이미 만들어진 뒤에
  * 500 이 나가고, password_forgot 에서는 응답 차이가 계정 열거 오라클이 된다.
  * 대신 send_mail() 이 mail_links_configured() 로 발송 자체를 막는다(fail-closed).
+ *
+ * 행 번호는 적지 않는다 — 편집 한 번에 낡는다(D-92). 파일명 + 절 이름으로 가리킨다.
+ * 호출부를 다시 세려면: grep -rn 'send_mail(' server/api
  *
  * @return string 설정된 BASE_URL(뒤쪽 / 제거) 또는 빈 문자열
  */
