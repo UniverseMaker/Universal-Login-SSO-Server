@@ -60,7 +60,13 @@
     '/api/auth/password/forgot': '/api/auth/password_forgot',
     '/api/auth/password/reset': '/api/auth/password_reset',
     '/api/auth/email/verify': '/api/auth/email_verify',
-    '/api/auth/email/resend': '/api/auth/email_resend'
+    '/api/auth/email/resend': '/api/auth/email_resend',
+    /* v1.6.0 설정 번들 — 파일은 api/admin/settings_bundle.php 하나이고
+       export(GET) · validate · dry-run · apply(POST) 네 동작이 그 안에 있다.
+       이 별칭이 없으면 브라우저가 `api/admin/settings/bundle.php` 를 요청해 404 다
+       (server/.htaccess 의 확장자 rewrite 는 실제 파일이 있을 때만 동작한다).
+       `?action=` 은 별칭이 아니라 query 인자로 넘긴다 — api() 의 opts.query 를 쓴다. */
+    '/api/admin/settings/bundle': '/api/admin/settings_bundle'
   };
 
   /* ======================================================================

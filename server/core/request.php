@@ -40,8 +40,36 @@ function only_method(string ...$methods): void
 }
 
 /**
+ * `body_json()` 이 **실제로 읽은** 원시 본문의 바이트 수. 읽지 않았으면 null.
+ *
+ * ── 왜 필요한가 (v1.6.0 보안 감사 M-4 / 리더 판정 D-204) ────────────────
+ * `Content-Length` 헤더만 보고 본문 크기를 제한하면 `Transfer-Encoding: chunked`
+ * 요청에는 그 헤더가 아예 없어 검사를 건너뛴다. 실측: 1.2MB 본문이
+ * `php -S`(cli-server)와 **Apache 2.4 + mod_php 8.1.27** 두 SAPI 모두에서
+ * 1MiB 상한을 지나 200 OK 로 파싱됐다. **헤더는 힌트이고 실제 길이가 검사다.**
+ *
+ * 재읽기(`file_get_contents('php://input')` 두 번)로 재지 않는 이유: 그 스트림의
+ * 재사용 가능성은 SAPI 에 달려 있고(`enable_post_data_reading=Off` 에서는 특히),
+ * 재읽기가 빈 문자열을 돌려주면 **검사가 조용히 통과한다.** 읽은 그 자리에서 세면
+ * SAPI 와 무관하게 참값이다.
+ *
+ * @param  int|null $set 내부용. `body_json()` 만 넘긴다
+ * @return int|null      읽은 바이트 수. 폼 전송(`$_POST`) 경로에서는 null
+ */
+function body_raw_bytes(?int $set = null): ?int
+{
+    static $len = null;
+    if ($set !== null) {
+        $len = $set;
+    }
+    return $len;
+}
+
+/**
  * 요청 본문을 배열로. application/json 이 기본이고 폼 전송도 받는다.
  * 본문이 있는데 JSON 파싱이 실패하면 VALIDATION_FAILED.
+ *
+ * 읽은 원시 바이트 수는 `body_raw_bytes()` 로 꺼낼 수 있다(위 주석 참고).
  */
 function body_json(): array
 {
@@ -55,6 +83,8 @@ function body_json(): array
         return $cached;
     }
     $raw = file_get_contents('php://input');
+    // 읽은 길이를 여기서 기록한다 — 파싱 실패로 던지는 경로보다 앞이다.
+    body_raw_bytes($raw === false ? 0 : strlen((string) $raw));
     if ($raw === false || trim((string) $raw) === '') {
         $cached = !empty($_POST) ? $_POST : [];
         return $cached;

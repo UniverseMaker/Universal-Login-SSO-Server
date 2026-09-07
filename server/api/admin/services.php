@@ -21,6 +21,8 @@ declare(strict_types=1);
  * (exchange.php 의 검증 순서 — backend_report 2-9 와 맞춘 것).
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
+// redirect_whitelist / allowed_origins 항목 규칙과 정규화는 core/urlrules.php 가 소유한다.
+require_once __DIR__ . '/../../core/urlrules.php';
 
 only_method('GET', 'POST', 'PUT', 'DELETE');
 
@@ -75,6 +77,11 @@ function admin_service_public(array $r, int $secretCount, int $userCount): array
  * URL 배열 검증.
  * $mode = 'redirect' : 절대 URL. 쿼리스트링·프래그먼트 금지(비교가 origin+path 라서)
  *         'origin'   : scheme://host[:port] 만. 경로 금지. 문자열 "null" 은 file:// 허용용으로 통과
+ *
+ * **항목 하나의 규칙과 정규화는 core/urlrules.php 의 url_rule_check() 가 소유한다.**
+ * 이 함수는 배열 수준(문자열 배열인가 · 중복 제거 · 50개 이내)만 보고 실패를 v_fail() 로
+ * 던지는 껍데기다. 설정 번들 검증기가 같은 판정을 쓰면서 실패를 배열로 모은다 —
+ * 정규화가 두 곳에서 갈리면 번들의 값과 DB 의 값이 문자열로 달라져 멱등이 조용히 깨진다.
  * @param mixed $v
  */
 function admin_url_list($v, string $field, string $mode): array
@@ -90,44 +97,16 @@ function admin_url_list($v, string $field, string $mode): array
         if (!is_string($item)) {
             v_fail($field, '각 항목은 문자열이어야 합니다.');
         }
-        $s = trim($item);
-        if ($s === '') {
-            continue;
+        $reason = null;
+        $norm   = url_rule_check($item, $mode, $reason);
+        if ($norm === null) {
+            v_fail($field, (string) $reason);
         }
-        if (mb_strlen($s, 'UTF-8') > 500) {
-            v_fail($field, '각 항목은 500자 이내여야 합니다.');
+        if ($norm === '') {
+            continue;                       // 공백뿐인 항목은 목록에 넣지 않는다
         }
-        if ($mode === 'origin' && $s === 'null') {
-            // file:// 에서 온 요청(Origin: null) 허용 표기
-            $out[] = 'null';
-            continue;
-        }
-        if (strpos($s, '?') !== false) {
-            v_fail($field, $mode === 'redirect'
-                ? '복귀 주소에 쿼리스트링을 포함할 수 없습니다.'
-                : '허용 출처에 쿼리스트링을 포함할 수 없습니다.');
-        }
-        if (strpos($s, '#') !== false) {
-            v_fail($field, '프래그먼트(#)를 포함할 수 없습니다.');
-        }
-        $p = parse_url($s);
-        if ($p === false || empty($p['scheme']) || empty($p['host'])) {
-            v_fail($field, '절대 URL 형식이어야 합니다. (예: https://app.example.com/callback.html)');
-        }
-        $scheme = strtolower((string) $p['scheme']);
-        if ($scheme !== 'http' && $scheme !== 'https') {
-            v_fail($field, 'http 또는 https 만 허용됩니다.');
-        }
-        if ($mode === 'origin') {
-            $path = isset($p['path']) ? (string) $p['path'] : '';
-            if ($path !== '' && $path !== '/') {
-                v_fail($field, '허용 출처에는 경로를 포함할 수 없습니다. (scheme://host[:port])');
-            }
-            $s = $scheme . '://' . strtolower((string) $p['host'])
-                . (isset($p['port']) ? ':' . (int) $p['port'] : '');
-        }
-        if (!in_array($s, $out, true)) {
-            $out[] = $s;
+        if (!in_array($norm, $out, true)) {
+            $out[] = $norm;
         }
     }
     if (count($out) > 50) {

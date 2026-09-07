@@ -125,7 +125,7 @@ if (!defined('T_SECRET_ACCESS')) {
 //
 // SECRET_ACCESS_LOG 는 반대 방향이다. 이 상수가 없으면 무슨 일이 생기는지 보라:
 //   - core/logger.php 는 값을 못 찾으면 **기록한다**(감사 유지)
-//   - api/admin/settings.php 의 admin_setting_value() 는 DB 행도 상수도 없으면
+//   - core/settingsdef.php 의 admin_setting_value() 는 DB 행도 상수도 없으면
 //     bool 을 **false 로** 떨어뜨린다 → 관리자 화면이 "꺼짐" 으로 보인다
 // 즉 가드가 없으면 업그레이드한 설치본에서 **화면과 실제 동작이 어긋난다** —
 // 운영자는 감사가 꺼져 있다고 믿는데 실제로는 켜져 있다. 그 반대보다 낫지도 않다.

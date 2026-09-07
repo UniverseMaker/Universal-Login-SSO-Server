@@ -72,15 +72,29 @@ function enc(string $plain): string
     return base64_encode($iv . $ct);
 }
 
-/** enc() 의 역. 복호화 실패 시 빈 문자열(예외를 밖으로 흘리지 않는다). */
-function dec(string $b64): string
+/**
+ * enc() 의 역. 복호화 실패 시 빈 문자열(예외를 밖으로 흘리지 않는다).
+ *
+ * **빈 문자열은 두 가지를 뜻한다** — `enc('')` 를 정상 복호화한 결과이거나, 복호화 실패다.
+ * 그 둘을 가려야 하는 호출부는 `$ok` 를 받아라. 가리지 않으면 「값이 비어 있다」를
+ * 「복호화가 실패했다」로 오진하는 로그가 남는다(v1.6.0 QA Q-1 에서 실제로 그랬다).
+ * 선택 인자이므로 기존 호출부는 그대로 동작한다.
+ *
+ * @param bool|null $ok (out) 복호화 자체가 성공했는가. 값의 유무와는 별개다
+ */
+function dec(string $b64, ?bool &$ok = null): string
 {
+    $ok  = false;
     $raw = base64_decode($b64, true);
     if ($raw === false || strlen($raw) <= 16) {
         return '';
     }
     $pt = openssl_decrypt(substr($raw, 16), 'aes-256-cbc', enc_key(), OPENSSL_RAW_DATA, substr($raw, 0, 16));
-    return $pt === false ? '' : $pt;
+    if ($pt === false) {
+        return '';
+    }
+    $ok = true;
+    return $pt;
 }
 
 /**

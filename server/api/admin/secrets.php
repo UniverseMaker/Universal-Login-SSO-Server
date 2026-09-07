@@ -24,6 +24,10 @@ declare(strict_types=1);
  * is_masked 는 UI 힌트로만 남아 응답에 계속 포함된다.
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
+// 아래 함수 3개(민감 키 판정 · 실효 게이트 판정 · allow_public 컬럼 가드)와
+// 값 형식 규칙은 core/secretguard.php 가 소유한다 — 설정 번들이 같은 판정을 쓴다.
+// **이 파일에 사본을 다시 만들지 마라.**
+require_once __DIR__ . '/../../core/secretguard.php';
 
 only_method('GET', 'POST', 'PUT', 'DELETE');
 
@@ -112,63 +116,6 @@ function admin_min_grade(array $in, string $key, array $allowed): ?string
 // 강제는 **API 계층**에 있어야 두 경로가 모두 막힌다.
 // ---------------------------------------------------------------------
 
-if (!function_exists('admin_secret_key_is_sensitive')) {
-    /**
-     * 민감 키 판정. **정규식은 install.php 의 `ins_is_sensitive_key()` 와 글자 단위로 같다**
-     * (출처: `_workspace/08a_fix2_install_report.md` §2 「민감 키 판정 규칙」).
-     *
-     * 규칙이 두 곳에서 갈라지면 한쪽만 막히는 상태가 된다. 설치기를 고칠 때 이 함수도 함께
-     * 고쳐라 — 공용 파일로 뺄 수 없는 이유는 install.php 가 core/ 를 로드하지 않기 때문이다.
-     *
-     * v1.4.0 개정(D-154(4)). 이름을 `_` `-` `.` 로 나눈 **낱말** 중 하나라도
-     * key / keys / apikey / apikeys / secret(s) / token(s) / password(s) / passwd /
-     * credential(s) / sk 이면 민감하다.
-     *
-     * 민감: `ai_api_key` `openai_key` `claude_key` `anthropic_key` `private_key`
-     *       `ai_api_key_prod` `api_key_v2` `sk_live` `x-api-key` `secret_key`
-     *       `api_key` `apikey` `x_secret` `client-secret` `refresh_token`
-     *       `db_password` `passwd` `aws_credentials` (대소문자 무시, 복수형 허용)
-     * 비민감: `api_base` `model` `endpoint` `org_id` `openai_org` `keyring`
-     *
-     * 종전 규칙은 대안 목록에 맨 `key` 가 없고 끝이 `$` 로 고정돼 있어
-     * `openai_key` 계열과 글자 그대로의 `secret_key` 까지 통째로 빠져나갔다.
-     * `api_key_hint` 는 이제 민감으로 잡힌다 — `api_key_v2` 와 이름 모양이 같아
-     * 규칙으로 가를 수 없고, 틀린다면 닫는 쪽으로 틀리는 것이 맞다(fail-closed).
-     */
-    function admin_secret_key_is_sensitive(string $key): bool
-    {
-        return preg_match(
-            '/(?:^|[_\-.])(?:apikeys?|keys?|secrets?|tokens?|passwords?|passwd|credentials?|sk)(?:$|[_\-.])/',
-            strtolower(trim($key))
-        ) === 1;
-    }
-}
-
-if (!function_exists('admin_secret_gate_is_effective')) {
-    /**
-     * 실효 게이트가 하나라도 걸려 있는가.
-     *
-     * **랭크 0 값은 게이트로 세지 않는다.** `guest`(0) / `free`(0) / `user`(0) 는
-     * `rank_of()` 가 0 을 돌려주므로 `*_gte()` 가 항상 참 — "제한 없음"과 결과가 같다.
-     * 이 값을 게이트로 인정하면 `min_billing_tier='free'` 로 "게이트를 건 척" 하고
-     * 통과하는 우회가 생긴다(설치기 담당이 발견한 함정. 08a §2 예외·한계 1번).
-     * 미지 열거값도 rank 0 이므로 같은 취급이다 — fail-closed 다.
-     */
-    function admin_secret_gate_is_effective(?string $minLevel, ?string $minTier, ?string $minRole): bool
-    {
-        if ($minLevel !== null && $minLevel !== '' && rank_of(ACCOUNT_LEVEL_RANK, $minLevel) > 0) {
-            return true;
-        }
-        if ($minTier !== null && $minTier !== '' && rank_of(BILLING_TIER_RANK, $minTier) > 0) {
-            return true;
-        }
-        if ($minRole !== null && $minRole !== '' && rank_of(ROLE_RANK, $minRole) > 0) {
-            return true;
-        }
-        return false;
-    }
-}
-
 if (!function_exists('admin_secret_guard_gate')) {
     /**
      * 민감 키 + 실효 게이트 0개 → 명시적 확인 플래그 `allow_public: true` 없이는 거부한다.
@@ -176,71 +123,75 @@ if (!function_exists('admin_secret_guard_gate')) {
      * 비민감 키(`api_base` / `model` 등)는 게이트 없이 허용한다 — 전부 잠그면 데모가 안 돌아
      * 운영자가 게이트를 통째로 풀어버린다. 그게 더 위험하다(리더 판정 D-47).
      *
-     * @param array $body 요청 본문 (플래그를 읽는다)
+     * ── 실효 게이트 판정에 **서비스 컨텍스트**가 들어간다 (H-2 / 리더 판정 D-206) ──
+     * `min_account_level: "vip"` 이 걸려 있어도 그 서비스가 `default_account_level: "vip"` 을
+     * 가입자에게 자동으로 보장하면 **가입한 전원이 통과한다.** 번들 import 경로는 그 조합을
+     * 거절하는데 이 콘솔 경로가 받아 주면, **같은 제품의 두 부분이 같은 DB 상태를 두고 서로
+     * 다른 말을 한다** — 그리고 엄격한 쪽이 AI 를 향하고 느슨한 쪽이 사람을 향한다.
+     * 피해는 그 행을 **어떻게 만들었는지에 달려 있지 않다.** 그래서 같은 판정을 쓴다.
+     *
+     * **선언 방법은 이 경로가 이미 갖고 있던 것 그대로다** — `allow_public: true` 한 곳.
+     * 번들이 두 곳(시크릿 필드 + 최상위 `acknowledge_public_secrets`)을 요구하는 이유는
+     * 「AI 가 오류 메시지를 보고 반사적으로 통과시키지 못하게」이고, 그 문제가 이 경로에는
+     * 없다(사람이 폼을 눌러 응답을 즉시 본다). 이 콘솔에는 최상위 블록이라는 자리 자체가
+     * 없으므로 **새 파라미터를 만들지 않았다 — 화면 변경도 필요하지 않다.**
+     *
+     * @param array   $body      요청 본문 (플래그를 읽는다)
+     * @param ?string $autoLevel 이 서비스가 가입자에게 자동으로 보장하는 계정등급.
+     *                           `secret_service_auto_level_of_row()` 가 계산한다
      * @return bool 플래그로 통과했는가 (= admin_logs 에 그 사실을 남겨야 한다)
      */
     function admin_secret_guard_gate(string $key, ?string $minLevel, ?string $minTier,
-                                     ?string $minRole, array $body): bool
+                                     ?string $minRole, array $body, ?string $autoLevel = null): bool
     {
         if (!admin_secret_key_is_sensitive($key)) {
             return false;
         }
-        if (admin_secret_gate_is_effective($minLevel, $minTier, $minRole)) {
+        if (admin_secret_gate_is_effective_in_service($minLevel, $minTier, $minRole, $autoLevel)) {
             return false;
         }
         if (v_bool($body, 'allow_public', false, false) !== true) {
+            // 두 원인을 가른다. 겹치면 H-1 쪽이 먼저다 — `basic` 은 애초에 게이트가 아니었고,
+            // 그것을 조합 문제로 설명하면 운영자가 서비스를 고치고 여전히 막힌다.
+            $defeated = secret_gate_level_defeated_by_auto($minLevel, $autoLevel);
             // field 는 D-47 이 민감 값의 기본 게이트로 지정한 min_billing_tier 를 가리킨다.
+            //
+            // **「default_account_level 을 낮추십시오」는 쓰지 않는다**(D-190 과 같은 규율).
+            // 시크릿 하나를 통과시키려고 그 서비스 **전 회원의 등급 정책**을 바꾸는 것이고,
+            // 그 서비스의 다른 시크릿과 이미 가입한 회원의 payload 까지 함께 움직인다.
+            // 원인은 말한다 — 그것 없이는 운영자가 어디를 볼지 알 수 없다.
+            // `allow_public=true` 를 이 경로에서만 문구에 남기는 것은 설계 판정 4-6 그대로다
+            // (사람에게는 맞는 문구이고, AI 가 읽는 번들 경로에서는 그것을 말하지 않는다).
             throw new AppError('VALIDATION_FAILED', 400, [
                 'field'   => 'min_billing_tier',
-                'message' => '민감한 시크릿(' . $key . ')에는 최소 등급 게이트가 필요합니다. '
-                    . '게이트를 비우면 가입한 모든 사용자가 이 값을 받습니다. '
-                    . 'min_billing_tier=lite 를 권장하며, 의도한 공개라면 allow_public=true 를 함께 보내십시오. '
-                    . '(free / guest / user 는 랭크 0 이라 게이트로 인정되지 않습니다.)',
+                'message' => $defeated
+                    ? '민감한 시크릿(' . $key . ')의 min_account_level(' . (string) $minLevel . ') '
+                        . '게이트가 이 서비스에서는 아무도 막지 않습니다. 이 서비스는 '
+                        . 'default_account_level(' . (string) $autoLevel . ') 을 가입하는 회원에게 '
+                        . '자동으로 보장하므로, 가입한 전원이 그 등급을 갖고 게이트를 통과합니다. '
+                        . 'min_billing_tier=lite 를 권장합니다 — 결제등급과 역할은 서비스가 자동으로 '
+                        . '부여하지 않습니다. 의도한 공개라면 allow_public=true 를 함께 보내십시오.'
+                    : '민감한 시크릿(' . $key . ')에는 최소 등급 게이트가 필요합니다. '
+                        . '게이트를 비우면 가입한 모든 사용자가 이 값을 받습니다. '
+                        . 'min_billing_tier=lite 를 권장하며, 의도한 공개라면 allow_public=true 를 함께 보내십시오. '
+                        . '(guest / basic 계정등급, free 결제등급, user 역할은 전 회원의 기본값이라 '
+                        . '게이트로 인정되지 않습니다 — 걸어도 전원이 통과합니다.)',
             ]);
         }
         return true;
     }
 }
 
-if (!function_exists('admin_secrets_has_allow_public')) {
-    /**
-     * `service_secrets.allow_public` 컬럼이 이 DB 에 있는가 (마이그레이션 0002).
-     *
-     * **코드를 올리고 아직 migrate.php 를 돌리지 않은 설치본이 존재한다.** 그 상태에서
-     * 이 컬럼을 무조건 INSERT/UPDATE 에 넣으면 시크릿 생성·수정이 전부 500 이 된다.
-     * 컬럼이 없으면 승인 표시를 쓰지 않고 넘어간다 — 그러면 게이트 점검 화면에서
-     * 그 행이 '미승인' 으로 보이는데, **그것이 안전한 쪽의 오차**다(승인된 것을
-     * 미승인으로 보는 것은 확인을 한 번 더 하게 만들 뿐이고, 반대는 놓치게 만든다).
-     * 마이그레이션을 적용하면 그다음 수정부터 정상 기록된다.
-     *
-     * 요청당 1회만 조회한다. 이 함수를 부르는 곳은 관리자 시크릿 쓰기 경로뿐이다.
-     */
-    function admin_secrets_has_allow_public(): bool
-    {
-        static $has = null;
-        if ($has === null) {
-            $has = db_val('SELECT COUNT(*) FROM information_schema.COLUMNS'
-                . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-                [T_SECRETS, 'allow_public']) > 0;
-        }
-        return $has;
-    }
-}
-
-/** 값 검증. value_type 에 따라 JSON / URL 형식을 확인한다. */
+/**
+ * 값 검증. value_type 에 따라 JSON / URL 형식을 확인한다.
+ * 규칙 자체는 core/secretguard.php 의 secret_value_rule_check() 하나뿐이다 —
+ * 이 함수는 그 판정을 v_fail() 로 바꿔 던지는 껍데기다(번들 검증기는 배열로 모은다).
+ */
 function admin_secret_value(string $value, string $valueType): void
 {
-    if ($valueType === 'json') {
-        $d = json_decode($value, true);
-        if ($d === null && strtolower(trim($value)) !== 'null') {
-            v_fail('secret_value', 'value_type 이 json 이면 유효한 JSON 문자열이어야 합니다.');
-        }
-    } elseif ($valueType === 'url') {
-        $p = parse_url(trim($value));
-        if ($p === false || empty($p['scheme']) || empty($p['host'])
-            || !in_array(strtolower((string) $p['scheme']), ['http', 'https'], true)) {
-            v_fail('secret_value', 'value_type 이 url 이면 http(s) 절대 URL 이어야 합니다.');
-        }
+    $reason = null;
+    if (!secret_value_rule_check($value, $valueType, $reason)) {
+        v_fail('secret_value', (string) $reason);
     }
 }
 
@@ -255,9 +206,16 @@ $now       = now_utc();
 $serviceId = (string) v_string($_GET, 'service_id', 1, 64, true);
 
 // 서비스 존재 확인 (status 무관 — 관리자는 disabled 서비스의 시크릿도 다룬다)
-if (db_val('SELECT id FROM ' . T_SERVICES . ' WHERE service_id = ?', [$serviceId]) === null) {
+//
+// **행 전체를 읽는다** — 게이트 판정이 `default_account_level`·`auto_join`·`allow_register`
+// 를 본다(H-2 / D-206). 종전에는 `id` 만 읽었고, 그래서 이 경로가 서비스 컨텍스트를
+// 모른 채 시크릿 한 건의 `min_*` 만으로 판정했다.
+$serviceRow = db_one('SELECT * FROM ' . T_SERVICES . ' WHERE service_id = ?', [$serviceId]);
+if ($serviceRow === null) {
     throw new AppError('NOT_FOUND', 404, ['message' => '서비스를 찾을 수 없습니다.']);
 }
+// 이 요청 동안 서비스는 하나다. 한 번만 계산해 두 쓰기 경로(POST·PUT)가 같은 값을 본다.
+$svcAutoLevel = secret_service_auto_level_of_row($serviceRow);
 
 /** 이 서비스의 시크릿 1건. 다른 서비스의 id 를 넣어도 찾히지 않는다. */
 $loadSecret = function ($rawId) use ($serviceId) {
@@ -368,8 +326,10 @@ if ($method === 'POST') {
     ];
 
     // D-54: 게이트 없는 민감 시크릿은 여기서 막는다. DB 쓰기보다 앞이다.
+    // D-206: 그 판정에 이 서비스의 자동 보장 등급이 들어간다.
     $ackPublic = admin_secret_guard_gate(
-        $key, $row['min_account_level'], $row['min_billing_tier'], $row['min_role'], $body
+        $key, $row['min_account_level'], $row['min_billing_tier'], $row['min_role'],
+        $body, $svcAutoLevel
     );
     // 승인 사실을 행에도 남긴다(마이그레이션 0002). admin_logs 에만 있으면 목록에서
     // 안 보이고, 안 보이면 게이트 점검 화면이 의도한 공개까지 섞어 보여 준다.
@@ -503,6 +463,13 @@ if ($method === 'PUT') {
     // 반대로 이 4개를 건드리지 않는 요청(description·status·sort_order 만 바꾸는 등)은
     // 검사하지 않는다. 이번 수정 이전에 만들어진 게이트 없는 행의 편집을 통째로 막으면
     // 운영자가 값을 고칠 수도, 게이트를 걸 수도 없는 상태가 된다(게이트를 걸려면 PUT 이 필요하다).
+    //
+    // **H-2(D-206)도 같은 구분을 그대로 쓴다.** 판정 기준이 넓어지면서
+    // 「이 버전부터 게이트가 아닌 것이 된 기존 행」이 한 종류 더 생겼다 —
+    // `min_account_level` 이 그 서비스의 `default_account_level` 이하인 행이다.
+    // 그 행도 게이트 필드를 건드리지 않는 수정(값 교체 · 설명 · status)은 **통과한다.**
+    // 서비스 쪽 필드가 바뀌어 뒤늦게 무력화된 행에도 같은 규칙이 적용된다 —
+    // 이 요청이 그 조합을 만든 것이 아니면 이 요청을 막지 않는다.
     $gateTouched = array_key_exists('secret_key', $body)
         || array_key_exists('min_account_level', $body)
         || array_key_exists('min_billing_tier', $body)
@@ -519,7 +486,8 @@ if ($method === 'PUT') {
                 ? $set['min_billing_tier'] : $target['min_billing_tier'],
             array_key_exists('min_role', $set)
                 ? $set['min_role'] : $target['min_role'],
-            $body
+            $body,
+            $svcAutoLevel
         );
         // 게이트 3필드나 키 이름을 건드린 요청은 **적용 후 상태**로 표시를 다시 쓴다.
         // 게이트를 실제로 걸었다면 $ackPublic 은 false 이고 표시가 0 으로 내려간다 —

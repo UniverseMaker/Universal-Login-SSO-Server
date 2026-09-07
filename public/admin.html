@@ -15,7 +15,7 @@
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
 <meta http-equiv="Cache-Control" content="no-store">
-<link rel="stylesheet" href="assets/style.css?v=1.5.0">
+<link rel="stylesheet" href="assets/style.css?v=1.6.0">
 </head>
 <body>
 <div class="page">
@@ -255,8 +255,24 @@
                 <strong>최소 등급 게이트가 하나도 걸려 있지 않은</strong> 시크릿을 모든 서비스에서 찾습니다.
                 게이트가 없으면 <strong>그 서비스에 가입한 모든 사용자</strong>가 이 값을 받아 갑니다.
                 <br>
-                <strong>랭크 0 값(<code>guest</code> · <code>free</code> · <code>user</code>)은 게이트로 세지 않습니다</strong> —
-                통과 조건이 “제한 없음”과 같기 때문입니다.
+                <strong>각 축의 기본값 이하로 건 게이트는 게이트로 세지 않습니다</strong> —
+                계정등급 <code>basic</code>(과 그 아래 <code>guest</code>) · 결제등급 <code>free</code> · 역할 <code>user</code> 입니다.
+                <strong>전원이 이미 그 값을 갖고 있어</strong> 통과 조건이 “제한 없음”과 같기 때문입니다
+                (<code>basic</code> 은 신규 가입자에게 박히는 값입니다).
+                <br>
+                <strong>이 표의 판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과입니다.</strong>
+                실제 차단은 생성·수정 시점에 서버가 합니다 — 서버에 조회용 판정 엔드포인트가 없어
+                이 화면이 직접 계산합니다. 사본이 서버와 어긋나면 이 표가 틀립니다.
+                <strong>서버와 다르게 보이면 서버가 정답입니다.</strong>
+                <br>
+                <strong>이 점검이 보지 않는 것 — 시크릿 한 건의 최소 등급만 봅니다.</strong>
+                서비스의 <code>default_account_level</code> 이 그 게이트를 가입 시점에
+                <strong>자동으로 열어 주는 조합</strong>(예: 최소 계정등급 <code>vip</code> +
+                같은 서비스의 기본 계정등급 <code>vip</code>)은 <strong>여기서 잡히지 않습니다.</strong>
+                게이트가 걸린 것처럼 보이지만 그 서비스 가입자 전원이 통과합니다.
+                설정 번들 <code>import</code> 경로만 그 조합을 거절합니다 —
+                이 콘솔의 “수정”으로 만든 조합은 거절되지 않습니다.
+                <strong>서비스 탭에서 기본 계정등급을 함께 확인하세요.</strong>
                 <br>
                 <strong>이 화면은 아무것도 바꾸지 않습니다.</strong> 목록을 보고 사람이 판단해 “수정”으로 게이트를 거세요.
                 운영 중인 서비스의 등급을 일괄로 올리면 정상 연동 앱이 갑자기 막힙니다.
@@ -536,14 +552,98 @@
         </div>
       </section>
 
+      <!-- ================================================================
+           설정 번들 — export / import (superadmin 전용)
+
+           네 동작 모두 superadmin 이다. MIN_RANK.bundle 이 탭 자체를 막고,
+           prunePanels() 가 권한 없는 계정에서 이 <section> 을 노드째 지운다.
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="bundle" hidden>
+
+        <div class="card">
+          <div class="card-head"><h2>내보내기</h2></div>
+          <div class="card-body">
+            <div id="bx-tradeoff"></div>
+            <div class="row">
+              <button type="button" class="btn btn-primary" id="bx-run">번들 조회</button>
+              <button type="button" class="btn btn-secondary" id="bx-save" disabled>JSON 파일로 저장</button>
+            </div>
+            <div id="bx-out"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>가져오기</h2>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="bi-reset">처음부터</button>
+          </div>
+          <div class="card-body">
+            <div id="bi-notice"></div>
+            <div id="bi-steps"></div>
+
+            <form class="form" id="bi-form" novalidate>
+              <div class="field">
+                <label for="bi-file">번들 파일 선택</label>
+                <input type="file" id="bi-file" name="file" accept="application/json,.json">
+                <span class="field-error"></span>
+                <span class="hint">
+                  브라우저가 파일을 읽어 아래 칸을 채웁니다. 파일 자체를 업로드하지 않습니다
+                  (JSON 본문으로 보냅니다).
+                </span>
+              </div>
+
+              <div class="field">
+                <label for="bi-text">번들 JSON</label>
+                <textarea id="bi-text" name="bundle" rows="12" class="mono" spellcheck="false"
+                          placeholder='{"ulogin_settings_bundle": "1.0"}'></textarea>
+                <span class="field-error"></span>
+                <span class="hint">
+                  파일을 고르는 대신 여기에 직접 붙여넣어도 됩니다. 내용을 고치면 검증·계획이
+                  초기화되고 다시 1단계부터 진행합니다.
+                </span>
+              </div>
+
+              <div class="grid-2">
+                <div class="field">
+                  <label for="bi-conflict">충돌 정책 (on_conflict)</label>
+                  <select id="bi-conflict" name="on_conflict">
+                    <option value="merge">merge — 번들에 있는 필드만 갱신 (기본)</option>
+                    <option value="skip">skip — 기존 행은 그대로 두고 새 것만 추가</option>
+                    <option value="fail">fail — 기존 행과 겹치면 아무것도 적용하지 않음</option>
+                  </select>
+                  <span class="field-error"></span>
+                  <span class="hint">요청의 이 값이 번들 안의 on_conflict 를 이깁니다.</span>
+                </div>
+                <div class="field">
+                  <label for="bi-reason">적용 사유 (선택)</label>
+                  <input type="text" id="bi-reason" name="reason" maxlength="255">
+                  <span class="field-error"></span>
+                  <span class="hint">감사 로그(<code>admin_logs.memo</code>)에 남습니다</span>
+                </div>
+              </div>
+
+              <div class="row">
+                <button type="button" class="btn btn-secondary" id="bi-validate">1. 검증</button>
+                <button type="button" class="btn btn-secondary" id="bi-dryrun" disabled>2. 계획 보기</button>
+                <button type="button" class="btn btn-primary" id="bi-apply" disabled>3. 적용</button>
+              </div>
+            </form>
+
+            <div id="bi-errors"></div>
+            <div id="bi-out"></div>
+          </div>
+        </div>
+      </section>
+
     </div><!-- /#app -->
   </main>
 
   <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
 </div>
 
-<script src="assets/api.js?v=1.5.0"></script>
-<script src="assets/ui.js?v=1.5.0"></script>
+<script src="assets/api.js?v=1.6.0"></script>
+<script src="assets/ui.js?v=1.6.0"></script>
 <script>
 /* ============================================================================
  * admin.html — 관리자 콘솔 (탭: 대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정)
@@ -577,12 +677,23 @@
    * 0. 상수 / 상태
    * ==================================================================== */
 
-  /** 계약 §3-1 의 RANK 값. 자기방어 UI 판정에만 쓴다(실제 방어는 서버). */
+  /**
+   * 계약 §3-1 의 RANK 값. 자기방어 UI 판정에만 쓴다(실제 방어는 서버).
+   *
+   * 아래 `@parity-begin` / `@parity-end` 표식은 장식이 아니다.
+   * `tests/tier2_unit/t_60_gate_parity.php` 가 이 표식 사이의 **소스를 그대로 뽑아
+   * Node 로 실행**하고, 같은 케이스를 PHP 로도 돌려 결과를 대조한다.
+   * 표식을 지우거나 이름을 바꾸면 그 테스트가 **실패한다**(조용히 사라지지 않는다).
+   * 값을 고칠 때는 `server/core/perm.php` 의 `*_RANK` 와 함께 고쳐라 —
+   * 어긋나면 그 테스트가 잡는다.
+   */
+  /* @parity-begin rank-map */
   var RANK = {
     account_level: { guest: 0, basic: 10, verified: 20, vip: 30, staff: 90 },
     role: { user: 0, manager: 10, admin: 20, superadmin: 30 },
     billing_tier: { free: 0, lite: 10, pro: 20, enterprise: 30 }
   };
+  /* @parity-end rank-map */
 
   var ENUMS = {
     status: ['active', 'pending', 'suspended', 'dormant', 'withdrawn'],
@@ -640,6 +751,10 @@
     secrets: RANK.role.admin,
     logs: RANK.role.manager,          // 로그 탭 자체는 로그인 로그(manager)로 진입 가능
     settings: RANK.role.admin,
+    /* v1.6.0 설정 번들. `settings_bundle.php` 는 export · validate · dry-run · apply
+       **네 동작 전부** require_global_role($ctx, 'superadmin') 이다. admin 이 이 탭을
+       열면 버튼 넷이 모두 403 을 받으므로 탭 자체를 만들지 않는다. */
+    bundle: RANK.role.superadmin,
     /* 로그 서브탭 */
     logLogin: RANK.role.manager,
     logAdmin: RANK.role.admin,
@@ -1042,7 +1157,8 @@
     { key: 'services', label: '서비스', minRank: MIN_RANK.services },
     { key: 'secrets', label: '시크릿', minRank: MIN_RANK.secrets },
     { key: 'logs', label: '로그', minRank: MIN_RANK.logs },
-    { key: 'settings', label: '설정', minRank: MIN_RANK.settings }
+    { key: 'settings', label: '설정', minRank: MIN_RANK.settings },
+    { key: 'bundle', label: '설정 번들', minRank: MIN_RANK.bundle }
   ];
 
   /** 내 랭크로 볼 수 있는 탭만. tabs() 에 이 목록만 넘기면 버튼 자체가 생기지 않는다. */
@@ -1083,6 +1199,7 @@
     if (key === 'secrets') { initSecretsTab(); return; }
     if (key === 'logs') { initLogsTab(); return; }
     if (key === 'settings') { loadSettings(); return; }
+    if (key === 'bundle') { initBundleTab(); return; }
   }
 
   /* ======================================================================
@@ -2412,27 +2529,86 @@
    *   `min_account_level`, `min_billing_tier`, `min_role`)이 목록 응답에 전부
    *   들어 있으므로 서버를 고치지 않고 화면에서 판정할 수 있다.
    *   **`server/` 는 이 담당의 소유가 아니므로 엔드포인트를 만들지 않았다.**
+   *   **근본 해법은 서버가 판정을 계산해 응답에 실어 주는 것이고 v1.7.0 과제다**
+   *   (리더 판정 D-207). 그때까지 이 사본이 남고, 갈라짐은 패리티 테스트가 막는다.
+   *   화면도 「이 판정은 브라우저 계산이다」를 글자로 말한다 — 뒤의 결과 각주를 보라.
    *
-   * ▣ 규칙이 두 곳에 생겼다 — 이것이 이 블록의 유일한 위험이다
-   *   아래 정규식과 랭크 0 규칙은 `server/api/admin/secrets.php` 의
-   *   `admin_secret_key_is_sensitive()` · `admin_secret_gate_is_effective()`,
-   *   그리고 `server/install.php` 의 `ins_is_sensitive_key()` 와 **같아야 한다.**
-   *   서버 쪽을 고치면 여기도 함께 고쳐라. 어긋나면 **서버가 정답이다** —
-   *   실제 차단은 서버가 하고 이 화면은 보고서일 뿐이다.
+   * ▣ 규칙이 세 곳에 있다 — 그리고 실제로 갈라졌다
+   *   아래 정규식과 게이트 판정은 `server/core/secretguard.php` 의
+   *   `admin_secret_key_is_sensitive()` · `SECRET_GATE_FLOOR` ·
+   *   `secret_gate_axis_over_floor()` · `admin_secret_gate_is_effective()`,
+   *   그리고 `server/install.php` 의 `ins_is_sensitive_key()` ·
+   *   `ins_gate_axis_floor()` · `ins_gate_effective()` 와 **같아야 한다.**
+   *   어긋나면 **서버가 정답이다** — 실제 차단은 서버가 하고 이 화면은 보고서일 뿐이다.
+   *
+   *   v1.6.0 에서 실제로 갈라졌다. 서버가 게이트 기준을 「랭크 0 초과」에서
+   *   「각 축의 기본값 초과」로 바꿨는데(H-1 / D-201) 이 사본이 그대로 남아
+   *   **`basic` 게이트를 실효 게이트로 세면서 화면이 그 행을 과소 보고**했다 —
+   *   게이트가 없는데 있다고 보이는, 위험한 쪽의 오차다.
+   *   그래서 사본을 맞추는 것으로 끝내지 않고 `tests/tier2_unit/t_60_gate_parity.php`
+   *   가 **매 실행 세 사본을 각자의 엔진으로 돌려 대조**한다(리더 판정 D-207).
+   *   아래 `@parity-begin` 표식이 그 추출 지점이다.
    *
    * ▣ 이 화면은 아무것도 바꾸지 않는다
    *   운영 중인 서비스의 시크릿 등급을 코드가 임의로 올리면 정상 연동 앱이
    *   갑자기 막힌다. 목록과 "이 서비스 열기" 이동만 제공한다.
    * ==================================================================== */
 
-  /** 서버의 `admin_secret_key_is_sensitive()` 와 글자 단위로 같은 정규식. */
+  /* @parity-begin secret-gate
+     ─────────────────────────────────────────────────────────────────────
+     이 표식 사이의 코드는 `tests/tier2_unit/t_60_gate_parity.php` 가 **소스를
+     그대로 뽑아 Node 로 실행**한다. 같은 케이스를 서버 PHP 로도 돌려 결과를
+     한 건씩 대조하므로, 서버 판정이 바뀌고 여기가 안 바뀌면 그 테스트가 빨개진다.
+     표식을 지우거나 이름을 바꾸면 그 테스트도 실패한다 — 검사가 조용히 사라지지 않는다.
+
+     **랭크 숫자를 이 블록에 다시 적지 마라.** 위 `rank-map` 블록의 `RANK` 하나만 쓴다.
+     축 기본값도 랭크가 아니라 **이름**으로 적고 랭크는 `RANK` 에서 끌어온다 —
+     서버 `SECRET_GATE_FLOOR` + `rank_of()` 와 같은 모양이다.
+     ───────────────────────────────────────────────────────────────────── */
+
+  /** 서버 `core/secretguard.php` 의 `admin_secret_key_is_sensitive()` 와 글자 단위로 같은 정규식. */
   var SENSITIVE_KEY_RE =
     /(?:^|[_\-.])(?:apikeys?|keys?|secrets?|tokens?|passwords?|passwd|credentials?|sk)(?:$|[_\-.])/;
 
+  /**
+   * PHP `trim()` 의 기본 charlist(공백 · \t · \n · \r · \0 · \x0B)와 **같은 집합만** 깎는다.
+   *
+   * `String.prototype.trim()` 을 쓰면 안 된다. JS 는 유니코드 공백(NBSP · U+2028 ·
+   * BOM)과 \f 까지 깎고 **\0 은 깎지 않는다.** 실측한 갈라짐 4건 중 하나가
+   * `"api_key\0"` 이고, 그 방향이 **PHP 는 민감으로 보고 JS 는 비민감으로 보는**
+   * 쪽이다 — 게이트 점검이 그 행을 놓치는, H-1 과 같은 위험한 쪽의 오차다.
+   * 나머지 3건(NBSP · U+2028 · BOM)은 반대 방향이지만 역시 서버와 다른 답이다.
+   */
+  var PHP_TRIM_RE = /^[ \t\n\r\x00\x0B]+|[ \t\n\r\x00\x0B]+$/g;
+
+  /**
+   * PHP `strtolower()` 와 같이 **ASCII A-Z 만** 내린다.
+   * `toLowerCase()` 는 U+212A(켈빈 기호)를 ASCII `k` 로 바꿔 PHP 와 갈린다.
+   */
+  function asciiLower(s) {
+    return s.replace(/[A-Z]/g, function (c) {
+      return String.fromCharCode(c.charCodeAt(0) + 32);
+    });
+  }
+
   function secretKeyIsSensitive(key) {
     var k = (key === null || key === undefined) ? '' : String(key);
-    return SENSITIVE_KEY_RE.test(k.trim().toLowerCase());
+    return SENSITIVE_KEY_RE.test(asciiLower(k.replace(PHP_TRIM_RE, '')));
   }
+
+  /**
+   * 각 축의 **모집단 기본값**. 서버 `core/secretguard.php` 의 `SECRET_GATE_FLOOR` 와 같다.
+   *
+   * 이 값 이하로 건 게이트는 게이트가 아니다 — 전원이 이미 그 값을 갖고 있어
+   * 통과 조건이 "제한 없음"과 같다. `basic` 은 랭크 0 이 아니지만
+   * `users.account_level` 의 스키마 기본값이자 신규 가입자에게 박히는 값이다.
+   * (v1.6.0 보안 감사 H-1 / 리더 판정 D-201 · D-207)
+   */
+  var GATE_FLOOR = {
+    account_level: 'basic',
+    billing_tier: 'free',
+    role: 'user'
+  };
 
   /**
    * 게이트 값의 랭크. **모르는 값은 0 으로 본다**(fail-closed) — 서버 `rank_of()` 와 같다.
@@ -2445,12 +2621,24 @@
     return (m && Object.prototype.hasOwnProperty.call(m, value)) ? m[value] : 0;
   }
 
-  /** 랭크 0 값(guest·free·user)은 게이트로 세지 않는다 — 통과 조건이 "제한 없음"과 같다. */
-  function secretGateIsEffective(s) {
-    return gateRankOf('account_level', s.min_account_level) > 0
-      || gateRankOf('billing_tier', s.min_billing_tier) > 0
-      || gateRankOf('role', s.min_role) > 0;
+  /** 한 축의 게이트 값이 그 축의 기본값을 **넘는가**. 서버 `secret_gate_axis_over_floor()`. */
+  function gateAxisOverFloor(kind, value) {
+    if (value === null || value === undefined || value === '') { return false; }
+    return gateRankOf(kind, value) > gateRankOf(kind, GATE_FLOOR[kind]);
   }
+
+  /**
+   * 실효 게이트가 하나라도 걸려 있는가. 서버 `admin_secret_gate_is_effective()`.
+   *
+   * 기준은 「각 축의 기본값 초과」다. 「랭크 0 초과」는 그 특수 사례로 남는다 —
+   * `guest`·`free`·`user` 는 각 축의 기본값 이하이므로 여전히 게이트가 아니다.
+   */
+  function secretGateIsEffective(s) {
+    return gateAxisOverFloor('account_level', s.min_account_level)
+      || gateAxisOverFloor('billing_tier', s.min_billing_tier)
+      || gateAxisOverFloor('role', s.min_role);
+  }
+  /* @parity-end secret-gate */
 
   /* 요청 폭주 방지 상한. 걸리면 화면이 "여기까지만 봤다"고 말한다 —
      조용히 잘라내면 "문제가 없다"로 읽힌다. */
@@ -2601,7 +2789,10 @@
     if (report.findings.length === 0) {
       host.appendChild(emptyNode(
         '게이트 없는 민감 시크릿을 찾지 못했습니다.',
-        '판정은 서버와 같은 규칙을 브라우저에서 다시 적용한 결과입니다. 실제 차단은 생성·수정 시점에 서버가 합니다.'));
+        '판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과입니다 — 사본이 서버와 어긋나면 '
+        + '이 “없음”도 틀릴 수 있습니다. 실제 차단은 생성·수정 시점에 서버가 합니다. '
+        + '또한 이 점검은 시크릿 한 건의 최소 등급만 봅니다 — 서비스의 default_account_level 이 '
+        + '게이트를 자동으로 열어 주는 조합은 “없음”에 포함되지 않습니다.'));
       return;
     }
 
@@ -2686,7 +2877,12 @@
     }
 
     host.appendChild(el('p', { class: 'hint' },
-      '랭크 0 값(게스트 · 무료 · 사용자)은 게이트로 세지 않습니다. '
+      '각 축의 기본값 이하로 건 게이트는 게이트로 세지 않습니다 — 계정등급 basic(과 guest) · '
+      + '결제등급 free · 역할 user. 전원이 이미 그 값을 갖고 있어 통과 조건이 “제한 없음”과 같습니다. '
+      + '이 판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과이며, 실제 차단은 서버가 합니다 — '
+      + '서버와 다르게 보이면 서버가 정답입니다. '
+      + '이 점검은 시크릿 한 건의 최소 등급만 봅니다 — 서비스의 default_account_level 이 '
+      + '그 게이트를 가입 시점에 자동으로 열어 주는 조합은 여기서 잡히지 않습니다(서비스 탭에서 함께 확인하세요). '
       + '공개 승인 표식은 목록 응답의 allow_public 값이며, 마이그레이션 0002 미적용 설치본에서는 '
       + '전부 “없음 — 미승인” 으로 보입니다(안전한 쪽의 오차입니다).'));
   }
@@ -3376,7 +3572,899 @@
   });
 
   /* ======================================================================
-   * 10. 부팅 — GET /api/me → role_rank >= 10 (manager) 확인
+   * 10. 설정 번들 탭 — /api/admin/settings/bundle
+   *
+   *   GET                     응답 키: bundle, meta
+   *   POST ?action=validate   응답 키: valid, checked, warnings
+   *   POST ?action=dry-run    응답 키: valid, plan_hash, plan, checked
+   *   POST ?action=apply      응답 키: applied, plan_hash, result, warnings, admin_log_id
+   *
+   *   검증 오류는 **data.errors** 다. error.errors 는 존재하지 않는다.
+   *   api.js 가 실패 응답의 `data` 를 ApiError 의 `data` 로 실어 주므로
+   *   `bundleErrData(err).errors` 로 읽는다.
+   *
+   *   화면이 지키는 것 3가지
+   *     (a) dry-run 을 건너뛸 수 없다. apply 는 dry-run 이 준 plan_hash 를 그대로 보내고,
+   *         그 해시는 **지금 화면에 있는 번들 그대로**에 대해 받은 것이어야 한다.
+   *         입력이 한 글자라도 바뀌면 지문이 달라져 2·3단계 버튼이 다시 잠긴다.
+   *     (b) 무엇이 빠졌는지 화면이 말한다. export 번들의 `excluded` 를 그대로 그린다 —
+   *         특히 시크릿 값이 들어 있지 않다는 것. 모르고 다른 설치본에 넣으면
+   *         서비스가 조용히 동작하지 않는다.
+   *     (c) 오류는 사람이 통째로 복사해 AI 에게 줄 수 있어야 한다. `path` 는
+   *         JSON Pointer 이고 그대로 보여준다. `got` 이 secret_value 자리면
+   *         서버가 "***" 로 준다 — 화면은 그것을 그대로 표시하고 값을 되살리지 않는다.
+   * ==================================================================== */
+
+  var BUNDLE_OP_LABELS = {
+    create: '생성', update: '갱신', unchanged: '변경 없음', skip: '건너뜀'
+  };
+  var BUNDLE_VALUE_ACTION_LABELS = {
+    set: '값 설정', unchanged: '값 같음', keep: '값 유지', leave_empty: '값 비움'
+  };
+  /* 경고 7개 중 이 둘은 운영 전체에 즉시 영향을 준다. 다른 경고와 색을 가른다.
+     전부 같은 색으로 칠하면 강조가 강조가 아니다(로그인 결과 라벨과 같은 규율). */
+  var BUNDLE_LOUD_WARNINGS = { maintenance_mode_on: true, secret_audit_off: true };
+
+  var bundleState = {
+    exported: null,        // export 응답의 data.bundle (그대로 파일로 저장한다)
+    fingerprint: null,     // 지금 화면에 있는 입력의 지문
+    validatedAt: null,     // 검증을 통과한 지문
+    plannedAt: null,       // 계획을 받은 지문
+    planHash: null         // 그 계획의 plan_hash. apply 가 이것을 그대로 보낸다
+  };
+
+  /** ApiError 에 실린 실패 응답 본문(봉투의 data). 없으면 null. */
+  function bundleErrData(err) {
+    var d = (err && err.data) ? err.data : null;
+    return (d && typeof d === 'object') ? d : null;
+  }
+
+  /**
+   * `.alert` 는 flex 컨테이너라 자식이 가로로 놓인다. 배너에 표·목록을 덧붙일 때는
+   * 반드시 `.alert-body` 안에 넣어야 한다 — 배너 노드에 바로 붙이면 옆으로 밀린다.
+   */
+  function alertBoxNode(message, type, title, extra) {
+    var box = alertNode(message, type, title);
+    var body = box.querySelector('.alert-body');
+    mount(body || box, extra || []);
+    return box;
+  }
+
+  function bundleInputText() {
+    return $('#bi-text') ? String($('#bi-text').value) : '';
+  }
+
+  /**
+   * 지금 입력의 지문. 본문이든 충돌 정책이든 바뀌면 값이 달라진다.
+   * 두 값을 배열로 감싸 JSON 으로 만든다 — 구분자를 직접 고르면 그 문자가
+   * 본문에 들어왔을 때 서로 다른 입력이 같은 지문을 갖는다.
+   *
+   * **공백도 정규화하지 않는다.** 「이 정도 편집은 계획을 바꾸지 않는다」는 판단을
+   * 화면이 대신 내리면, 그 판단이 한 번이라도 틀렸을 때 운영자는 확인하지 않은 계획을
+   * 적용하게 된다. 편집이 있었으면 잠근다 — 틀린다면 닫는 쪽으로 틀린다.
+   */
+  function bundleFingerprint() {
+    var c = $('#bi-conflict') ? String($('#bi-conflict').value) : '';
+    return JSON.stringify([c, bundleInputText()]);
+  }
+
+  /* --- 단계 게이트 ---------------------------------------------------
+   * apply 버튼은 **계획을 받은 지문이 지금 지문과 같을 때만** 열린다.
+   * 서버도 expect_plan_hash 로 같은 것을 막지만, 화면이 먼저 막아야
+   * 운영자가 "적용했다고 생각했는데 400 이 났다" 를 겪지 않는다.
+   */
+  function bundleSyncGate() {
+    var fp = bundleFingerprint();
+    bundleState.fingerprint = fp;
+    var hasText = bundleInputText().trim() !== '';
+    var validated = hasText && bundleState.validatedAt === fp;
+    var planned = hasText && bundleState.plannedAt === fp && !!bundleState.planHash;
+
+    $('#bi-validate').disabled = !hasText;
+    $('#bi-dryrun').disabled = !validated;
+    $('#bi-apply').disabled = !planned;
+    renderBundleSteps(hasText, validated, planned);
+  }
+
+  function bundleStepNode(n, label, done, active) {
+    var cls = ['badge'];
+    if (done) { cls.push('badge-status'); }
+    return el('span', {
+      class: cls.join(' '),
+      style: {
+        marginRight: '8px',
+        opacity: (done || active) ? '1' : '0.45',
+        fontWeight: active ? '700' : '400'
+      }
+    }, n + '. ' + label + (done ? ' 완료' : ''));
+  }
+
+  function renderBundleSteps(hasText, validated, planned) {
+    var host = $('#bi-steps');
+    clear(host);
+    host.appendChild(el('div', { class: 'row' }, [
+      bundleStepNode(1, '검증', validated, hasText && !validated),
+      bundleStepNode(2, '계획 보기', planned, validated && !planned),
+      bundleStepNode(3, '적용', false, planned)
+    ]));
+    host.appendChild(el('p', { class: 'hint' },
+      '적용은 계획 보기가 준 plan_hash 로만 할 수 있습니다. 번들이나 충돌 정책을 고치면 '
+      + '그 해시가 무효가 되어 2단계부터 다시 합니다.'));
+  }
+
+  /** 번들을 초기화한다(입력은 그대로 두고 진행 상태만 되돌린다). */
+  function bundleInvalidate() {
+    bundleState.validatedAt = null;
+    bundleState.plannedAt = null;
+    bundleState.planHash = null;
+    bundleSyncGate();
+  }
+
+  /* --- 입력 파싱 -----------------------------------------------------
+   * 서버에 보내기 전에 한 번 파싱한다. 파싱 실패는 서버까지 갈 이유가 없고,
+   * 실패해도 **조용히 고치지 않는다** — 그 자리를 그대로 알려 준다.
+   */
+  function bundleParseInput() {
+    var raw = String($('#bi-text').value);
+    if (raw.trim() === '') {
+      return { ok: false, message: '번들 JSON 을 붙여넣거나 파일을 선택해 주세요.' };
+    }
+    var parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      return { ok: false, message: 'JSON 을 해석할 수 없습니다: ' + (e && e.message ? e.message : '파싱 오류') };
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, message: '번들은 JSON 객체여야 합니다. 배열이나 값 하나를 보낼 수 없습니다.' };
+    }
+    return { ok: true, bundle: parsed };
+  }
+
+  function bundleRequestBody(parsed) {
+    return { bundle: parsed, on_conflict: String($('#bi-conflict').value) };
+  }
+
+  /* --- 오류 표시 -----------------------------------------------------
+   * 이 화면의 성패가 여기 달렸다. 항목은 전량 수집되어 오고, 사람은 그것을
+   * 통째로 복사해 AI 에게 준다. 그래서 표와 별개로 **평문 목록**을 만들고
+   * 「오류 복사」 버튼을 둔다.
+   */
+  function bundleErrorLines(errors, meta) {
+    var lines = [];
+    lines.push('# ulogin 설정 번들 검증 오류 ' + errors.length + '건');
+    if (meta && meta.error_count && meta.error_count !== errors.length) {
+      lines.push('# 서버가 센 오류: ' + meta.error_count + '건 (표시 상한으로 잘렸습니다)');
+    }
+    lines.push('# path 는 JSON Pointer(RFC 6901) 입니다. 번들 루트 기준으로 그 자리를 고치세요.');
+    lines.push('# got 이 "***" 인 것은 시크릿 값 자리입니다. 서버가 값을 보내지 않습니다.');
+    lines.push('');
+    errors.forEach(function (e, i) {
+      lines.push((i + 1) + ') path: ' + nz(e.path));
+      lines.push('   code: ' + nz(e.code));
+      lines.push('   message: ' + nz(e.message));
+      lines.push('   expected: ' + nz(e.expected));
+      lines.push('   got: ' + (e.got === undefined ? '-' : JSON.stringify(e.got))
+        + (e.got_truncated ? ' (잘림)' : ''));
+      lines.push('   got_type: ' + nz(e.got_type));
+      if (e.did_you_mean !== undefined && e.did_you_mean !== null) {
+        lines.push('   did_you_mean: ' + String(e.did_you_mean));
+      }
+      lines.push('');
+    });
+    return lines.join('\n');
+  }
+
+  function bundleCopyButton(textOf, label) {
+    var btn = el('button', { type: 'button', class: 'btn btn-secondary btn-sm' }, label);
+    btn.addEventListener('click', function () {
+      var payload = textOf();
+      var done = function () { toast('클립보드에 복사했습니다.', 'success'); };
+      var fallback = function () {
+        /* 클립보드를 못 쓰는 환경(비-HTTPS · 권한 거부)에서도 복사할 수 있어야 한다.
+           선택 가능한 textarea 를 열어 준다 — 조용히 실패하지 않는다. */
+        modal({
+          title: '복사할 내용',
+          hideCancel: true,
+          confirmText: '닫기',
+          body: function (b) {
+            var ta = el('textarea', { rows: 16, class: 'mono', readonly: true, spellcheck: 'false' }, payload);
+            b.appendChild(el('p', { class: 'hint' }, '전체를 선택해 복사한 뒤 AI 에게 그대로 주면 됩니다.'));
+            b.appendChild(ta);
+            try { ta.focus(); ta.select(); } catch (e) { /* noop */ }
+          }
+        });
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(payload).then(done, fallback);
+        return;
+      }
+      fallback();
+    });
+    return btn;
+  }
+
+  function renderBundleErrors(err) {
+    var host = $('#bi-errors');
+    clear(host);
+    var d = bundleErrData(err);
+    var errors = (d && Array.isArray(d.errors)) ? d.errors : [];
+
+    if (errors.length === 0) {
+      /* 검증 오류 목록이 없는 실패다 — 권한 · 레이트리밋 · CSRF · 서버 오류.
+         그 경우 표준 봉투의 문구가 전부다. */
+      host.appendChild(alertNode(errorMessage(err), 'danger', '요청이 거부되었습니다'));
+      return;
+    }
+
+    var head = el('div', { class: 'row between' }, [
+      el('strong', null, '검증 오류 ' + fmtNum(errors.length) + '건'
+        + ((d && d.truncated) ? ' (상한에서 잘림 · 서버가 센 오류 ' + fmtNum(d.error_count) + '건)' : '')),
+      bundleCopyButton(function () { return bundleErrorLines(errors, d); }, '오류 복사')
+    ]);
+
+    var t = tableNode([
+      { label: 'path (JSON Pointer)' }, { label: 'code' }, { label: '설명' },
+      { label: '기대값 (expected)' }, { label: '실제값 (got)' }
+    ]);
+    errors.forEach(function (e) {
+      var gotCell = [];
+      gotCell.push(el('code', { class: 'mono' },
+        e.got === undefined ? '-' : JSON.stringify(e.got)));
+      gotCell.push(el('div', { class: 'text-xs text-muted' },
+        'type: ' + nz(e.got_type) + (e.got_truncated ? ' · 200자에서 잘림' : '')));
+      if (e.did_you_mean !== undefined && e.did_you_mean !== null) {
+        gotCell.push(el('div', { class: 'text-xs' },
+          '이렇게 쓰려던 것 아닌가요: ' + String(e.did_you_mean)));
+      }
+      t.tbody.appendChild(el('tr', null, [
+        el('td', null, el('code', { class: 'mono' }, nz(e.path))),
+        el('td', { class: 'nowrap' }, el('code', { class: 'mono' }, nz(e.code))),
+        el('td', null, nz(e.message)),
+        el('td', null, el('code', { class: 'mono' }, nz(e.expected))),
+        el('td', null, gotCell)
+      ]));
+    });
+
+    host.appendChild(alertNode(
+      '오류를 한 번에 전부 돌려줍니다. 「오류 복사」로 목록을 통째로 복사해 AI 에게 주면 '
+      + 'path 자리를 expected 에 맞게 고칠 수 있습니다. '
+      + '시크릿 값 자리의 got 은 항상 "***" 입니다 — 서버는 값을 응답에 싣지 않습니다.',
+      'danger', '번들을 적용하지 않았습니다'
+    ));
+    host.appendChild(head);
+    host.appendChild(t.wrap);
+  }
+
+  /* --- 경고 · environment 대조 --------------------------------------- */
+
+  function renderBundleWarnings(host, warnings) {
+    if (!Array.isArray(warnings) || warnings.length === 0) { return; }
+    var loud = warnings.filter(function (w) { return BUNDLE_LOUD_WARNINGS[w.code]; });
+    var rest = warnings.filter(function (w) { return !BUNDLE_LOUD_WARNINGS[w.code]; });
+
+    function block(list, tone, title) {
+      if (list.length === 0) { return; }
+      var ul = el('ul', { class: 'list-plain' });
+      list.forEach(function (w) {
+        ul.appendChild(el('li', null, [
+          el('div', null, el('strong', null, nz(w.message))),
+          el('div', { class: 'text-xs text-muted' }, [
+            el('code', { class: 'mono' }, nz(w.code)),
+            text(' · '),
+            text(nz(w.path))
+          ])
+        ]));
+      });
+      host.appendChild(alertBoxNode('', tone, title, ul));
+    }
+    block(loud, 'danger', '반드시 확인할 경고 ' + loud.length + '건');
+    block(rest, 'warn', '경고 ' + rest.length + '건 — 적용을 막지는 않습니다');
+  }
+
+  /**
+   * environment 대조. **거절이 아니라 검사다**(D-193).
+   * 파일명은 사람이 무시할 수 있으므로 본문의 이 블록이 잘못된 설치본 적용을 막는 자리다.
+   */
+  function renderBundleEnvironment(host, env) {
+    if (!env || typeof env !== 'object') { return; }
+    var mism = Array.isArray(env.mismatches) ? env.mismatches : [];
+
+    if (env.compared === false) {
+      host.appendChild(alertNode(nz(env.note), 'warn', '어느 설치본에서 나온 번들인지 알 수 없습니다'));
+      return;
+    }
+    if (mism.length === 0) {
+      host.appendChild(alertNode(nz(env.note), 'success', '이 설치본에서 나온 번들입니다'));
+      return;
+    }
+    var t = tableNode([{ label: '상수' }, { label: '번들의 값' }, { label: '이 설치본의 값' }]);
+    mism.forEach(function (m) {
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'nowrap' }, el('code', { class: 'mono' }, nz(m.field))),
+        el('td', null, el('code', { class: 'mono' }, nz(m.bundle))),
+        el('td', null, el('code', { class: 'mono' }, nz(m.current)))
+      ]));
+    });
+    host.appendChild(alertBoxNode(nz(env.note), 'warn',
+      '다른 설치본의 번들일 수 있습니다 — 불일치 ' + mism.length + '건', [
+        t.wrap,
+        el('p', { class: 'text-sm' },
+          '거절하지 않습니다. 의도한 이식이면 그대로 적용해도 됩니다. '
+          + '의도한 것이 아니라면 여기서 멈추십시오.')
+      ]));
+  }
+
+  function renderBundlePending(host, pending, done) {
+    if (!Array.isArray(pending) || pending.length === 0) { return; }
+    var ul = el('ul', { class: 'check-list' });
+    pending.forEach(function (p) {
+      ul.appendChild(el('li', null, [
+        el('strong', null, nz(p.service_id) + ' / ' + nz(p.secret_key)),
+        el('div', { class: 'text-xs text-muted' }, nz(p.how))
+      ]));
+    });
+    host.appendChild(alertBoxNode(
+      done
+        ? '아래 시크릿은 값이 비어 있습니다. 값을 넣고 status 를 active 로 바꾸기 전까지 payload 에 나가지 않습니다.'
+        : '아래 시크릿은 값이 비어 있어 그대로 두면 값 없이 만들어집니다.',
+      'warn', '손으로 값을 채워야 하는 시크릿 ' + pending.length + '건', ul
+    ));
+  }
+
+  /* --- 계획(plan) 렌더 — 이 기능의 안전장치 본체 --------------------- */
+
+  function bundleCountTiles(counts) {
+    var c = counts || {};
+    return el('div', { class: 'stat-grid' }, [
+      statNode('설정 갱신', fmtNum(c.settings_update), '변경 없음 ' + fmtNum(c.settings_unchanged), 'primary'),
+      statNode('서비스 생성', fmtNum(c.services_create), null, 'success'),
+      statNode('서비스 갱신', fmtNum(c.services_update),
+        '변경 없음 ' + fmtNum(c.services_unchanged) + ' · 건너뜀 ' + fmtNum(c.services_skipped)),
+      statNode('시크릿 생성', fmtNum(c.secrets_create), null, 'success'),
+      statNode('시크릿 갱신', fmtNum(c.secrets_update),
+        '변경 없음 ' + fmtNum(c.secrets_unchanged) + ' · 건너뜀 ' + fmtNum(c.secrets_skipped)),
+      statNode('삭제', fmtNum(c.deletes), 'import 는 삭제하지 않습니다')
+    ]);
+  }
+
+  /**
+   * 「삭제되는 것 없음」. `deletes_possible` 과 `counts.deletes` 는 값이 아니라 약속이다 —
+   * 둘 중 하나라도 다르면 설계가 바뀐 것이므로 **조용히 넘어가지 않고 크게 알린다.**
+   */
+  function bundleDeleteAssurance(plan) {
+    var c = (plan && plan.counts) ? plan.counts : {};
+    var safe = (plan.deletes_possible === false) && (Number(c.deletes) === 0);
+    if (safe) {
+      return alertNode(
+        'import 는 INSERT 와 UPDATE 만 합니다. 번들에 없는 서비스·시크릿·설정은 그대로 남습니다. '
+        + '은퇴는 삭제가 아니라 status 를 disabled 로 바꾸는 것입니다.',
+        'success', '삭제되는 것 없음 (deletes 0)'
+      );
+    }
+    return alertNode(
+      '이 서버가 삭제 가능성을 보고했습니다 (deletes_possible=' + String(plan.deletes_possible)
+      + ' · counts.deletes=' + String(c.deletes) + '). '
+      + '설계상 두 값은 항상 false 와 0 입니다. 적용하지 말고 담당자에게 알리십시오.',
+      'danger', '예상하지 못한 삭제 계획입니다'
+    );
+  }
+
+  function bundleSettingsTable(planSettings) {
+    var s = planSettings || {};
+    var cu = Array.isArray(s.create_or_update) ? s.create_or_update : [];
+    var un = Array.isArray(s.unchanged) ? s.unchanged : [];
+    var sk = Array.isArray(s.skipped) ? s.skipped : [];
+    var box = el('div');
+    box.appendChild(el('h3', null, '전역 설정'));
+    if (cu.length === 0) {
+      box.appendChild(el('p', { class: 'text-sm text-muted' },
+        '바뀌는 설정 키가 없습니다 (변경 없음 ' + un.length + ' · 건너뜀 ' + sk.length + ').'));
+      return box;
+    }
+    var t = tableNode([{ label: '키' }, { label: '지금 값' }, { label: '바뀔 값' }, { label: 'path' }]);
+    cu.forEach(function (r) {
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'nowrap' }, el('code', { class: 'mono' }, nz(r.skey))),
+        el('td', null, el('code', { class: 'mono' }, JSON.stringify(r.from))),
+        el('td', null, el('strong', null, el('code', { class: 'mono' }, JSON.stringify(r.to)))),
+        el('td', null, el('code', { class: 'mono text-xs' }, nz(r.path)))
+      ]));
+    });
+    box.appendChild(t.wrap);
+    box.appendChild(el('p', { class: 'hint' },
+      '그대로 두는 키 ' + un.length + '개 · 건너뛰는 키 ' + sk.length + '개'));
+    return box;
+  }
+
+  function bundleOpBadge(op) {
+    return el('span', {
+      class: (op === 'create') ? 'badge badge-status' : 'badge',
+      style: (op === 'unchanged' || op === 'skip') ? { opacity: '0.6' } : null
+    }, BUNDLE_OP_LABELS[op] || nz(op));
+  }
+
+  function bundleServicesTable(services) {
+    var list = Array.isArray(services) ? services : [];
+    var box = el('div');
+    box.appendChild(el('h3', null, '서비스 · 시크릿'));
+    if (list.length === 0) {
+      box.appendChild(el('p', { class: 'text-sm text-muted' }, '번들에 서비스가 없습니다.'));
+      return box;
+    }
+    var t = tableNode([
+      { label: '대상' }, { label: '동작' }, { label: '바뀌는 필드' }, { label: '값' }
+    ]);
+    list.forEach(function (sv) {
+      var changed = Array.isArray(sv.changed_fields) ? sv.changed_fields : [];
+      t.tbody.appendChild(el('tr', null, [
+        el('td', null, el('strong', null, nz(sv.service_id))),
+        el('td', { class: 'nowrap' }, bundleOpBadge(sv.op)),
+        el('td', null, changed.length ? changed.join(', ') : '-'),
+        el('td', null, '-')
+      ]));
+      (Array.isArray(sv.secrets) ? sv.secrets : []).forEach(function (sc) {
+        var scChanged = Array.isArray(sc.changed_fields) ? sc.changed_fields : [];
+        var valueCell = [text(BUNDLE_VALUE_ACTION_LABELS[sc.value_action] || nz(sc.value_action))];
+        if (sc.forced_status) {
+          valueCell.push(el('div', { class: 'text-xs text-warn' },
+            'status 를 ' + String(sc.forced_status) + ' 로 강제합니다'));
+        }
+        t.tbody.appendChild(el('tr', null, [
+          el('td', null, el('span', { style: { paddingLeft: '18px' } },
+            '↳ ' + nz(sc.secret_key))),
+          el('td', { class: 'nowrap' }, bundleOpBadge(sc.op)),
+          el('td', null, scChanged.length ? scChanged.join(', ') : '-'),
+          el('td', null, valueCell)
+        ]));
+      });
+    });
+    box.appendChild(t.wrap);
+    return box;
+  }
+
+  /** dry-run 의 plan 과 409 가 함께 보내는 plan 을 같은 함수로 그린다. */
+  function renderBundlePlan(host, plan, title) {
+    var box = el('div', { class: 'card' });
+    var head = el('div', { class: 'card-head' }, el('h2', null, title));
+    var body = el('div', { class: 'card-body' });
+    box.appendChild(head);
+    box.appendChild(body);
+
+    body.appendChild(bundleDeleteAssurance(plan));
+    body.appendChild(el('p', { class: 'text-sm text-muted' },
+      '충돌 정책: ' + nz(plan.on_conflict)));
+    body.appendChild(bundleCountTiles(plan.counts));
+    renderBundleEnvironment(body, plan.environment_check);
+    renderBundleWarnings(body, plan.warnings);
+    body.appendChild(bundleSettingsTable(plan.settings));
+    body.appendChild(bundleServicesTable(plan.services));
+    renderBundlePending(body, plan.secrets_pending_value, false);
+
+    host.appendChild(box);
+  }
+
+  /** apply 응답의 result. plan 과 키 모양이 달라(created/updated/…) 따로 그린다. */
+  function renderBundleResult(host, result) {
+    var box = el('div', { class: 'card' });
+    box.appendChild(el('div', { class: 'card-head' }, el('h2', null, '적용 결과')));
+    var body = el('div', { class: 'card-body' });
+    box.appendChild(body);
+
+    body.appendChild(bundleCountTiles(result.counts));
+
+    function nameList(title, arr) {
+      var a = Array.isArray(arr) ? arr : [];
+      return el('li', null, title + ': ' + (a.length ? a.join(', ') : '없음'));
+    }
+    var st = result.settings || {};
+    var sv = result.services || {};
+    var sc = result.secrets || {};
+    body.appendChild(el('h3', null, '전역 설정'));
+    body.appendChild(el('ul', { class: 'list-plain' }, [
+      nameList('갱신', st.updated), nameList('변경 없음', st.unchanged), nameList('건너뜀', st.skipped)
+    ]));
+    body.appendChild(el('h3', null, '서비스'));
+    body.appendChild(el('ul', { class: 'list-plain' }, [
+      nameList('생성', sv.created), nameList('갱신', sv.updated),
+      nameList('변경 없음', sv.unchanged), nameList('건너뜀', sv.skipped)
+    ]));
+    body.appendChild(el('h3', null, '시크릿'));
+    body.appendChild(el('ul', { class: 'list-plain' }, [
+      nameList('생성', sc.created), nameList('갱신', sc.updated),
+      nameList('변경 없음', sc.unchanged), nameList('건너뜀', sc.skipped)
+    ]));
+
+    renderBundleEnvironment(body, result.environment_check);
+    renderBundlePending(body, result.secrets_pending_value, true);
+    host.appendChild(box);
+  }
+
+  /* --- export -------------------------------------------------------- */
+
+  /** `excluded` 블록. 번들이 스스로 무엇을 담지 않았는지 말한다. */
+  function renderBundleExcluded(host, excluded) {
+    if (!excluded || typeof excluded !== 'object') { return; }
+    var t = tableNode([{ label: '항목' }, { label: '포함' }, { label: '이유' }]);
+    Object.keys(excluded).forEach(function (k) {
+      var v = excluded[k] || {};
+      var inc = v.included;
+      var incLabel = (inc === true) ? '포함' : (inc === 'partial' ? '일부만' : '없음');
+      var cells = [el('div', null, nz(v.reason))];
+      if (v.how_to_set) { cells.push(el('div', { class: 'text-xs text-muted' }, String(v.how_to_set))); }
+      if (v.value_present_field) {
+        cells.push(el('div', { class: 'text-xs text-muted' }, String(v.value_present_field)));
+      }
+      if (v.managed_by) {
+        cells.push(el('div', { class: 'text-xs text-muted' }, '관리 주체: ' + String(v.managed_by)));
+      }
+      t.tbody.appendChild(el('tr', null, [
+        el('td', { class: 'nowrap' }, el('code', { class: 'mono' }, k)),
+        el('td', { class: 'nowrap' }, incLabel),
+        el('td', null, cells)
+      ]));
+    });
+    host.appendChild(el('h3', null, '이 파일에 담기지 않은 것'));
+    host.appendChild(t.wrap);
+  }
+
+  function renderBundleExport(d) {
+    var host = $('#bx-out');
+    clear(host);
+    var b = d.bundle || {};
+    var m = d.meta || {};
+
+    bundleState.exported = d.bundle;
+    $('#bx-save').disabled = !d.bundle;
+
+    host.appendChild(alertNode(
+      '이 파일에는 시크릿 값이 들어 있지 않습니다. 다른 설치본에 그대로 넣으면 서비스·시크릿의 '
+      + '껍데기는 만들어지지만 값이 비어 있어 연동 앱에는 "키가 없다" 로 보입니다. '
+      + '값은 import JSON 에 직접 적거나 적용한 뒤 시크릿 화면에서 손으로 채웁니다.',
+      'warn', '값이 빠져 있습니다 — 모르고 넣으면 조용히 동작하지 않습니다'
+    ));
+
+    host.appendChild(el('div', { class: 'stat-grid' }, [
+      statNode('서비스', fmtNum(m.service_count), null, 'primary'),
+      statNode('시크릿', fmtNum(m.secret_count),
+        '값이 들어 있는 것 ' + fmtNum(m.secret_with_value_count) + '건 (값 자체는 빠집니다)'),
+      statNode('설정 키', fmtNum(m.settings_count)),
+      statNode('파일 크기', fmtNum(m.bundle_bytes) + ' B', '상한 1,048,576 B')
+    ]));
+
+    var envConst = (b.environment && b.environment.constants) ? b.environment.constants : null;
+    if (envConst) {
+      host.appendChild(el('h3', null, '이 설치본 (import 는 이 블록을 적용하지 않습니다)'));
+      host.appendChild(kvNode([
+        ['BASE_URL', el('code', { class: 'mono' }, nz(envConst.BASE_URL))],
+        ['DB_PREFIX', el('code', { class: 'mono' }, nz(envConst.DB_PREFIX))],
+        ['SITE_NAME', el('code', { class: 'mono' }, nz(envConst.SITE_NAME))]
+      ]));
+      host.appendChild(el('p', { class: 'hint' },
+        '가져오기는 이 세 값을 현재 설치본과 대조해 다르면 경고합니다. '
+        + '값을 바꾸려면 server/config.php 를 직접 편집하거나 재설치해야 합니다.'));
+    }
+
+    renderBundleExcluded(host, b.excluded);
+
+    host.appendChild(el('div', { class: 'row' }, [
+      bundleCopyButton(function () {
+        return JSON.stringify(bundleState.exported, null, 2);
+      }, 'JSON 복사'),
+      el('button', {
+        type: 'button', class: 'btn btn-ghost btn-sm',
+        on: {
+          click: function () {
+            $('#bi-text').value = JSON.stringify(bundleState.exported, null, 2);
+            bundleInvalidate();
+            toast('가져오기 칸에 넣었습니다. 1단계 검증부터 진행하세요.', 'info');
+          }
+        }
+      }, '가져오기 칸에 넣기')
+    ]));
+  }
+
+  /**
+   * 파일명은 `ulogin-settings-{YYYYMMDD-HHMMSS}.json` 이다.
+   * **호스트명을 넣지 않는다**(D-193) — 파일명은 대화·티켓·스크린샷에 인용될 가능성이
+   * 가장 높은 부분이고 본문이 사라져도 남는다. 어느 설치본인지 가리는 일은
+   * 파일명이 아니라 번들 안의 `environment` 대조가 한다.
+   */
+  function bundleFileName() {
+    var d = new Date();
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return 'ulogin-settings-'
+      + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
+      + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds())
+      + '.json';
+  }
+
+  function saveBundleFile() {
+    if (!bundleState.exported) {
+      toast('먼저 번들을 조회해 주세요.', 'warn');
+      return;
+    }
+    /* **data.bundle 만** 담는다. 봉투나 meta 를 담으면 다시 import 할 때 거절된다. */
+    var json = JSON.stringify(bundleState.exported, null, 2);
+    var blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = el('a', { href: url, download: bundleFileName(), class: 'hidden' });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    toast('내려받았습니다.', 'success');
+  }
+
+  /* --- 요청 3종 ------------------------------------------------------ */
+
+  function bundlePost(action, body) {
+    return api('/api/admin/settings/bundle', {
+      method: 'POST', body: body, query: { action: action }
+    });
+  }
+
+  function doBundleValidate() {
+    var parsed = bundleParseInput();
+    var out = $('#bi-out');
+    clear($('#bi-errors'));
+    clear(out);
+    if (!parsed.ok) {
+      formErrors($('#bi-form'), { field: 'bundle', message: parsed.message });
+      return;
+    }
+    var btn = $('#bi-validate');
+    var fp = bundleFingerprint();
+    setBusy(btn, true);
+    bundlePost('validate', bundleRequestBody(parsed.bundle))
+      .then(function (d) {
+        setBusy(btn, false);
+        if (d.valid !== true) {
+          /* 서버가 200 인데 valid 가 true 가 아니면 계약이 어긋난 것이다.
+             통과한 것처럼 넘어가지 않는다. */
+          out.appendChild(alertNode(
+            '서버가 200 을 주면서 valid 를 true 로 주지 않았습니다. 담당자에게 알리십시오.',
+            'danger', '예상하지 못한 응답'));
+          return;
+        }
+        bundleState.validatedAt = fp;
+        bundleState.plannedAt = null;
+        bundleState.planHash = null;
+        bundleSyncGate();
+        var summary = d.checked
+          ? el('p', { class: 'text-sm' },
+              '번들 버전 ' + nz(d.checked.bundle_version)
+              + ' · 설정 키 ' + fmtNum(d.checked.settings_keys)
+              + ' · 서비스 ' + fmtNum(d.checked.services)
+              + ' · 시크릿 ' + fmtNum(d.checked.secrets)
+              + ' · ' + fmtNum(d.checked.bundle_bytes) + ' B')
+          : null;
+        out.appendChild(alertBoxNode(
+          '형식과 값 범위를 통과했습니다. 이 단계는 DB 를 읽지 않습니다 — '
+          + '기존 행과의 상호 의존(is_confidential 인데 서비스 시크릿이 없는 경우 등)은 '
+          + '2단계 계획 보기에서 최종 판정합니다.',
+          'success', '검증 통과', summary));
+        renderBundleWarnings(out, d.warnings);
+        toast('검증을 통과했습니다. 2단계로 진행하세요.', 'success');
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        bundleInvalidate();
+        renderBundleErrors(err);
+        toast(errorMessage(err), 'danger');
+      });
+  }
+
+  function doBundleDryRun() {
+    var parsed = bundleParseInput();
+    var out = $('#bi-out');
+    clear($('#bi-errors'));
+    clear(out);
+    if (!parsed.ok) {
+      formErrors($('#bi-form'), { field: 'bundle', message: parsed.message });
+      return;
+    }
+    var btn = $('#bi-dryrun');
+    var fp = bundleFingerprint();
+    setBusy(btn, true);
+    bundlePost('dry-run', bundleRequestBody(parsed.bundle))
+      .then(function (d) {
+        setBusy(btn, false);
+        bundleState.plannedAt = fp;
+        bundleState.planHash = d.plan_hash || null;
+        bundleSyncGate();
+        out.appendChild(alertNode(
+          '아직 아무것도 적용하지 않았습니다. 아래 계획을 확인한 뒤 3단계 적용을 누르십시오. '
+          + '적용은 이 계획의 plan_hash 로만 할 수 있습니다.',
+          'info', '계획 (dry-run) · plan_hash ' + truncate(nz(d.plan_hash), 16)));
+        renderBundlePlan(out, d.plan || {}, '적용하면 이렇게 됩니다');
+      })
+      .catch(function (err) {
+        setBusy(btn, false);
+        bundleState.plannedAt = null;
+        bundleState.planHash = null;
+        bundleSyncGate();
+        var ed = bundleErrData(err);
+        if (err.code === 'CONFLICT' && ed && Array.isArray(ed.conflicts)) {
+          /* on_conflict: fail 로 요청했고 기존 행과 겹쳤다. 아무것도 적용되지 않았다. */
+          var t = tableNode([{ label: '대상' }, { label: '종류' }, { label: '설명' }, { label: 'path' }]);
+          ed.conflicts.forEach(function (c) {
+            t.tbody.appendChild(el('tr', null, [
+              el('td', null, nz(c.service_id) + (c.secret_key ? ' / ' + c.secret_key : '')),
+              el('td', { class: 'nowrap' }, nz(c.kind)),
+              el('td', null, nz(c.message)),
+              el('td', null, el('code', { class: 'mono text-xs' }, nz(c.path)))
+            ]));
+          });
+          $('#bi-errors').appendChild(alertBoxNode(nz(ed.hint), 'warn',
+            '기존 설정과 충돌 ' + fmtNum(ed.conflict_count) + '건 — 적용하지 않았습니다', t.wrap));
+          toast(errorMessage(err), 'warn');
+          return;
+        }
+        renderBundleErrors(err);
+        toast(errorMessage(err), 'danger');
+      });
+  }
+
+  function doBundleApply() {
+    var parsed = bundleParseInput();
+    if (!parsed.ok) {
+      formErrors($('#bi-form'), { field: 'bundle', message: parsed.message });
+      return;
+    }
+    var fp = bundleFingerprint();
+    /* 버튼은 이미 잠겨 있지만 한 번 더 본다. 이 조건이 깨진 상태로 요청하면
+       서버가 400 을 주고, 그 400 은 운영자에게 아무것도 설명해 주지 않는다. */
+    if (!bundleState.planHash || bundleState.plannedAt !== fp) {
+      bundleInvalidate();
+      toast('번들이 바뀌었습니다. 2단계 계획 보기를 다시 하십시오.', 'warn');
+      return;
+    }
+
+    confirmModal('설정 번들을 적용합니다',
+      '방금 확인한 계획 그대로 적용합니다. 되돌리는 기능은 없습니다. '
+      + 'import 는 어떤 행도 삭제하지 않지만, 갱신된 값은 원래 값으로 자동으로 돌아가지 않습니다.',
+      { confirmText: '적용', danger: true })
+      .then(function (okToGo) {
+        if (!okToGo) { return; }
+        var btn = $('#bi-apply');
+        var out = $('#bi-out');
+        var body = bundleRequestBody(parsed.bundle);
+        body.expect_plan_hash = bundleState.planHash;
+        var reason = String($('#bi-reason').value).trim();
+        if (reason !== '') { body.reason = reason; }
+
+        setBusy(btn, true);
+        bundlePost('apply', body)
+          .then(function (d) {
+            setBusy(btn, false);
+            clear($('#bi-errors'));
+            clear(out);
+            if (d.applied !== true) {
+              out.appendChild(alertNode(
+                '서버가 200 을 주면서 applied 를 true 로 주지 않았습니다. '
+                + '적용 여부를 서비스·시크릿 화면에서 직접 확인하십시오.',
+                'danger', '예상하지 못한 응답'));
+              return;
+            }
+            /* 같은 계획을 두 번 적용할 수 없게 잠근다. 다시 적용하려면 2단계부터. */
+            bundleInvalidate();
+            out.appendChild(alertNode(
+              '적용했습니다. plan_hash ' + truncate(nz(d.plan_hash), 16)
+              + (d.admin_log_id ? ' · 감사 로그 #' + String(d.admin_log_id) : ' · 바뀐 것이 없어 감사 로그를 남기지 않았습니다'),
+              'success', '적용 완료'));
+            renderBundleWarnings(out, d.warnings);
+            renderBundleResult(out, d.result || {});
+            toast('설정 번들을 적용했습니다.', 'success');
+          })
+          .catch(function (err) {
+            setBusy(btn, false);
+            clear($('#bi-errors'));
+            clear(out);
+            var ed = bundleErrData(err);
+            bundleState.plannedAt = null;
+            bundleState.planHash = null;
+            bundleSyncGate();
+            if (err.code === 'CONFLICT') {
+              /* 계획을 만든 뒤 설정이 바뀌었거나 다른 관리자가 먼저 적용했다.
+                 **아무것도 적용되지 않았다.** 서버가 새 계획을 함께 준다. */
+              $('#bi-errors').appendChild(alertNode(
+                nz(ed && ed.reason) + ' ' + nz(ed && ed.hint),
+                'warn', '계획이 낡았습니다 — 적용하지 않았습니다'));
+              if (ed && ed.plan) {
+                renderBundlePlan(out, ed.plan, '다시 계산한 계획 (아직 적용되지 않았습니다)');
+                out.appendChild(el('p', { class: 'hint' },
+                  '이 계획은 참고용입니다. 적용하려면 2단계 계획 보기를 다시 눌러 새 plan_hash 를 받으십시오.'));
+              }
+              toast('다른 변경과 충돌했습니다. 계획을 다시 확인하세요.', 'warn');
+              return;
+            }
+            renderBundleErrors(err);
+            toast(errorMessage(err), 'danger');
+          });
+      });
+  }
+
+  /* --- 탭 초기화 ----------------------------------------------------- */
+
+  var bundleWired = false;
+
+  function initBundleTab() {
+    if (bundleWired) { return; }
+    bundleWired = true;
+
+    $('#bx-tradeoff').appendChild(alertNode(
+      'export 는 시크릿 값을 내보내지 않는다. import 는 받는다. '
+      + '이 비대칭은 의도된 것입니다 — 내보낸 파일을 AI 대화창에 붙여넣어도 API 키가 새지 않게 하려는 것입니다. '
+      + '값이 필요하면 import JSON 의 secret_value 에 사람이 직접 적거나, 적용한 뒤 시크릿 화면에서 채웁니다.',
+      'info', '이 기능이 지키는 약속'
+    ));
+
+    $('#bi-notice').appendChild(alertNode(
+      'import 는 어떤 행도 삭제하지 않습니다. INSERT 와 UPDATE 만 합니다. '
+      + 'AI 에게 번들을 만들게 할 때는 secret_value 를 null 로 두게 하고 값은 사람이 채우십시오. '
+      + 'allow_public 은 민감 키의 게이트를 벗기는 필드입니다 — AI 가 넣었다면 지우고 사람에게 물으십시오.',
+      'info', '가져오기 전에 읽어 주세요'
+    ));
+
+    $('#bx-run').addEventListener('click', function () {
+      var btn = this;
+      var host = $('#bx-out');
+      setBusy(btn, true);
+      showLoading(host, '설정 번들을 만드는 중…');
+      apiGet('/api/admin/settings/bundle')
+        .then(function (d) {
+          setBusy(btn, false);
+          renderBundleExport(d);
+        })
+        .catch(function (err) {
+          setBusy(btn, false);
+          $('#bx-save').disabled = true;
+          bundleState.exported = null;
+          showError(host, err, '설정 번들을 만들 수 없습니다');
+        });
+    });
+
+    $('#bx-save').addEventListener('click', saveBundleFile);
+
+    $('#bi-file').addEventListener('change', function () {
+      var f = this.files && this.files[0] ? this.files[0] : null;
+      if (!f) { return; }
+      var reader = new FileReader();
+      reader.onload = function () {
+        $('#bi-text').value = String(reader.result);
+        clearFormErrors($('#bi-form'));
+        bundleInvalidate();
+        toast(f.name + ' 을(를) 읽었습니다. 1단계 검증부터 진행하세요.', 'info');
+      };
+      reader.onerror = function () {
+        toast('파일을 읽을 수 없습니다.', 'danger');
+      };
+      reader.readAsText(f, 'utf-8');
+    });
+
+    $('#bi-text').addEventListener('input', bundleInvalidate);
+    $('#bi-conflict').addEventListener('change', bundleInvalidate);
+
+    $('#bi-validate').addEventListener('click', doBundleValidate);
+    $('#bi-dryrun').addEventListener('click', doBundleDryRun);
+    $('#bi-apply').addEventListener('click', doBundleApply);
+
+    $('#bi-reset').addEventListener('click', function () {
+      $('#bi-text').value = '';
+      $('#bi-file').value = '';
+      $('#bi-reason').value = '';
+      clearFormErrors($('#bi-form'));
+      clear($('#bi-errors'));
+      clear($('#bi-out'));
+      bundleInvalidate();
+    });
+
+    bundleSyncGate();
+  }
+
+  /* ======================================================================
+   * 11. 부팅 — GET /api/me → role_rank >= 10 (manager) 확인
    *
    * D-36 / Q-8: 예전 기준은 20(admin)이어서 서버가 manager 에게 허용하는
    * stats · users 목록 · logs?type=login 이 UI 에서 전부 막혀 있었다.

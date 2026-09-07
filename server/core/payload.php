@@ -177,10 +177,16 @@ function build_payload(?string $serviceId, array $grades, ?array $us = null, arr
             continue;
         }
 
-        $v = dec((string) $r['secret_value_enc']);
+        // **두 원인을 가려서 남긴다** (v1.6.0 QA Q-1).
+        //   · 복호화 실패(키 교체 등) — 깨진 값을 앱에 내려보내면 원인 추적이 어려워진다
+        //   · **값이 비어 있는데 status=active** — 복호화는 성공했고 값이 없을 뿐이다.
+        // 종전에는 둘 다 "secret decrypt failed" 로 남아 **오진을 유도했다**: 값이 빈
+        // active 행을 조사하던 사람이 SECRET_ENC_KEY 를 의심하게 된다.
+        $decOk = false;
+        $v     = dec((string) $r['secret_value_enc'], $decOk);
         if ($v === '') {
-            // 복호화 실패(키 교체 등). 깨진 값을 앱에 내려보내면 원인 추적이 어려워진다.
-            error_log('[ulogin] secret decrypt failed. service=' . $serviceId . ' key=' . $r['secret_key']);
+            error_log('[ulogin] secret ' . ($decOk ? 'value is empty (status=active with no value)' : 'decrypt failed')
+                . '. service=' . $serviceId . ' key=' . $r['secret_key']);
             continue;
         }
         if ($r['value_type'] === 'json') {

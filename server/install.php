@@ -1821,14 +1821,34 @@ function ins_gate_options($axis)
 }
 
 /**
- * 랭크 0 값(`guest` / `free` / `user`)은 게이트로 아무도 걸러내지 못한다.
- * rank_of() 가 0 을 돌려주므로 `*_gte()` 비교가 항상 통과한다 —
- * 즉 "제한 없음"과 결과가 같다. 사용자가 이걸 게이트로 착각하면 안 된다.
+ * 축별 랭크 맵. **core/perm.php 의 *_RANK 와 값까지 같아야 한다.**
+ * (공용 파일로 뺄 수 없는 이유: install.php 는 core/ 를 로드하지 않는다 —
+ *  설치 전에는 config.php 가 없어 bootstrap.php 가 500 으로 죽는다.)
  */
-function ins_gate_axis_zero($axis)
+function ins_gate_ranks($axis)
 {
     if ($axis === 'level') {
-        return 'guest';
+        return ['guest' => 0, 'basic' => 10, 'verified' => 20, 'vip' => 30, 'staff' => 90];
+    }
+    if ($axis === 'tier') {
+        return ['free' => 0, 'lite' => 10, 'pro' => 20, 'enterprise' => 30];
+    }
+    return ['user' => 0, 'manager' => 10, 'admin' => 20, 'superadmin' => 30];
+}
+
+/**
+ * 축별 **모집단 기본값**. 이 값 이하로 건 게이트는 아무도 걸러내지 못한다.
+ *
+ * **`core/secretguard.php` 의 `SECRET_GATE_FLOOR` 와 같은 값이어야 한다.**
+ * 종전에는 이 함수가 `guest`/`free`/`user`(랭크 0)만 돌려주어 `basic` 을 실효 게이트로
+ * 셌다. 그런데 `basic` 은 `schema.sql` 의 users.account_level 기본값이자
+ * `api/auth/register.php` 가 신규 가입자에게 박는 값이라 **전원이 이미 그 값을 갖고 있다** —
+ * 걸어도 통과 조건이 "제한 없음"과 같다(v1.6.0 보안 감사 H-1 / 리더 판정 D-201).
+ */
+function ins_gate_axis_floor($axis)
+{
+    if ($axis === 'level') {
+        return 'basic';
     }
     if ($axis === 'tier') {
         return 'free';
@@ -1836,12 +1856,23 @@ function ins_gate_axis_zero($axis)
     return 'user';
 }
 
-/** 세 축 중 **실효 있는** 게이트가 하나라도 있는가. 없으면 가입한 전원이 이 값을 받는다. */
+/**
+ * 세 축 중 **실효 있는** 게이트가 하나라도 있는가. 없으면 가입한 전원이 이 값을 받는다.
+ *
+ * 문자열 같음 비교가 아니라 **랭크 비교**다 — `guest`(0) 는 floor `basic`(10) 보다 낮아
+ * 문자열 비교로는 가려지지 않는다. 목록 밖의 값은 랭크 0 이 되어 게이트가 아니다(fail-closed).
+ */
 function ins_gate_effective($g)
 {
     foreach (['level', 'tier', 'role'] as $axis) {
         $v = isset($g[$axis]) ? (string) $g[$axis] : '';
-        if ($v !== '' && $v !== ins_gate_axis_zero($axis)) {
+        if ($v === '') {
+            continue;
+        }
+        $map   = ins_gate_ranks($axis);
+        $rank  = isset($map[$v]) ? (int) $map[$v] : 0;
+        $floor = ins_gate_axis_floor($axis);
+        if ($rank > (int) $map[$floor]) {
             return true;
         }
     }
@@ -1865,7 +1896,7 @@ function ins_gate_label($g)
         return '제한 없음 (가입한 전원)';
     }
     $s = implode(' / ', $out);
-    return ins_gate_effective($g) ? $s : $s . ' — 랭크 0 이라 전원 통과';
+    return ins_gate_effective($g) ? $s : $s . ' — 전 회원의 기본값 이하라 전원 통과';
 }
 
 /** 7단계에서 등록할 시크릿의 고정 명세. 폼과 저장 로직이 이 하나를 함께 본다. */
@@ -1919,16 +1950,18 @@ function ins_secret_default_gate($key)
 function ins_gate_select($name, $axis, $cur)
 {
     $labels = [
-        'guest'      => '비로그인/게스트 — 랭크 0, 전원 통과(게이트 효과 없음)',
-        'basic'      => '가입 직후 기본 등급 — 가입만 하면 통과합니다',
-        'verified'   => '이메일 인증 완료 회원',
+        'guest'      => '비로그인/게스트 — 전원 통과(게이트 효과 없음)',
+        // basic 은 랭크 10 이지만 users.account_level 의 기본값이자 register.php 가
+        // 신규 가입자에게 박는 값이다 — 걸어도 전원이 통과한다(H-1 / D-201).
+        'basic'      => '가입 직후 기본 등급 — 전원 통과(게이트 효과 없음)',
+        'verified'   => '이메일 인증 완료 회원 — 기본 설치본에서는 아무도 해당되지 않습니다',
         'vip'        => 'VIP 회원',
         'staff'      => '운영자 등급',
-        'free'       => '무료 — 랭크 0, 전원 통과(게이트 효과 없음)',
+        'free'       => '무료 — 전원 통과(게이트 효과 없음)',
         'lite'       => '유료 최저 등급 (권장)',
         'pro'        => '유료 상위 등급',
         'enterprise' => '최상위 결제 등급',
-        'user'       => '일반 회원 — 랭크 0, 전원 통과(게이트 효과 없음)',
+        'user'       => '일반 회원 — 전원 통과(게이트 효과 없음)',
         'manager'    => '매니저 이상',
         'admin'      => '관리자 이상',
         'superadmin' => '최고관리자만',
