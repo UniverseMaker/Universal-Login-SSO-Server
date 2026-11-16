@@ -239,9 +239,26 @@ function assert_not_locked(array $user): void
  * `Y-m-d H:i:s` UTC 문자열이라 문자열 비교가 시간 순서와 같다(설계 A-3).
  *
  * `$user` 에서는 id 만 쓴다. **카운트를 인자에서 읽지 마라** — 그것이 이 결함이었다.
+ *
+ * v1.10.0 감사 L-1 / D-372 — 비상 계정(account_kind=emergency) 처리를 **여기서도** 한다.
+ *   authorize.php 는 D-234 로 불변인데 그 파일은 비상 계정을 모른다. 두 가지가 샜다:
+ *   ① 미설정('!unset') 해시는 password_verify 가 bcrypt 없이 바로 false 를 돌려 응답 시간 차가 난다
+ *      → 미설정이면 여기서 더미 bcrypt 를 한 번 돌린다(login.php 4-b 와 같은 규약). 실패 횟수는 세지 않는다.
+ *   ② authorize 경로의 비상 계정 실패가 감사(emergency.login.failure)에 남지 않았다 → 여기서 남긴다.
+ *   login.php 는 미설정을 앞에서 거르고 설정된 계정의 감사를 스스로 남기므로 $callerAudits=true 로 부른다.
  */
-function register_login_failure(array $user): void
+function register_login_failure(array $user, bool $callerAudits = false): void
 {
+    if ((string) ($user['account_kind'] ?? 'normal') === 'emergency') {   // EMERGENCY-FAIL-CORE
+        $unset = (string) ($user['password_hash'] ?? '') === EMERGENCY_UNSET_HASH;
+        if (!$callerAudits) {
+            audit_emergency_event('emergency.login.failure', $user, ['reason' => $unset ? 'unset' : 'credential']);
+        }
+        if ($unset) {
+            dummy_password_verify('emergency-unset');   // 시간 차 제거 — 값은 무엇이든 bcrypt 1회
+            return;                                    // 잠금은 설정된 계정에만(login.php 4-b 와 같다)
+        }
+    }
     $threshold = (int) setting_get('login_fail_threshold', LOCKOUT_THRESHOLD);
     $minutes   = (int) setting_get('login_lock_minutes', LOCKOUT_MINUTES);
     if ($threshold < 1) {
@@ -264,6 +281,70 @@ function register_login_failure(array $user): void
             . ' WHERE id = ? AND (locked_until IS NULL OR locked_until < ?)',
             [$until, $uid, $until]);
     }
+}
+
+// ---------------------------------------------------------------------
+// v1.10.1 보안 L-3 (D-375) — 승인 대기 신청(users 행이 아직 없다)의 비밀번호 실패도 잠근다.
+// 표를 바꾸지 않으려고 rate_limits 행 1개로 센다: bucket `login:pending:<신청 id>`, window_start 고정.
+// 규칙은 계정 잠금과 같은 설정(login_fail_threshold · login_lock_minutes)을 쓴다:
+//   실패할 때마다 count+1, expires_at = 지금 + 잠금 시간. count ≥ 임계이고 expires_at 이 미래면 423(검증 전에).
+//   expires_at 이 지나면 그 묶음은 끝났다 — 다음 실패 때 지우고 1부터. 맞는 비밀번호(→ PENDING)면 지운다.
+// ---------------------------------------------------------------------
+const PENDING_FAIL_WINDOW = '2000-01-01 00:00:00';
+
+/** [임계 횟수, 잠금 분] — register_login_failure() 와 같은 해석. */
+function login_lock_policy(): array
+{
+    $threshold = (int) setting_get('login_fail_threshold', LOCKOUT_THRESHOLD);
+    $minutes   = (int) setting_get('login_lock_minutes', LOCKOUT_MINUTES);
+    if ($threshold < 1) {
+        $threshold = (int) LOCKOUT_THRESHOLD;
+    }
+    if ($minutes < 1) {
+        $minutes = (int) LOCKOUT_MINUTES;
+    }
+    return [$threshold, $minutes];
+}
+
+function pending_fail_bucket(int $requestId): string
+{
+    return 'login:pending:' . $requestId;
+}
+
+/** 잠겨 있으면 AUTH_ACCOUNT_LOCKED(423) — assert_not_locked() 와 같은 모양. */
+function pending_assert_not_locked(int $requestId): void
+{
+    list($threshold) = login_lock_policy();
+    $r = db_one('SELECT count, expires_at FROM ' . T_RATE_LIMITS . ' WHERE bucket = ? AND window_start = ?',
+        [pending_fail_bucket($requestId), PENDING_FAIL_WINDOW]);
+    if ($r === null) {
+        return;
+    }
+    $until = ts($r['expires_at'] ?? null);
+    if ($until === null || $until <= time() || (int) $r['count'] < $threshold) {   // PENDING-LOCK
+        return;
+    }
+    throw new AppError('AUTH_ACCOUNT_LOCKED', 423, [
+        'locked_until' => iso((string) $r['expires_at']),
+        'retry_after'  => max(1, $until - time()),
+    ]);
+}
+
+/** 실패 1회. 원자 증가(db_upsert_increment) — 읽기-수정-쓰기 금지(D-298 H-5 와 같은 이유). */
+function pending_register_failure(int $requestId): void
+{
+    list(, $minutes) = login_lock_policy();
+    $b = pending_fail_bucket($requestId);
+    db_exec('DELETE FROM ' . T_RATE_LIMITS . ' WHERE bucket = ? AND window_start = ? AND expires_at <= ?',
+        [$b, PENDING_FAIL_WINDOW, now_utc()]);
+    db_upsert_increment(T_RATE_LIMITS, ['bucket' => $b, 'window_start' => PENDING_FAIL_WINDOW], 'count',
+        ['expires_at' => at_utc($minutes * 60)]);
+}
+
+/** 맞는 비밀번호로 확인됐으면 실패 묶음을 지운다(계정의 clear_login_failures 와 같다). */
+function pending_clear_failures(int $requestId): void
+{
+    db_exec('DELETE FROM ' . T_RATE_LIMITS . ' WHERE bucket = ? AND window_start = ?', [pending_fail_bucket($requestId), PENDING_FAIL_WINDOW]);
 }
 
 /** 로그인 성공 시 실패 카운터 초기화. */

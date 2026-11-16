@@ -53,7 +53,7 @@ if ($method === 'GET') {
     $items = [];
     $map   = [];
     foreach ($DEFS as $k => $def) {
-        $val     = admin_setting_value($k, $def, $rows);
+        $val     = admin_setting_value_eff($k, $def, $rows);   // v1.10.1 — register_mode 는 실제 판정값
         $map[$k] = $val;
         $items[] = [
             'skey'       => $k,
@@ -110,6 +110,37 @@ $unchanged = [];
 $before    = [];
 $after     = [];
 
+// -----------------------------------------------------------------
+// v1.10.1 가입 방식(설계 130 §1-1) — register_mode 와 옛 키 allow_register 는 **한 쌍으로** 쓴다.
+//   새 키가 있으면 그것, 없으면 옛 키 규칙(false → closed · true → closed 면 open, approval 이면 그대로).
+//   allow_register 는 언제나 (mode === 'open') 로 같은 트랜잭션에서 맞춘다(register_mode_write).
+// 값 검증은 아래 루프보다 **먼저** 한다(부분 적용 방지). 쓰기는 루프 뒤.
+// -----------------------------------------------------------------
+$regWrite = null;
+if (array_key_exists('register_mode', $input) || array_key_exists('allow_register', $input)) {
+    $modeIn  = array_key_exists('register_mode', $input) ? (string) v_enum($input, 'register_mode', REGISTER_MODES, true) : null;
+    $allowIn = array_key_exists('allow_register', $input) ? (bool) v_bool($input, 'allow_register', true) : null;
+    $curMode  = register_mode_global_from_rows($rows);
+    $curAllow = admin_setting_value('allow_register', $DEFS['allow_register'], $rows);
+    list($newMode, $newAllow) = register_mode_write_target($modeIn, $allowIn, $curMode);
+    $regRowMissing = !isset($rows['register_mode']);
+    foreach (['register_mode' => [$curMode, $newMode], 'allow_register' => [$curAllow, $newAllow]] as $rk => $pair) {
+        if ($pair[0] === $pair[1]) {
+            if (array_key_exists($rk, $input)) {
+                $unchanged[] = $rk;
+            }
+            continue;
+        }
+        $updated[]     = $rk;
+        $before[$rk]   = $pair[0];
+        $after[$rk]    = $pair[1];
+    }
+    if ($curMode !== $newMode || $curAllow !== $newAllow || ($regRowMissing && $modeIn !== null)) {
+        $regWrite = $newMode;
+    }
+    unset($input['register_mode'], $input['allow_register']);
+}
+
 foreach ($input as $k => $v) {
     $key = (string) $k;
     if (!isset($DEFS[$key])) {
@@ -149,6 +180,10 @@ foreach ($input as $k => $v) {
     $after[$key]    = $new;
 }
 
+if ($regWrite !== null) {
+    register_mode_write($regWrite);
+}
+
 $logId = null;
 if ($updated !== []) {
     $logId = admin_log_write(
@@ -162,7 +197,7 @@ if ($updated !== []) {
 $rows = admin_settings_rows($keys);
 $map  = [];
 foreach ($DEFS as $k => $def) {
-    $map[$k] = admin_setting_value($k, $def, $rows);
+    $map[$k] = admin_setting_value_eff($k, $def, $rows);
 }
 
 json_out([

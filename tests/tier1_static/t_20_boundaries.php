@@ -31,6 +31,12 @@ t('every endpoint file has a caller and every call has a file', function () use 
         '/api/sso/users',
         // v1.10.0 — 공유 대상 계정 찾기(s2s, 설계 127 §3-3). 소비자: 각 시스템 서버(주관 세션 경유 통지)
         '/api/sso/user_search',
+        // v1.10.1 — 공동 포인트 s2s(설계 130 §4, 본문 secret — 브라우저 호출 금지). 소비자: 포인트 기능이 있는 각 시스템 서버
+        //          + AI_INTEGRATION_GUIDE.md 공동 포인트 절(integrator, 문서는 라운드 마지막 — D-174)
+        '/api/points/s2s_balance',
+        '/api/points/s2s_earn',
+        '/api/points/s2s_spend',
+        '/api/points/s2s_history',
     );
     assert_clean(chk_endpoints($ROOT, $allowUncalled), 'endpoint <-> caller mismatch');
 });

@@ -159,6 +159,14 @@ function docs_coll_upsert(string $sid, array $in): array
             }
         }
     } else {
+        // v1.10.0 감사 M-1 / D-372 — owner 컬렉션에 문서가 하나라도 있으면 read_rule 을 바꾸지 못한다.
+        // 바꾸면 「본인만 읽는다」고 저장된 문서가 서비스·관리자(·public)에게 그대로 열린다.
+        // doc_count 는 캐시값이라 실제 행으로 확인한다. 관리 콘솔·서비스 s2s 두 경로 모두 여기를 지난다.
+        if ((string) $cur['read_rule'] === 'owner' && $rr !== 'owner'
+            && db_one('SELECT id FROM ' . T_PLAT_DOCS . ' WHERE service_id = ? AND collection = ? LIMIT 1', [$sid, $name]) !== null) {
+            throw new AppError('FORBIDDEN', 403, ['field' => 'read_rule',
+                'message' => '본인만 읽는 컬렉션에 문서가 있어 read_rule 을 바꿀 수 없습니다. 문서를 먼저 지우세요.']);
+        }
         $changed = plat_json(docs_indexes($cur)) !== $ixJson;
         db_update(T_PLAT_COLLS, [
             'read_rule' => $rr, 'write_rule' => $wr, 'index_json' => $ixJson, 'max_docs' => $md, 'max_doc_bytes' => $mb,

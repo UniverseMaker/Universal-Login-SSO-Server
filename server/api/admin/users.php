@@ -97,10 +97,15 @@ if ($q !== null) {
     // SQLite 는 ESCAPE 없이는 이스케이프를 모른다(설계 A30). 패턴과 절은 한 쌍이다 — core/request.php
     $like = like_contains($q);
     $esc  = sql_like_escape();
-    $where[]  = '(u.username LIKE ?' . $esc . ' OR u.email LIKE ?' . $esc . ' OR u.name LIKE ?' . $esc
+    // v1.10.0 감사 M-2 / D-372 — 이메일 부분 일치는 superadmin 만. 그 아래 등급에서 email LIKE 를 열어 두면
+    // 가린 이메일(mask_for_viewer)을 결과 건수로 한 글자씩 맞출 수 있다. 다른 칸 검색은 그대로다.
+    $emailLike = role_gte(ctx_global_role($ctx), 'superadmin');
+    $where[]  = '(u.username LIKE ?' . $esc . ($emailLike ? ' OR u.email LIKE ?' . $esc : '') . ' OR u.name LIKE ?' . $esc
         . ' OR u.nickname LIKE ?' . $esc . ')';
     $params[] = $like;
-    $params[] = $like;
+    if ($emailLike) {
+        $params[] = $like;
+    }
     $params[] = $like;
     $params[] = $like;
 }

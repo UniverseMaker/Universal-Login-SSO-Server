@@ -259,7 +259,9 @@ function rg_probe(int $port): array
     $s = rg_http($port, 'GET', '/server/api/auth/register_status.php');
     assert_eq(200, $s['status'], 'register_status status (body: ' . substr($s['body'], 0, 200) . ')');
     assert_true(is_array($s['json']) && $s['json']['ok'] === true, 'register_status envelope ok');
-    assert_eq(array('allow_register'), array_keys($s['json']['data']), 'register_status data keys (pure addition, one key)');
+    // v1.10.1 — register_mode 순수 추가(설계 130 §1-3). allow_register 는 (register_mode !== 'closed') 와 같아야 한다.
+    assert_eq(array('allow_register', 'register_mode'), array_keys($s['json']['data']), 'register_status data keys (pure addition)');
+    assert_eq($s['json']['data']['register_mode'] !== 'closed', $s['json']['data']['allow_register'], 'allow_register == (mode !== closed)');
     assert_true(is_bool($s['json']['data']['allow_register']), 'allow_register is a JSON boolean');
     // 본문 {} — 게이트를 지나면 VALIDATION_FAILED(400), 막히면 REGISTRATION_DISABLED(403). 사용자를 만들지 않는다.
     $p = rg_http($port, 'POST', '/server/api/auth/register.php', '{}');
@@ -377,15 +379,17 @@ foreach ($RG_PAGES as $path => $kind) {
         assert_contains("apiGet('/api/auth/register_status')", $b, 'page reads the public gate');
         if ($kind === 'login') {
             assert_match('~<a [^>]*id="link-register"[^>]*\shidden>~', $b, 'register link is hidden in markup');
-            assert_contains('linkRegister.hidden = !(data && data.allow_register === true);', $b, 'reveal only on true');
+            // v1.10.1 — closed 도 숨긴다(register_mode 순수 추가, 화면 담당 반영). approval 이면 「가입 신청」
+            assert_contains("linkRegister.hidden = !(data && data.allow_register === true && data.register_mode !== 'closed');", $b, 'reveal only on true and not closed');
+            assert_contains("(data && data.register_mode === 'approval') ? '가입 신청' : '회원가입'", $b, 'approval relabels the link');
             assert_contains('.catch(function () { linkRegister.hidden = true; });', $b, 'hide on failure');
-            assert_contains("linkRegister.hidden = (info.allow_register !== true);", $b, 'SSO path: hide unless true');
+            assert_contains("linkRegister.hidden = (info.allow_register !== true || info.register_mode === 'closed');", $b, 'SSO path: hide unless true and not closed');
             assert_not_contains('info.allow_register === false', $b, 'old fail-open test must be gone');
         } else {
             assert_match('~<section [^>]*id="register-card"[^>]*\shidden>~', $b, 'register form card is hidden in markup');
             assert_match('~<section [^>]*id="closed-card"[^>]*\shidden>~', $b, 'closed notice card exists');
-            assert_contains('if (data && data.allow_register === true) {', $b, 'form opens only on true');
-            assert_contains('현재 신규 가입 중단, 관리자 문의', $b, 'closed notice text');
+            assert_contains("if (data && data.allow_register === true && rm !== 'closed') {", $b, 'form opens only on true and not closed');
+            assert_contains('현재 가입을 받지 않습니다.', $b, 'closed notice text (v1.10.1 설계 130 §3)');
             // v1.8.4 — 시험 공백 L-6. login.html 은 catch 문자열을 고정했는데 register.html 은 then 조건만
             // 고정해서, 요청 실패 시 폼을 여는 변이(N5: catch 본문 → `cardReg.hidden = false;`)가 통과했다.
             assert_contains("' 잠시 후 다시 시도해 주세요.', 'danger', true);", $b, 'request failure keeps the form closed with a retry notice');

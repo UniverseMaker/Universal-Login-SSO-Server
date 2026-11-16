@@ -101,6 +101,15 @@ $result = db_tx(function () use ($code, $service, $serviceId, $redirectUri, $ver
     } elseif (!hash_equals(normalize_uri((string) $row['redirect_uri']), normalize_uri($redirectUri))
               || normalize_uri($redirectUri) === '') {
         $bad = true;                                   // 발급 시점 값과 완전 일치해야 한다
+    } elseif (empty($service['is_confidential'])
+              && trim((string) ($row['code_challenge'] ?? '')) === '') {
+        // v1.10.0 감사 H-1 / D-372 — 공개 클라이언트(is_confidential=0)는 비밀값이 없으므로
+        // PKCE 가 code 를 묶는 유일한 수단이다. challenge 없이 발급된 code 는 교환하지 않는다.
+        // authorize.php 는 D-234 로 불변이라 발급 쪽이 아니라 여기서 막는다.
+        // 사유는 SSO_CODE_INVALID 로 뭉갠다(이 파일의 규약). 원인은 서버 로그로만.
+        error_log('[ulogin] exchange: public client ' . $serviceId
+            . ' presented a code issued without code_challenge; PKCE is required for public clients.');
+        $bad = true;
     } elseif (!pkce_verify($row['code_challenge'], $verifier)) {
         $bad = true;                                   // PKCE S256 불일치
     }

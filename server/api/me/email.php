@@ -22,6 +22,7 @@ $email    = (string) v_email($in, 'email', true);   // 소문자로 정규화되
 
 $user   = $ctx['user'];
 $userId = (int) $user['id'];
+emergency_target_guard($user);   // v1.10.0 감사 L-2 / D-372 — 비상 계정 이메일(예약 주소)은 웹에서 바꾸지 않는다(403)
 
 // 1) 비밀번호 확인 — 세션 탈취만으로 이메일(= 계정 회수 경로)을 바꿀 수 없게 한다
 if (!password_verify($password, (string) $user['password_hash'])) {

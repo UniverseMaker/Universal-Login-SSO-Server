@@ -58,7 +58,9 @@ if (!redirect_uri_allowed($service, $redirectUri)) {
 // 3) 가입 허용 여부는 전역 설정 AND 서비스 설정. 둘 중 하나라도 꺼져 있으면 false.
 //    화면이 "회원가입" 링크를 띄울지 결정하는 값이므로 실제 register 정책과 같아야 한다.
 //    그래서 register.php 와 **같은 함수**를 부른다(v1.8.2 — core/auth.php registration_open()).
-$allowRegister = registration_open($service);
+// v1.10.1 — register_mode(서비스 반영 유효값) 순수 추가. 같은 함수 한 번에서 두 값을 낸다(설계 130 §1-3).
+$regMode       = register_mode_effective($service);
+$allowRegister = $regMode !== 'closed';
 
 json_out([
     // v1.8.6 — 옛 id 로 물으면 옛 id 를 되돌린다(설계 104 C-2). 전환 전 응답과 글자 그대로 같다.
@@ -66,6 +68,7 @@ json_out([
     'service_name'       => (string) $service['service_name'],
     'redirect_uri_valid' => true,
     'allow_register'     => $allowRegister,
+    'register_mode'      => $regMode,
     // v1.0.0 은 PKCE 를 강제하지 않는다. services 에 해당 컬럼이 없다 —
     // 클라이언트가 code_challenge 를 보내면 검증하고, 안 보내도 통과시킨다.
     'requires_pkce'      => false,

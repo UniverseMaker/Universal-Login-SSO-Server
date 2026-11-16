@@ -527,7 +527,15 @@ function access_service_row_fresh(string $sid): ?array
 
 /**
  * GC(§2 기간·회수): 지난 2일 안에 끝난 기간(override·member·group service)의 영향 계정을 재판정해
- * 입장을 잃었으면 세션을 회수한다. 호출당 200행 상한. 회수는 멱등(revoked_at IS NULL)이라 되풀이돼도 같다.
+ * 입장을 잃었으면 세션을 회수한다. 호출당 원천별 200행 상한. 회수는 멱등(revoked_at IS NULL)이라 되풀이돼도 같다.
+ *
+ * v1.10.0 감사 L-4 / D-372 — **커서**. 종전은 순서 없는 `LIMIT 200` 이라 만료가 200건을 넘으면 매번 같은 200건만
+ * 다시 보고 나머지는 2일 창이 지나 영영 회수되지 않았다. 이제 원천마다 (ends_at, id) 키셋으로 이어 읽고,
+ * 위치를 설정 `access.gc_cursor`(내부 값, 화면 비노출 — audit.chain_head 와 같은 부류)에 남긴다.
+ *   us : user_services (access_ends_at, id)
+ *   m  : access_group_members (ends_at, id) → 그 그룹의 서비스 전부
+ *   gs : access_group_services (ends_at, id, 구성원 id) → 그 그룹의 구성원 전부(구성원도 200명씩 나눈다)
+ * 커서보다 앞(과거)으로 고쳐 쓴 기간은 관리 조작 자체가 즉시 재판정·회수하므로(acc_revoke_service_sessions 등) GC 가 볼 필요가 없다.
  */
 function access_gc_expired(): int
 {
@@ -536,15 +544,87 @@ function access_gc_expired(): int
     }
     $now = now_utc();
     $from = at_utc(-2 * 86400);
+    $budget = 200;
+    $raw = setting_get('access.gc_cursor', null);
+    $cur = is_string($raw) ? json_decode($raw, true) : null;
+    $cur = is_array($cur) ? $cur : [];
+    $start = $cur;
+    // 커서가 없거나 창(2일) 밖으로 밀려났으면 창 시작에서 다시 읽는다
+    $pos = function (string $k, int $n) use ($cur, $from): array {
+        $c = isset($cur[$k]) && is_array($cur[$k]) && count($cur[$k]) === $n ? $cur[$k] : null;
+        if ($c === null || !is_string($c[0]) || strcmp($c[0], $from) < 0) {
+            return array_merge([$from], array_fill(0, $n - 1, 0));
+        }
+        return array_merge([(string) $c[0]], array_map('intval', array_slice($c, 1)));
+    };
     $pairs = [];
-    foreach (db_all('SELECT user_id, service_id FROM ' . T_USER_SERVICES . ' WHERE access_ends_at > ? AND access_ends_at <= ? LIMIT 200',
-        [$from, $now]) as $r) {
+
+    // 1) 계정 직접 덮어쓰기
+    list($ts, $id) = $pos('us', 2);
+    foreach (db_all('SELECT id, user_id, service_id, access_ends_at FROM ' . T_USER_SERVICES
+        . ' WHERE access_ends_at <= ? AND (access_ends_at > ? OR (access_ends_at = ? AND id > ?))'
+        . ' ORDER BY access_ends_at ASC, id ASC LIMIT ' . $budget, [$now, $ts, $ts, $id]) as $r) {
         $pairs[(int) $r['user_id']][(string) $r['service_id']] = true;
+        $cur['us'] = [(string) $r['access_ends_at'], (int) $r['id']];
     }
-    foreach (db_all('SELECT m.user_id, gs.service_id FROM ' . T_ACCESS_GROUP_MEMBERS . ' m JOIN ' . T_ACCESS_GROUP_SERVICES
-        . ' gs ON gs.group_id = m.group_id WHERE (m.ends_at > ? AND m.ends_at <= ?) OR (gs.ends_at > ? AND gs.ends_at <= ?) LIMIT 200',
-        [$from, $now, $from, $now]) as $r) {
-        $pairs[(int) $r['user_id']][(string) $r['service_id']] = true;
+
+    // 2) 그룹 구성원 기간
+    list($ts, $id) = $pos('m', 2);
+    $mem = db_all('SELECT id, group_id, user_id, ends_at FROM ' . T_ACCESS_GROUP_MEMBERS
+        . ' WHERE ends_at <= ? AND (ends_at > ? OR (ends_at = ? AND id > ?))'
+        . ' ORDER BY ends_at ASC, id ASC LIMIT ' . $budget, [$now, $ts, $ts, $id]);
+    if ($mem !== []) {
+        $gids = array_values(array_unique(array_map(function (array $r): int { return (int) $r['group_id']; }, $mem)));
+        $svcBy = [];
+        foreach (db_all('SELECT group_id, service_id FROM ' . T_ACCESS_GROUP_SERVICES . ' WHERE group_id IN ('
+            . implode(',', array_fill(0, count($gids), '?')) . ')', $gids) as $g) {
+            $svcBy[(int) $g['group_id']][] = (string) $g['service_id'];
+        }
+        foreach ($mem as $r) {
+            foreach ($svcBy[(int) $r['group_id']] ?? [] as $sid) {
+                $pairs[(int) $r['user_id']][$sid] = true;
+            }
+            $cur['m'] = [(string) $r['ends_at'], (int) $r['id']];
+        }
+    }
+
+    // 3) 그룹-서비스 기간 — 행 하나가 구성원 전부에 걸리므로 구성원 id 까지 커서에 둔다.
+    //    커서 [ends_at, id, mid]: mid = 이 행에서 마지막으로 본 구성원 id. -1 = 이 행은 끝났다(다음 행부터).
+    list($ts, $id, $mid) = $pos('gs', 3);
+    $left = $budget;
+    $guard = $budget;   // 구성원 0명 행이 길게 이어져도 호출당 질의 수를 묶는다
+    while ($left > 0 && $guard-- > 0) {
+        $after = '(ends_at > ? OR (ends_at = ? AND id > ?))';
+        $args  = [$now, $ts, $ts, $id];
+        if ($mid >= 0) {
+            $after = '(' . $after . ' OR (ends_at = ? AND id = ?))';   // 끝나지 않은 현재 행을 이어서
+            array_push($args, $ts, $id);
+        }
+        $gs = db_one('SELECT id, group_id, service_id, ends_at FROM ' . T_ACCESS_GROUP_SERVICES
+            . ' WHERE ends_at <= ? AND ' . $after . ' ORDER BY ends_at ASC, id ASC LIMIT 1', $args);
+        if ($gs === null) {
+            break;
+        }
+        if ((string) $gs['ends_at'] !== $ts || (int) $gs['id'] !== $id || $mid < 0) {
+            $mid = 0;   // 새 행 — 구성원을 처음부터
+        }
+        $ts = (string) $gs['ends_at'];
+        $id = (int) $gs['id'];
+        $ms = db_all('SELECT id, user_id FROM ' . T_ACCESS_GROUP_MEMBERS . ' WHERE group_id = ? AND id > ? ORDER BY id ASC LIMIT ' . $left,
+            [(int) $gs['group_id'], $mid]);
+        foreach ($ms as $m) {
+            $pairs[(int) $m['user_id']][(string) $gs['service_id']] = true;
+            $mid = (int) $m['id'];
+        }
+        if (count($ms) < $left) {
+            $mid = -1;   // 이 행의 구성원을 다 봤다
+        }
+        $left -= count($ms);
+        $cur['gs'] = [$ts, $id, $mid];
+    }
+
+    if ($cur !== $start) {
+        setting_set('access.gc_cursor', (string) json_encode($cur, JSON_UNESCAPED_SLASHES), 'string');
     }
     return $pairs === [] ? 0 : access_revoke_lost($pairs);
 }

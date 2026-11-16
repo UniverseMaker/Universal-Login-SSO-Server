@@ -98,6 +98,11 @@ if ($type === 'login') {
     $serviceId = v_string($_GET, 'service_id', 1, 64, false);
     admin_service_id_reject_former($serviceId);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
     $ip        = v_string($_GET, 'ip', 1, 45, false);
+    // v1.10.0 감사 M-2 / D-372 — IP 원문은 superadmin 만 본다(mask_for_viewer). 그 아래 등급이 ip 로 거르면
+    // 가린 끝자리를 0~255 대입으로 알아낼 수 있다(결과 건수가 오라클). 필터 자체를 superadmin 만 허용한다.
+    if ($ip !== null && !role_gte($viewerRole, 'superadmin')) {
+        throw new AppError('FORBIDDEN', 403, ['field' => 'ip', 'message' => 'IP 로 거르기는 최고 관리자만 할 수 있습니다.']);
+    }
     $uuid      = v_string($_GET, 'uuid', 1, 64, false);
 
     $resultRaw = in_raw($_GET, 'result');

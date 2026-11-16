@@ -36,7 +36,26 @@ $user = db_one('SELECT * FROM ' . T_USERS . ' WHERE username = ? OR email = ? LI
 // 계정이 없어도 더미 해시로 password_verify 를 한 번 돌린다.
 // 즉시 반환하면 응답 시간 차이로 계정 존재 여부가 새어나간다.
 if ($user === null) {
-    dummy_password_verify($password);
+    // v1.10.1 (설계 130 §2-4) — 승인 대기 신청이 있으면 **그 해시로** 검증한다(더미 대신 — bcrypt 1회로 시간 동치).
+    // 맞으면 403 AUTH_ACCOUNT_PENDING, 틀리면 종전 그대로. 비밀번호를 아는 사람에게만 신청 존재가 드러난다.
+    // v1.10.1 보안 L-3 (D-375) — 신청 비밀번호 실패도 잠금 카운트(계정과 같은 임계·시간). 잠겼으면 검증 전에 423.
+    $pend = register_pending_row($norm);
+    if ($pend !== null) {
+        try {
+            pending_assert_not_locked($pend['id']);
+        } catch (AppError $e) {
+            log_login('fail_locked', null, $loginId, $serviceId);
+            throw $e;
+        }
+        if (password_verify($password, $pend['password_hash'])) {
+            pending_clear_failures($pend['id']);
+            log_login('fail_status', null, $loginId, $serviceId);
+            throw new AppError('AUTH_ACCOUNT_PENDING', 403, ['message' => '관리자 승인 후 로그인할 수 있습니다.']);
+        }
+        pending_register_failure($pend['id']);   // PENDING-FAIL-COUNT
+    } else {
+        dummy_password_verify($password);
+    }
     log_login('fail_credential', null, $loginId, $serviceId);
     throw new AppError('AUTH_INVALID_CREDENTIALS', 401, ['field' => 'password']);
 }
@@ -62,7 +81,7 @@ try {
 
 // 6) 비밀번호
 if (!password_verify($password, (string) $user['password_hash'])) {
-    register_login_failure($user);
+    register_login_failure($user, true);   // v1.10.0 L-1 — 비상 계정 감사는 아래에서 이 파일이 남긴다
     log_login('fail_credential', (int) $user['id'], $loginId, $serviceId);
     if ($isEmergency) {
         audit_emergency_event('emergency.login.failure', $user, ['reason' => 'credential']);

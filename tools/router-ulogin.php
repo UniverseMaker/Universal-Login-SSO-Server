@@ -297,6 +297,8 @@ function r_deny_rules($clean, $isDirRequest)
  *   /examples/*.html  연동 예제 화면
  *   /server/api/**    입구 .php 만
  *   /server/install.php  설치 전 화면 — 설치 뒤에는 install.php 자신의 잠금 판정이 막는다(지금처럼)
+ *   /local-admin      (v1.10.1 D-374) 이 함수가 아니라 위 2-a) 가 처리한다 — 서버 PC 조건 3개를 모두 만족할 때만 열리고 나머지는 404.
+ *                     server/local_admin.php 를 직접 부르는 주소는 이 목록에 없어 404 다.
  * 그 밖의 전부(설치 루트 문서, docs/, server/migrate.php, 그 외 .php)는 404.
  * **server/migrate.php 를 막는 것은 이 `php -S` 운영 서버뿐이다.** 마이그레이션은 이 서버에서
  * 셸(CLI)로 한다. Apache 공용 호스팅 배포는 셸이 없을 수 있어 웹 화면이 정본이므로
@@ -440,6 +442,29 @@ $isDirRequest = (substr($path, -1) === '/') || $clean === '/';
 // ---------------------------------------------------------------------
 $inServer = r_deny_rules($clean, $isDirRequest);
 $lower    = strtolower($clean);
+
+// ---------------------------------------------------------------------
+// 2-a) v1.10.1 D-374 — 비상 관리자 로컬 화면 `/local-admin` (허용 목록의 **유일한 비정적 별칭**).
+//      「서버 PC 에서만」 판정은 server/core/localonly.php 한 함수(화면 파일도 같은 함수로 한 번 더 본다).
+//      공개 Host·Cloudflare 헤더·X-Forwarded-* 중 하나라도 있으면 **여기서 404** — 화면 파일까지 가지 않는다.
+//      정확히 이 철자만(대소문자·후행 슬래시·`.php` 변형은 아래 일반 경로가 404 로 처리한다).
+// ---------------------------------------------------------------------
+if ($clean === '/local-admin' && !$isDirRequest && substr($path, -1) !== '/') {
+    require_once $ROOT . '/server/core/localonly.php';
+    if (!ulogin_local_request_ok($_SERVER)) {
+        r_deny(404, 'local-admin: not a server-pc request');
+    }
+    $laFile = $ROOT . '/server/local_admin.php';
+    if (!is_file($laFile)) {
+        r_deny(404, 'local-admin: screen missing');
+    }
+    header_remove('X-Powered-By');
+    $_SERVER['SCRIPT_NAME']     = '/local-admin';
+    $_SERVER['PHP_SELF']        = '/local-admin';
+    $_SERVER['SCRIPT_FILENAME'] = $laFile;
+    require $laFile;
+    return;
+}
 
 // ---------------------------------------------------------------------
 // 2-b) 별칭 (v1.8.1 / D-313). **차단 1회차 뒤에** 둔다 — 요청 문자열 자체가 먼저

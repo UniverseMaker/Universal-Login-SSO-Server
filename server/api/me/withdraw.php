@@ -29,6 +29,7 @@ $confirm  = (string) v_string($in, 'confirm', 1, 190, true);
 
 $user   = $ctx['user'];
 $userId = (int) $user['id'];
+emergency_target_guard($user);   // v1.10.0 감사 L-2 / D-372 — 비상 계정은 웹에서 탈퇴하지 않는다(CLI 전용, 403)
 
 // 1) 비밀번호
 if (!password_verify($password, (string) $user['password_hash'])) {

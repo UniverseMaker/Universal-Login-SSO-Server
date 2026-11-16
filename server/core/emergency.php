@@ -28,13 +28,15 @@ if (!defined('ULOGIN_BOOTSTRAPPED')) {
     exit;
 }
 
+require_once __DIR__ . '/pwstrong.php';   // v1.10.1 L-2 — 관리자 비밀번호 강화 규칙(설치기와 공용)
+
 const EM_ITERS       = 310000;
 const EM_PREFIX      = 'emergency/1|';
 const EM_DEDUPE_SEC  = 600;     // 로그인 때 같은 (계정, 서비스)에 최근 10분 안에 나간 값이 있으면 다시 만들지 않는다
 const EM_MIN_DAYS    = 1;
 const EM_MAX_DAYS    = 365;
 const EM_STRONG_RANK = 20;      // role_rank 20 이상(admin~) — 비밀번호 정책 강화 대상
-const EM_STRONG_MIN  = 12;
+// EM_STRONG_MIN(10, D-373) 은 core/pwstrong.php
 
 // ---------------------------------------------------------------------
 // 계산 (순수 함수 — 시험이 계약 식을 따로 재계산해 대조한다)
@@ -460,71 +462,8 @@ function em_reconcile_sweep(int $limit = 100): int
 // 비밀번호 정책 강화 — role_rank 20 이상 (판정 D-362)
 // ---------------------------------------------------------------------
 
-/** 흔한 비밀번호 기반 단어. 소문자 비교, 앞뒤의 숫자·기호는 벗겨 본다. */
-const EM_COMMON_PW = [
-    'password', 'passw0rd', 'p@ssword', 'p@ssw0rd', 'qwerty', 'qwertyuiop', 'qwertyui', 'asdfgh', 'asdfghjkl', 'zxcvbn', 'zxcvbnm',
-    'iloveyou', 'letmein', 'welcome', 'admin', 'administrator', 'root', 'login', 'master', 'monkey', 'dragon', 'sunshine',
-    'princess', 'football', 'baseball', 'superman', 'batman', 'trustno1', 'abc123', 'abcdef', 'abcdefgh', 'changeme',
-    'default', 'guest', 'user', 'test', 'tester', 'secret', 'shadow', 'michael', 'jennifer', 'hello', 'freedom', 'whatever',
-    'qazwsx', 'qazwsxedc', '1qaz2wsx', 'zaq12wsx', 'q1w2e3r4', 'qwer1234', 'asdf1234', 'zxcv1234', 'aaaa1111', 'a1b2c3d4',
-    'google', 'naver', 'daum', 'kakao', 'samsung', 'korea', 'korea1234', 'seoul', 'hunter', 'ulogin', 'research', 'system',
-    'computer', 'internet', 'service', 'manager', 'company', 'office', 'summer', 'winter', 'spring', 'autumn', 'newyork',
-    'pass', 'pass1234', 'passwd', 'pa55word', 'pa55w0rd', 'love', 'lovely', 'starwars', 'cheese', 'killer',
-    '123456', '12345678', '123456789', '1234567890', '0123456789', '111111', '000000', '123123', '654321', '112233',
-];
-
-/** 비밀번호가 흔한 목록(변형 포함)에 걸리는가. */
-function em_pw_is_common(string $pw, ?string $username = null): bool
-{
-    $l     = mb_strtolower($pw, 'UTF-8');
-    $strip = (string) preg_replace('/[0-9!@#$%^&*._\-]+$/', '', $l);
-    $core  = (string) preg_replace('/^[^a-z]+|[^a-z]+$/', '', strtr($l, ['@' => 'a', '0' => 'o', '1' => 'i', '3' => 'e', '$' => 's', '5' => 's']));
-    foreach ([$l, $strip, $core] as $cand) {
-        if ($cand !== '' && in_array($cand, EM_COMMON_PW, true)) {
-            return true;
-        }
-    }
-    foreach (EM_COMMON_PW as $w) {
-        // 흔한 단어에 몇 글자만 덧붙인 형태(password2024!! 등). 단어가 비밀번호 대부분을 차지할 때만
-        if (strlen($w) >= 6 && !ctype_digit($w) && strpos($l, $w) !== false && mb_strlen($l, 'UTF-8') <= strlen($w) + 6) {
-            return true;
-        }
-    }
-    if ($username !== null && strlen($username) >= 4 && strpos($l, mb_strtolower($username, 'UTF-8')) !== false) {
-        return true;
-    }
-    $chars = preg_split('//u', $l, -1, PREG_SPLIT_NO_EMPTY);
-    if (is_array($chars) && count(array_unique($chars)) <= 3) {
-        return true;          // 같은 글자 반복
-    }
-    // 같은 낱말 반복(Password!Password! · letmeinletmein): 기호·숫자를 벗긴 글자가 한 덩어리의 반복이면
-    $alpha = (string) preg_replace('/[^a-z]/', '', $l);
-    if (strlen($alpha) >= 6 && preg_match('/^(.{3,}?)\1+$/', $alpha) === 1) {   // REPEAT-RULE
-        return true;
-    }
-    $alnum = (string) preg_replace('/[^a-z0-9]/', '', $l);
-    if (strlen($alnum) >= 8 && preg_match('/^(.{3,}?)\1+$/', $alnum) === 1) {
-        return true;
-    }
-    return em_pw_has_keyboard_run($l);   // KEYBOARD-RULE
-}
-
-/** 키보드·숫자·알파벳 순서의 6글자 이상 연속(정방향·역방향). 1q2w3e4r5t6y · qwerty · 123456 · abcdef */
-function em_pw_has_keyboard_run(string $l): bool
-{
-    foreach (['1q2w3e4r5t6y7u8i9o0p', 'qazwsxedcrfvtgbyhnujmikolp', '1qaz2wsx3edc4rfv5tgb', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm',
-              '1234567890', 'abcdefghijklmnopqrstuvwxyz', 'poiuytrewq', 'lkjhgfdsa', 'mnbvcxz'] as $seq) {
-        foreach ([$seq, strrev($seq)] as $q) {
-            $len = strlen($q);
-            for ($i = 0; $i + 6 <= $len; $i++) {
-                if (strpos($l, substr($q, $i, 6)) !== false) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
+// v1.10.1 L-2 — 흔한 비밀번호 목록·em_pw_is_common()·em_pw_has_keyboard_run()·EM_STRONG_MIN 은 core/pwstrong.php 로 옮겼다
+// (설치기 install.php 도 같은 규칙을 쓰게). 이 파일 머리에서 require_once 한다.
 
 /** role_rank 20 이상 계정의 강화 정책. 위반이면 v_fail. 기존 비밀번호는 다음 변경 때 적용한다(로그인을 막지 않는다). */
 function em_enforce_strong_password(string $pw, ?string $username, int $roleRank, string $field = 'password'): void
@@ -532,10 +471,157 @@ function em_enforce_strong_password(string $pw, ?string $username, int $roleRank
     if ($roleRank < EM_STRONG_RANK) {
         return;
     }
-    if (mb_strlen($pw, 'UTF-8') < EM_STRONG_MIN) {
-        v_fail($field, '관리자 계정의 비밀번호는 ' . EM_STRONG_MIN . '자 이상이어야 합니다.');
+    $problem = pw_strong_problem($pw, $username);   // 규칙 본문은 core/pwstrong.php(설치기와 같은 함수)
+    if ($problem !== null) {
+        v_fail($field, $problem);
     }
-    if (em_pw_is_common($pw, $username)) {
-        v_fail($field, '흔히 쓰는 비밀번호는 관리자 계정에 사용할 수 없습니다.');
+}
+
+// =====================================================================
+// v1.10.1 D-374 — 비상 계정 처리 본체. CLI(server/tools/emergency_admin.php)와 로컬 화면(server/local_admin.php)이
+// **같은 함수**를 부른다(처리 규칙이 두 곳에 갈라지지 않게). 값(비밀번호)은 응답·로그·감사 어디에도 남기지 않는다.
+// =====================================================================
+
+const EM_LOCAL_USERNAME = 'admin';
+const EM_LOCAL_EMAIL    = 'admin@emergency.ulogin.invalid';
+
+/** 전제 불충족(이미 있음·없음·상태 불일치). kind: taken|exists|email|missing|state */
+class EmLocalError extends RuntimeException
+{
+    /** @var string */
+    public $kind;
+
+    public function __construct(string $kind, string $message)
+    {
+        parent::__construct($message);
+        $this->kind = $kind;
     }
+}
+
+/** 비상 계정 행(account_kind=emergency). 없으면 null. */
+function em_local_row(): ?array
+{
+    return db_one('SELECT * FROM ' . T_USERS . ' WHERE account_kind = ? ORDER BY id ASC LIMIT 1', ['emergency']);
+}
+
+function em_local_state(array $u): string
+{
+    return (string) $u['password_hash'] === EMERGENCY_UNSET_HASH ? 'unset' : 'set';
+}
+
+function em_local_locked(array $u): bool
+{
+    $t = ts($u['locked_until'] ?? null);
+    return $t !== null && $t > time();
+}
+
+/** 감사 1건(값 제외). 행위자 system — admin_id 0. $via 는 memo(경로 표시). */
+function em_local_audit(string $action, array $u, ?array $before, ?array $after, string $via): void
+{
+    log_admin(0, $action, 'user', (string) $u['uuid'], $before, $after, $via);
+}
+
+/**
+ * v1.10.0 감사 M-4 / D-372 — 이 계정의 로그인 빈도 버킷(`login:user:{입력 소문자}`)을 지운다.
+ * 로그인 입력은 아이디 또는 이메일이므로 둘 다. 잠금만 풀면 이 버킷이 남아 5분간 계속 429 가 난다.
+ */
+function em_local_clear_login_buckets(array $u): int
+{
+    $keys = [];
+    foreach ([(string) $u['username'], (string) ($u['email'] ?? '')] as $id) {
+        if ($id !== '') {
+            $keys[] = substr('login:user:' . mb_strtolower($id, 'UTF-8'), 0, 150);   // rate_limit() 의 자르기와 같다
+        }
+    }
+    $keys = array_values(array_unique($keys));
+    if ($keys === []) {
+        return 0;
+    }
+    return db_exec('DELETE FROM ' . T_RATE_LIMITS . ' WHERE bucket IN (' . implode(',', array_fill(0, count($keys), '?')) . ')', $keys);
+}
+
+/** 비상 계정 만들기(미설정 상태). 전제가 어긋나면 EmLocalError. @return array 만든 행 */
+function em_local_init(string $username, string $via): array
+{
+    $taken = db_one('SELECT * FROM ' . T_USERS . ' WHERE username = ?', [$username]);
+    if ($taken !== null) {
+        throw new EmLocalError('taken', 'init: 아이디 ' . $username . ' 가 이미 있습니다. 아무것도 바꾸지 않았습니다.');
+    }
+    if (em_local_row() !== null) {
+        throw new EmLocalError('exists', 'init: 비상 계정이 이미 있습니다. 아무것도 바꾸지 않았습니다.');
+    }
+    if (db_val('SELECT id FROM ' . T_USERS . ' WHERE email = ?', [EM_LOCAL_EMAIL]) !== null) {
+        throw new EmLocalError('email', 'init: 예약 이메일이 다른 계정에 있습니다. 아무것도 바꾸지 않았습니다.');
+    }
+    $now  = now_utc();
+    $uuid = gen_uuid4();
+    db_tx(function () use ($uuid, $now, $username) {
+        db_insert(T_USERS, [
+            'uuid' => $uuid, 'username' => $username, 'email' => EM_LOCAL_EMAIL, 'password_hash' => EMERGENCY_UNSET_HASH,
+            'name' => '비상 관리자', 'status' => 'active', 'account_level' => 'basic', 'role' => 'superadmin',
+            'billing_tier' => 'free', 'account_kind' => 'emergency', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+    });
+    $u = em_local_row();
+    em_local_audit('emergency.create', $u, null, ['username' => $username, 'role' => 'superadmin', 'state' => 'unset'], $via);
+    return $u;
+}
+
+/**
+ * 비밀번호 정하기($act='set-password', 미설정 → 설정) · 바꾸기($act='reset', 설정 → 새 값).
+ * 관리자 정책(v1.9.1, D-373 10자 이상·흔한 패턴 거절)을 적용한다 — 위반이면 AppError(VALIDATION_FAILED).
+ * password_epoch+1 · 세션 전부 회수 · 잠금 해제 · 로그인 빈도 버킷 삭제(M-4).
+ * @return array{revoked:int, cleared:int, from:string}
+ */
+function em_local_set_password(array $u, string $pw, string $act, string $via): array
+{
+    $state = em_local_state($u);
+    if ($act === 'set-password' && $state !== 'unset') {
+        throw new EmLocalError('state', 'set-password: 이미 설정돼 있습니다. 바꾸려면 --reset 을 쓰세요.');
+    }
+    if ($act === 'reset' && $state !== 'set') {
+        throw new EmLocalError('state', 'reset: 아직 미설정입니다. --set-password 를 쓰세요.');
+    }
+    if ($act !== 'set-password' && $act !== 'reset') {
+        throw new InvalidArgumentException('em_local_set_password: unknown act');
+    }
+    validate_password($pw, (string) $u['username'], 'password', rank_of(ROLE_RANK, 'superadmin'));
+    $now = now_utc();
+    $revoked = db_tx(function () use ($u, $pw, $now) {
+        db_exec('UPDATE ' . T_USERS . ' SET password_hash = ?, password_changed_at = ?, password_epoch = password_epoch + 1,'
+            . ' failed_login_count = 0, locked_until = NULL, updated_at = ? WHERE id = ? AND account_kind = ?',
+            [password_hash($pw, PASSWORD_DEFAULT), $now, $now, (int) $u['id'], 'emergency']);
+        return revoke_user_sessions((int) $u['id'], 'password_changed');
+    });
+    $cleared = em_local_clear_login_buckets($u);
+    em_local_audit($act === 'reset' ? 'emergency.password.reset' : 'emergency.password.set', $u,
+        ['password' => '[REDACTED]', 'state' => $state],
+        ['password' => '[REDACTED]', 'state' => 'set', 'revoked_sessions' => $revoked, 'rate_buckets_cleared' => $cleared], $via);
+    return ['revoked' => (int) $revoked, 'cleared' => $cleared, 'from' => $state];
+}
+
+/** 다시 미설정(로그인 불가) + 세션 회수. @return int 회수한 세션 수 */
+function em_local_unset(array $u, string $via): int
+{
+    $before = em_local_state($u);
+    $now = now_utc();
+    $revoked = db_tx(function () use ($u, $now) {
+        db_exec('UPDATE ' . T_USERS . ' SET password_hash = ?, password_changed_at = ?, password_epoch = password_epoch + 1, updated_at = ?'
+            . ' WHERE id = ? AND account_kind = ?', [EMERGENCY_UNSET_HASH, $now, $now, (int) $u['id'], 'emergency']);
+        return revoke_user_sessions((int) $u['id'], 'password_changed');
+    });
+    em_local_audit('emergency.password.unset', $u, ['password' => '[REDACTED]', 'state' => $before],
+        ['password' => '[REDACTED]', 'state' => 'unset', 'revoked_sessions' => $revoked], $via);
+    return (int) $revoked;
+}
+
+/** 실패 잠금 해제 + 로그인 빈도 버킷 삭제. @return int 지운 버킷 수 */
+function em_local_unlock(array $u, string $via): int
+{
+    db_exec('UPDATE ' . T_USERS . ' SET failed_login_count = 0, locked_until = NULL, updated_at = ? WHERE id = ? AND account_kind = ?',
+        [now_utc(), (int) $u['id'], 'emergency']);
+    $cleared = em_local_clear_login_buckets($u);
+    em_local_audit('emergency.unlock', $u, ['failed_login_count' => (int) $u['failed_login_count']],
+        ['failed_login_count' => 0, 'rate_buckets_cleared' => $cleared], $via);
+    return $cleared;
 }

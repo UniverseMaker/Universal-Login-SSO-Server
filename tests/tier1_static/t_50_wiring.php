@@ -87,6 +87,14 @@ t('every response field a server endpoint produces has a consumer (D-181 rule 1)
         'rejected',   // logs·audit: 항목별 거절 사유
         // health 의 감사 체인 판정 — 모니터링·배포 절차가 읽는다(위 health 묶음과 같은 성격)
         'audit_chain_ok',
+
+        // --- v1.10.1 공동 포인트 s2s — **다른 시스템의 서버가 읽는 필드**(설계 130 §4-6). 화면 소비자는 없는 것이 맞다 ---
+        //   소비자: 포인트 기능이 있는 각 시스템 서버 + AI_INTEGRATION_GUIDE.md 공동 포인트 절(integrator).
+        'limits',          // s2s_balance: 남은 24시간 한도
+        'next_before_id',  // s2s_history: 다음 쪽 커서
+        // --- v1.10.1 가입 신청 — 상태 에코. 화면은 202·200 과 receipt·status 로 분기하고 `request` 본문은 읽지 않는다 ---
+        //   소비자: SSO 로 가입 화면을 띄우는 연동 앱(신청 시각 표시) + AI_INTEGRATION_GUIDE.md(integrator).
+        'request',
     );
     assert_clean(
         chk_unconsumed_response_fields($ROOT, $allowUnconsumed),

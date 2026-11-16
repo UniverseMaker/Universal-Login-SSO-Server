@@ -26,11 +26,13 @@ The screenshots show the Korean UI. Every account, e-mail address and key in the
 | Area | What it does |
 |---|---|
 | **AI credential management** | LLM API keys, model names, API base URLs and call limits live on the server as service secrets, encrypted with AES-256-CBC. Right after sign-in they are delivered as `payload` to that user only. Each key can require a minimum account level, billing tier or role; keys the user does not qualify for are simply left out |
-| **SSO** | One-time code exchange (60 s), PKCE (S256) supported. A separate silent-SSO path issues a code for a browser that is already signed in, without asking for the password again |
+| **SSO** | One-time code exchange (60 s). PKCE accepts S256 only and is mandatory for public clients (apps without a secret). Native apps may use private-use URI schemes as redirect URIs. A separate silent-SSO path serves browsers that are already signed in |
 | **Account linking** | Each connected system pushes its own account list over a server-to-server API; the admin console links those accounts to unified accounts, showing same-e-mail matches as candidates first |
-| **Fine-grained access levels** | Four levels per account × service: `none`, `view`, `use`, `admin`. Grant through groups, override per account (allow or deny), and set start/end times. Deny always wins, and revoking access ends that service's sessions |
-| **Platform API** | Five shared services for connected systems: remote config (conditions, versions, rollback), operational log intake, audit log intake with an HMAC-SHA256 hash chain and a chain check, document tables, and usage metering |
-| **Emergency admin** | An emergency account named `admin`. Its password can only be set from the server's CLI, and it cannot sign in until then. Console-only; it is never an SSO target for other services |
+| **Fine-grained access levels** | Four levels per account × service: `none`, `view`, `use`, `admin`. Grant through groups, override per account (allow or deny), and set start/end times. Deny always wins, and revoking access ends that service's sessions. The verdict travels in sign-in and token responses as `access` / `access_level` |
+| **Data minimization** | Admins see only what they need: raw IPs and User-Agents are superadmin-only, managers see masked e-mail and phone numbers, and the content of user-owned documents never shows in the console |
+| **Registration modes** | Choose closed, approval or open sign-up. In approval mode applications queue up under "Registration requests" in the console, where an admin reviews the evidence and approves or rejects |
+| **Platform API** | Shared services for connected systems: remote config (conditions, versions, rollback), operational log intake, audit log intake with an HMAC-SHA256 hash chain and a chain check, document tables, usage metering, shared points (server-to-server balance, earn, spend, history) and account search |
+| **Emergency admin** | An emergency account named `admin`. Its password is set only on the server machine — from the CLI, or on the `/local-admin` screen opened with a 10-minute one-time key link that the CLI creates. It cannot sign in until then and is console-only |
 | **Install & operate** | SQLite by default, so no database server is required; MySQL is one config line away. PHP 7.2+, no Composer, no build step — upload the files. Schema changes go through a migration runner |
 | **Settings bundle** | Export and import services, secrets and global settings as one JSON file, in three steps: validate → plan → apply. Exports never contain secret values. A separate guide lets an AI write valid bundles |
 | **Regression tests** | `php tests/run.php` runs static checks, unit tests and live-server tests. A self-check verifies that the checkers actually catch planted defects |
@@ -120,6 +122,13 @@ All captures come from a freshly installed demo instance with fake data.
 |---|---|
 | ![Access matrix](docs/images/09-admin-access-matrix.png)<br>**Account × service matrix** — each cell shows the server's verdict, its source (rule, group or override) and expiry | ![Groups](docs/images/10-admin-access-groups.png)<br>**Groups** — members and per-service levels |
 
+### Admin console — registration requests and emergency admin
+
+| | |
+|---|---|
+| ![Registration requests](docs/images/22-admin-register-requests.png)<br>**Registration requests** — applications from approval mode with their status (pending, approved, rejected) | ![Registration mode](docs/images/24-admin-settings-register-mode.png)<br>**Registration mode** — closed, approval or open |
+| ![Local admin screen](docs/images/25-local-admin.png)<br>**`/local-admin`** — the emergency-account screen, opened on the server machine with a one-time key link | |
+
 ### Admin console — logs and platform
 
 | | |
@@ -152,9 +161,24 @@ All captures come from a freshly installed demo instance with fake data.
 - Sign-up, sign-in, password reset, e-mail verification, session management, account withdrawal.
 - Three-axis permissions: account level, role, billing tier. Expired billing falls back to the lower tier.
 - SSO redirect URIs must match the service's allow-list exactly. Codes are one-time and live 60 s; PKCE accepts S256 only.
+- Public clients (services without a `service_secret`) must use PKCE; a code issued without `code_challenge` is refused at exchange.
 - Silent SSO (`/server/api/sso/authorize_session.php`) re-issues a code from an existing browser session. It is not open to public clients.
-- Public clients (native apps) may use RFC 8252 private-use URI schemes as redirect URIs.
+- Public clients (native apps) may use RFC 8252 private-use URI schemes as redirect URIs (e.g. `myapp://auth`).
 - Lockout on repeated failures, rate limiting, CSRF tokens, `HttpOnly` / `SameSite` cookies.
+
+### Registration modes
+
+- Setting `register_mode`: `closed`, `approval` or `open`.
+- In approval mode the sign-up API returns `202` with a request number and creates no account yet; signing in before approval returns `AUTH_ACCOUNT_PENDING`.
+- Admins approve or reject under "Registration requests" (admin or above, audit-logged). Applicants check the outcome via `auth/register_request_status.php`.
+- Abuse limits: pending requests per IP, a waiting period after rejection, and a cap on the whole queue.
+
+### Data minimization
+
+- Raw IPs and User-Agents in sign-in logs and registration requests are visible to superadmins only.
+- Managers see e-mail addresses and phone numbers masked.
+- Failed sign-ins with a non-existent username show only the input's length, even to superadmins (in case a password was typed into the username field).
+- Documents in user-owned (`owner`) collections show as `null` in the console.
 
 ### Account linking
 
@@ -168,7 +192,14 @@ All captures come from a freshly installed demo instance with fake data.
 - Give a group a level per service and add members; both memberships and grants can have start/end times.
 - Per-account overrides are allow (with an optional level) or deny. Deny beats groups and rules.
 - Unless a service declares that it understands levels (`level_aware`), `view` accounts cannot enter it — a read-only account never lands with write access.
-- The verdict is returned as `access` (a per-service level map) and `access_level`; the existing boolean `services` field is unchanged.
+- The verdict is returned by `auth/login` (with a service_id), `auth/exchange`, `auth/session` and `auth/refresh` as `access_level` (the level for that service) and `access` (a per-service map), and by `sso/userinfo` as `access`. The existing boolean `services` field is unchanged.
+- Server-to-server account search for picking people to share with: `sso/user_search.php` (exact username or a name prefix of 2+ characters, only accounts at `view` or above for the calling service, returning uuid, username and name only). It must be enabled per service (`can_search_users`) and has result caps, rate limits, a daily cap and audit logging.
+
+### Shared points (server-to-server)
+
+- `points/s2s_balance.php`, `s2s_earn.php`, `s2s_spend.php`, `s2s_history.php`. Authenticated with `service_id` + `service_secret` in the body; the target account needs `use` or above on that service.
+- Each service has its own earn/spend permission and 24-hour limits. Earning and spending require an idempotency key and are written to the audit chain.
+- Uses the same ledger as the browser-side `points/consume.php`.
 - Fine-grained features inside a service (`features`) are registered by the service; ulogin stores and forwards them.
 
 ### Platform API
@@ -191,10 +222,12 @@ Actions taken in the admin console (permission changes, config publishes, …) g
 php server/tools/emergency_admin.php --init --apply          # create the "admin" emergency account, password unset
 php server/tools/emergency_admin.php --set-password --apply  # set the password (read twice from stdin)
 php server/tools/emergency_admin.php --status                # show state (never prints the value)
+php server/tools/emergency_admin.php --open-link             # create a one-time /local-admin key link (10 min) and open it
 ```
 
-- There is no web screen for setting this password; a shell on the server is the proof of being on the server.
-- The admin password policy (12+ characters) and lockout apply. Setup and sign-ins are audit-logged without the value.
+- No public web screen can set this password — only the server's shell (`--set-password`) or `/local-admin` opened with a key link the shell created.
+- `/local-admin` opens only when the address is loopback, the Host is loopback, no proxy headers are present, and the key matches. The key works once, and only its HMAC is stored on disk. On Windows, `tools/emergency-admin.bat open` does the same.
+- The admin password policy (10+ characters, common passwords and their variants refused) and lockout apply. Setup and sign-ins are audit-logged without the value.
 
 ---
 
@@ -320,7 +353,8 @@ Exit codes: `0` pass · `1` failure · `2` bad arguments · `3` nothing ran · `
 - **No `SECRET_ENC_KEY` rotation.** Changing the key makes stored secrets undecryptable.
 - **No absolute session lifetime and no HSTS header.** Refreshing keeps a session alive; add HSTS in your web server.
 - **No log retention policy.** Sign-in, admin, point and secret-delivery logs are not pruned automatically.
-- **PKCE is not mandatory.** Clients that send no `code_challenge` are accepted; over `file://` the client skips PKCE because `crypto.subtle` is unavailable.
+- **PKCE is not enforced for confidential clients.** Services with a `service_secret` can exchange without `code_challenge`. Public clients must use PKCE, so they cannot integrate from `file://` where `crypto.subtle` is unavailable — serve the app from a local web server.
+- **In v1.10.1 the registration-request detail dialog opens empty.** The screen reads the response without unwrapping its `request` key, so the dialog's approve/reject buttons are unusable; until it is fixed, approve or reject through the `admin/register_requests.php` API.
 - **`docs/PORTFOLIO.md` and `docs/screenshots/` are v1.3.0-era records.** Current screens are in `docs/images/`.
 
 ---

@@ -1090,9 +1090,10 @@ t('mutant M3: sweep never revokes', function () {
 });
 t('mutant L: repeat and keyboard rules removed', function () {
     em_mutant('l', array(
-        array('server/core/emergency.php', "preg_match('/^(.{3,}?)\\1+\$/', \$alpha) === 1) {   // REPEAT-RULE", "false) {   // REPEAT-RULE"),
-        array('server/core/emergency.php', "if (strlen(\$alnum) >= 8 && preg_match(", "if (false && preg_match("),
-        array('server/core/emergency.php', "return em_pw_has_keyboard_run(\$l);   // KEYBOARD-RULE", "return false;   // KEYBOARD-RULE")),
+        // v1.10.1 L-2 — 규칙 본문이 core/pwstrong.php 로 옮겨졌다(설치기와 공용)
+        array('server/core/pwstrong.php', "preg_match('/^(.{3,}?)\\1+\$/', \$alpha) === 1) {   // REPEAT-RULE", "false) {   // REPEAT-RULE"),
+        array('server/core/pwstrong.php', "if (strlen(\$alnum) >= 8 && preg_match(", "if (false && preg_match("),
+        array('server/core/pwstrong.php', "return em_pw_has_keyboard_run(\$l);   // KEYBOARD-RULE", "return false;   // KEYBOARD-RULE")),
         function ($B) {
             em_sc_lowpw($B);
         });

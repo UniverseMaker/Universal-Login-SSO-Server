@@ -24,6 +24,7 @@ declare(strict_types=1);
  * point_logs 의 (user_id, idempotency_key) UNIQUE 가 최종 방어선이다.
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
+require_once __DIR__ . '/../../core/points.php';
 
 only_method('POST');
 
@@ -43,6 +44,16 @@ $refType  = v_string($in, 'ref_type', 1, 40);
 $refId    = v_string($in, 'ref_id', 1, 64);
 $memo     = v_string($in, 'memo', 1, 255);
 $idemKey  = v_string($in, 'idempotency_key', 1, 100);
+// v1.10.1 — `s2s:` 는 공동 포인트 s2s 저장 키 자리다(설계 130 §4-5). 사용자가 서비스 키 자리를 미리 차지하지 못하게 거절한다.
+if ($idemKey !== null && strncasecmp($idemKey, 's2s:', 4) === 0) {
+    v_fail('idempotency_key', 's2s: 로 시작하는 키는 쓸 수 없습니다.');
+}
+// v1.10.1 보안 M-1 (D-375) — `s2s_` 접두 reason(s2s_earn·s2s_spend 등)은 공동 포인트 s2s 원장 전용이다.
+// 사용자가 같은 reason 으로 행을 쌓아 서비스 한도 합산을 미리 채우지(서비스 사용 방해) 못하게 거절한다.
+// 합산 쪽도 저장 키 `s2s:%` 행만 센다(core/points.php points_s2s_used) — 두 겹이다.
+if (strncasecmp($reason, 's2s_', 4) === 0) {
+    v_fail('reason', 's2s_ 로 시작하는 사유는 쓸 수 없습니다.');
+}
 
 // service_id 를 주면 실재하는 활성 서비스여야 한다. 오타로 원장이 오염되면
 // 서비스별 사용량 집계가 조용히 어긋난다.
@@ -66,88 +77,18 @@ $replayOut = function (array $log) use ($userId) {
     ]);
 };
 
-try {
-    $res = db_tx(function () use ($userId, $amount, $reason, $svcId, $refType, $refId, $memo, $idemKey, $now) {
-        // 1) 잔액을 잠근다. 이 락이 이중 차감을 막는 1차 수단이다(2차는 아래 조건부 UPDATE).
-        $u = db_one('SELECT id, points, total_points_spent FROM ' . T_USERS . ' WHERE id = ?' . sql_for_update(), [$userId]);
-        if ($u === null) {
-            throw new AppError('AUTH_SESSION_EXPIRED', 401);
-        }
-
-        // 2) 락을 잡은 뒤에 멱등 키를 확인한다. 락 전에 보면 두 요청이
-        //    동시에 "없음"을 읽고 둘 다 차감한다.
-        if ($idemKey !== null) {
-            $prev = db_one(
-                'SELECT * FROM ' . T_POINT_LOGS . ' WHERE user_id = ? AND idempotency_key = ?',
-                [$userId, $idemKey]
-            );
-            if ($prev !== null) {
-                return ['replay' => true, 'log' => $prev];
-            }
-        }
-
-        $before = (int) $u['points'];
-        $after  = $before - $amount;
-        if ($after < 0) {
-            // 계약 §7-1 실패 예시: data 에 points / required / shortfall
-            throw new AppError('POINT_INSUFFICIENT', 409, [
-                'field'     => 'amount',
-                'points'    => $before,
-                'required'  => $amount,
-                'shortfall' => $amount - $before,
-            ]);
-        }
-        $spent = (int) $u['total_points_spent'] + $amount;
-
-        // 조건부 UPDATE — 읽은 잔액이 그대로일 때만 쓴다(설계 B-2 의 3겹째).
-        // 잠금이 제대로 걸려 있으면 항상 1행이다. 0행이면 잠금이 빠졌다는 뜻이고,
-        // 그때 쓰면 이중 차감이므로 **던져서 롤백한다**(500 + 로그. 조용히 넘어가지 않는다).
-        // amount >= 1 이라 points 가 반드시 바뀐다 — rowCount 의 MySQL/SQLite 의미 차이
-        // (값이 안 바뀌면 MySQL 0 · SQLite 1, 설계 A32)에 기대지 않는다.
-        $cas = db_exec(
-            'UPDATE ' . T_USERS . ' SET points = ?, total_points_spent = ?, updated_at = ?'
-            . ' WHERE id = ? AND points = ? AND total_points_spent = ?',
-            [$after, $spent, $now, $userId, $before, (int) $u['total_points_spent']]
-        );
-        if ($cas !== 1) {
-            throw new RuntimeException('points consume: balance changed under the lock (rows=' . $cas
-                . ', user_id=' . $userId . '). the row lock / BEGIN IMMEDIATE is not in effect.');
-        }
-
-        // 3) 원장. balance_after 를 남기지 않으면 사후에 잔액과 원장이
-        //    어긋났는지 검증할 수단이 없다.
-        $logId = log_point($userId, [
-            'delta'           => -$amount,
-            'balance_after'   => $after,
-            'reason'          => $reason,
-            'service_id'      => $svcId,
-            'ref_type'        => $refType,
-            'ref_id'          => $refId,
-            'idempotency_key' => $idemKey,
-            'memo'            => $memo,
-        ]);
-
-        return [
-            'replay'             => false,
-            'points'             => $after,
-            'delta'              => -$amount,
-            'balance_after'      => $after,
-            'total_points_spent' => $spent,
-            'log_id'             => $logId,
-        ];
-    });
-} catch (Throwable $e) {
-    // 동시 요청이 같은 멱등 키로 들어와 UNIQUE 에 걸린 경우.
-    // 이쪽 트랜잭션은 롤백됐고 상대가 차감을 완료했다 — 그 결과를 돌려준다.
-    if ($idemKey !== null && db_is_duplicate($e)) {
-        $prev = db_one('SELECT * FROM ' . T_POINT_LOGS . ' WHERE user_id = ? AND idempotency_key = ?',
-            [$userId, $idemKey]);
-        if ($prev !== null) {
-            $replayOut($prev);
-        }
-    }
-    throw $e;
-}
+// v1.10.1 — 잠금 + 멱등 확인 + 조건부 UPDATE(CAS) + 원장 본문은 core/points.php points_apply() 로 올렸다(설계 130 §4-4).
+// 공동 포인트 s2s 4종이 같은 함수를 쓴다. 동작은 v1.10.0 과 같다(멱등 재실행은 비교 없이 기존 결과를 돌려준다).
+$res = points_apply($userId, -$amount, [
+    'reason'          => $reason,
+    'service_id'      => $svcId,
+    'ref_type'        => $refType,
+    'ref_id'          => $refId,
+    'memo'            => $memo,
+    'idempotency_key' => $idemKey,
+    'compare'         => false,
+    'missing'         => ['AUTH_SESSION_EXPIRED', 401],
+]);
 
 if (!empty($res['replay'])) {
     $replayOut($res['log']);

@@ -30,14 +30,14 @@
      <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
      글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
      **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
-<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
-<script src="assets/rui-theme.js?v=1.10.0"></script>
-<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
-<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
-<link rel="stylesheet" href="assets/style.css?v=1.10.0">
-<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
-<script src="assets/theme-ui.js?v=1.10.0" defer></script>
-<script src="assets/admin-shell.js?v=1.10.0" defer></script>
+<script src="assets/rui-ulogin-pre.js?v=1.10.1"></script>
+<script src="assets/rui-theme.js?v=1.10.1"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.1">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.1">
+<link rel="stylesheet" href="assets/style.css?v=1.10.1">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.1">
+<script src="assets/theme-ui.js?v=1.10.1" defer></script>
+<script src="assets/admin-shell.js?v=1.10.1" defer></script>
 </head>
 <body class="ul-admin-body">
 <!-- v1.8.3 — research-ui 대시보드와 같은 틀(research-ui G14): 왼쪽 메뉴 + 위쪽 띠.
@@ -127,7 +127,7 @@
                 <select id="u-status" name="status">
                   <option value="">전체</option>
                   <option value="active">활성</option>
-                  <option value="pending">대기</option>
+                  <option value="pending">이메일 미인증</option>
                   <option value="suspended">정지</option>
                   <option value="dormant">휴면</option>
                   <option value="withdrawn">탈퇴</option>
@@ -220,6 +220,14 @@
            =============================================================== -->
       <section class="tab-panel" data-tab-panel="links" hidden>
         <div id="al-root"></div>
+      </section>
+
+      <!-- v1.10.1 가입 신청 — 화면 전부를 assets/admin-regreq.js 가 그린다. 읽기·결정 모두 admin. -->
+      <section class="tab-panel" data-tab-panel="regreq" hidden>
+        <div class="card">
+          <div class="card-head"><h2>가입 신청</h2></div>
+          <div class="card-body"><div id="rr-root"></div></div>
+        </div>
       </section>
 
       <!-- ================================================================
@@ -433,6 +441,8 @@
                     <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
                     <!-- v1.9.0 — 시스템별 접근 제한(access_rule·access_grant)에 걸린 경우. 설계 116 §7 -->
                     <option value="fail_service_access">실패 · 시스템 접근 권한 없음</option>
+                    <option value="fail_emergency_unset">실패 · 비상 계정 미설정</option>
+                    <option value="fail_emergency_scope">실패 · 비상 계정 연동 로그인 불가</option>
                     <option value="fail_client_auth">실패 · 클라이언트 인증</option>
                     <!-- 옵션 문구는 LOGIN_RESULT_LABELS 와 글자 단위로 같아야 한다.
                          값 집합은 server/api/admin/logs.php 의 $results 배열이 정본이다. -->
@@ -787,10 +797,11 @@
  </div><!-- /.shell -->
 </div><!-- /.rui -->
 
-<script src="assets/api.js?v=1.10.0"></script>
-<script src="assets/ui.js?v=1.10.0"></script>
-<script src="assets/admin-links.js?v=1.10.0"></script>
-<script src="assets/admin-platform.js?v=1.10.0"></script>
+<script src="assets/api.js?v=1.10.1"></script>
+<script src="assets/ui.js?v=1.10.1"></script>
+<script src="assets/admin-links.js?v=1.10.1"></script>
+<script src="assets/admin-regreq.js?v=1.10.1"></script>
+<script src="assets/admin-platform.js?v=1.10.1"></script>
 <script>
 /* ============================================================================
  * admin.html — 관리자 콘솔 (탭: 대시보드 / 회원 / 계정 연결 / 서비스 / 시크릿 / 로그 / 설정)
@@ -899,6 +910,7 @@
        cancel · setup_link · import)는 CAN_MAP['account_link.manage'] = superadmin 이다.
        admin 에게는 탭을 보이고 쓰기 버튼만 비활성으로 둔다(재수집 요청은 쓸 수 있다). */
     links: RANK.role.admin,
+    regreq: RANK.role.admin,           // v1.10.1 register.view / register.decide = admin
     linksWrite: RANK.role.superadmin,
     /* v1.9.0 플랫폼 — server/api/admin/platform_*.php · service_access.php 는 진입이
        require_global_role($ctx, 'admin'), 쓰기 분기가 require_global_role($ctx, 'superadmin') 이다. */
@@ -970,6 +982,8 @@
     fail_service_blocked: '실패 · 서비스 이용 제한',
     /* v1.9.0 — 시스템별 접근 제한(access_rule · access_grant)에 걸렸다. 회원 차단(blocked)과 원인이 다르다. */
     fail_service_access: '실패 · 시스템 접근 권한 없음',
+    fail_emergency_unset: '실패 · 비상 계정 미설정',
+    fail_emergency_scope: '실패 · 비상 계정 연동 로그인 불가',
     /* v1.4.0 — SSO 코드 교환(`api/auth/exchange.php`)에서 연동 앱이 보낸
        `service_secret` 이 틀렸을 때 남는다. **회원의 비밀번호 실패가 아니다** —
        사람이 아니라 연동 앱(클라이언트) 쪽 자격증명 문제다. 그래서
@@ -1356,6 +1370,7 @@
   var TABS = [
     { key: 'dash', label: '대시보드', minRank: MIN_RANK.dash },
     { key: 'users', label: '회원', minRank: MIN_RANK.users },
+    { key: 'regreq', label: '가입 신청', minRank: MIN_RANK.regreq },
     { key: 'links', label: '계정 연결', minRank: MIN_RANK.links },
     { key: 'services', label: '서비스', minRank: MIN_RANK.services },
     { key: 'secrets', label: '시크릿', minRank: MIN_RANK.secrets },
@@ -1404,6 +1419,7 @@
     state.loaded[key] = true;
     if (key === 'dash') { loadStats(); loadHealth(); return; }
     if (key === 'users') { loadUsers(); return; }
+    if (key === 'regreq') { initRegreqTab(); return; }
     if (key === 'links') { initLinksTab(); return; }
     if (key === 'services') { loadServices(); return; }
     if (key === 'secrets') { initSecretsTab(); return; }
@@ -1433,6 +1449,16 @@
    * 여기서 넘기는 것은 권한 판정 결과와 이 파일의 1회성 평문 헬퍼 둘뿐이다.
    * canManage 는 **표시용**이다 — 쓰기 API 전부가 서버에서 superadmin 을 다시 판정한다.
    */
+  function initRegreqTab() {
+    var root = $('#rr-root');
+    if (!root) { return; }
+    if (!window.UloginAdminRegreq) {
+      root.appendChild(alertNode('assets/admin-regreq.js를 불러오지 못했습니다. 새로 고침해 보세요.', 'danger', '가입 신청 화면을 열 수 없습니다'));
+      return;
+    }
+    window.UloginAdminRegreq.init({ root: root, me: state.me, showError: showError });
+  }
+
   function initLinksTab() {
     var root = $('#al-root');
     if (!root) { return; }
@@ -1482,7 +1508,8 @@
     host.appendChild(statStrip('회원', 'UTC 자정 기준', [
       { label: '전체 회원', value: fmtNum(u.total) },
       { label: '활성', value: fmtNum(u.active) },
-      { label: '대기', value: fmtNum(u.pending) },
+      { label: '이메일 미인증', value: fmtNum(u.pending), tip: '이메일 인증을 마치지 않은 계정' },
+      { label: '가입 신청 대기', value: fmtNum(u.register_requests_pending), tip: '관리자 승인을 기다리는 가입 신청. 가입 신청 메뉴에서 처리' },
       { label: '정지', value: fmtNum(u.suspended) },
       { label: '휴면', value: fmtNum(u.dormant) },
       { label: '탈퇴', value: fmtNum(u.withdrawn) },
@@ -1623,6 +1650,11 @@
     $('#h-status').appendChild(text(
       (HEALTH_STATUS_LABELS[st] || nz(st)) + (d && d.time ? ' · ' + fmtDate(d.time) : '')
     ));
+
+    /* ── 비상 계정 상태: emergency_admin = 'set' | 'unset' | null(없음·마이그레이션 미적용) ── */
+    var em = d ? d.emergency_admin : null;
+    var emText = em === 'set' ? '설정됨' : (em === 'unset' ? '미설정' : '해당 없음');
+    host.appendChild(el('p', { class: 'text-sm' }, '비상 계정: ' + emText));
 
     /* ── 조합 경보: db=ok 인데 pinned=false ──
        이 한 줄이 이 카드의 존재 이유다. 다른 어떤 조합에서도 띄우지 않는다.
@@ -2671,6 +2703,28 @@
     var chkRegen = checkNode(uid('sf-regen'), 'regenerate_secret', '서비스 시크릿을 서버에서 새로 생성', false);
     var inReason = textInput(uid('sf-reason'), 'reason', '', { maxlength: '255' });
 
+    /* v1.10.1 공동 포인트(s2s). services.points_json 의 서버 키는 `points` 객체. null = 사용 안 함. */
+    var pts0 = (s.points && typeof s.points === 'object') ? s.points : null;
+    function pnum(name, def) {
+      return el('input', { type: 'number', id: uid('sf-p-' + name), name: name, min: '1', max: '100000000', step: '1',
+        value: String(pts0 && pts0[name] !== undefined ? pts0[name] : def) });
+    }
+    var chkPtsOn = checkNode(uid('sf-pon'), 'points_enabled', '공동 포인트 허용',
+      !!(pts0 && pts0.enabled), '이 서비스의 서버가 회원 포인트를 적립·사용할 수 있게 합니다. 끄면 모든 요청을 거절합니다.');
+    var chkPtsEarn = checkNode(uid('sf-pe'), 'points_earn', '적립 허용', pts0 ? pts0.earn !== false : true);
+    var chkPtsSpend = checkNode(uid('sf-ps'), 'points_spend', '사용 허용', pts0 ? pts0.spend !== false : true);
+    var inPtx = pnum('per_tx_max', 1000);
+    var inPue = pnum('daily_user_earn_max', 5000);
+    var inPus = pnum('daily_user_spend_max', 10000);
+    var inPse = pnum('daily_service_earn_max', 100000);
+    function pointsFromForm() {
+      return {
+        enabled: !!chkPtsOn.input.checked, earn: !!chkPtsEarn.input.checked, spend: !!chkPtsSpend.input.checked,
+        per_tx_max: parseInt(inPtx.value, 10), daily_user_earn_max: parseInt(inPue.value, 10),
+        daily_user_spend_max: parseInt(inPus.value, 10), daily_service_earn_max: parseInt(inPse.value, 10)
+      };
+    }
+
     var form = el('form', { class: 'form', novalidate: true });
 
     modal({
@@ -2706,6 +2760,15 @@
         form.appendChild(chkEmg.wrap);
         form.appendChild(fieldNode('비상 확인값 유효 일수', inEmgDays, '1 ~ 365, 기본 30'));
         form.appendChild(chkConf.wrap);
+        form.appendChild(el('h4', null, '공동 포인트'));
+        form.appendChild(chkPtsOn.wrap);
+        form.appendChild(el('div', { class: 'grid-2' }, [chkPtsEarn.wrap, chkPtsSpend.wrap]));
+        form.appendChild(el('div', { class: 'grid-2' }, [
+          fieldNode('1회 한도 (최대 1,000,000)', inPtx),
+          fieldNode('회원당 24시간 적립 한도', inPue),
+          fieldNode('회원당 24시간 사용 한도', inPus),
+          fieldNode('서비스 전체 24시간 적립 한도', inPse)
+        ]));
         if (!isCreate) { form.appendChild(chkRegen.wrap); }
         form.appendChild(fieldNode('서비스 시크릿', inSecret,
           isCreate
@@ -2745,6 +2808,7 @@
           body.emergency_allow = !!chkEmg.input.checked;
           body.emergency_days = parseInt(inEmgDays.value, 10);
           body.is_confidential = !!chkConf.input.checked;
+          if (chkPtsOn.input.checked) { body.points = pointsFromForm(); }
           if (inSecret.value.trim() !== '') { body.service_secret = inSecret.value.trim(); }
           if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
           return apiPost('/api/admin/services', body);
@@ -2766,6 +2830,15 @@
         if (!!chkEmg.input.checked !== (s.emergency_allow !== false)) { body.emergency_allow = !!chkEmg.input.checked; }
         if (parseInt(inEmgDays.value, 10) !== Number(s.emergency_days === undefined ? 30 : s.emergency_days)) { body.emergency_days = parseInt(inEmgDays.value, 10); }
         if (!!chkConf.input.checked !== !!s.is_confidential) { body.is_confidential = !!chkConf.input.checked; }
+        var pNew = pointsFromForm();
+        var pOld = {
+          enabled: !!(pts0 && pts0.enabled), earn: pts0 ? pts0.earn !== false : true, spend: pts0 ? pts0.spend !== false : true,
+          per_tx_max: pts0 ? pts0.per_tx_max : pNew.per_tx_max,
+          daily_user_earn_max: pts0 ? pts0.daily_user_earn_max : pNew.daily_user_earn_max,
+          daily_user_spend_max: pts0 ? pts0.daily_user_spend_max : pNew.daily_user_spend_max,
+          daily_service_earn_max: pts0 ? pts0.daily_service_earn_max : pNew.daily_service_earn_max
+        };
+        if ((pts0 || pNew.enabled) && JSON.stringify(pNew) !== JSON.stringify(pOld)) { body.points = pNew; }
         if (chkRegen.input.checked) { body.regenerate_secret = true; }
         if (inSecret.value.trim() !== '') { body.service_secret = inSecret.value.trim(); }
         if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
@@ -3953,15 +4026,54 @@
       .catch(function (err) { showError(host, err, '설정을 불러올 수 없습니다'); });
   }
 
+  var REGISTER_MODES = [
+    { v: 'closed', label: '가입 불가', desc: '가입 화면과 링크를 숨기고 신규 가입을 받지 않습니다.' },
+    { v: 'approval', label: '가입 신청', desc: '신청을 받아 관리자가 승인해야 계정이 만들어집니다.' },
+    { v: 'open', label: '즉시 승인', desc: '가입 즉시 계정이 만들어집니다.' }
+  ];
+  function registerModeNode(id, it) {
+    var cur = String(it.svalue);
+    if (['closed', 'approval', 'open'].indexOf(cur) < 0) { cur = 'closed'; }
+    var name = id + '-r';
+    var radios = [];
+    var group = el('div', { class: 'check-list', role: 'radiogroup', 'aria-label': '가입 방식' });
+    REGISTER_MODES.forEach(function (m, i) {
+      var rid = id + '-' + i;
+      var inp = el('input', { type: 'radio', id: rid, name: name, value: m.v });
+      inp.checked = (m.v === cur);
+      radios.push(inp);
+      group.appendChild(el('label', { class: 'check', for: rid }, [inp,
+        el('span', null, [el('strong', null, m.label), text(' · ' + m.desc)])]));
+    });
+    var proxy = { get value() { for (var i = 0; i < radios.length; i++) { if (radios[i].checked) { return radios[i].value; } } return ''; } };
+    var node = el('div', { class: 'field' }, [
+      el('span', { class: 'field-label' }, '가입 방식 (register_mode)'),
+      group,
+      el('span', { class: 'field-error' }),
+      el('span', { class: 'hint' }, '서비스별 「회원가입 허용」이 꺼져 있으면 그 서비스에서는 가입 불가입니다. 최근 수정 ' + fmtDate(it.updated_at))
+    ]);
+    return { node: node, proxy: proxy };
+  }
+
   function renderSettings(d) {
     var host = $('#st-fields');
     clear(host);
     settingInputs = {};
 
     var grid = el('div', { class: 'grid-2' });
-    (d.items || []).forEach(function (it) {
+    var items = d.items || [];
+    var hasMode = items.some(function (x) { return x.skey === 'register_mode'; });
+    items.forEach(function (it) {
       var id = uid('st-' + it.skey);
       var node;
+      /* v1.10.1 — allow_register 는 가입 방식(register_mode)이 대체한다. 서버가 쓰기를 동기화한다. */
+      if (it.skey === 'allow_register' && hasMode) { return; }
+      if (it.skey === 'register_mode') {
+        var rm = registerModeNode(id, it);
+        settingInputs[it.skey] = { input: rm.proxy, vtype: 'string' };
+        grid.appendChild(rm.node);
+        return;
+      }
       if (it.vtype === 'bool') {
         var c = checkNode(id, it.skey, it.label + ' (' + it.skey + ')', !!it.svalue,
           '최근 수정 ' + fmtDate(it.updated_at));

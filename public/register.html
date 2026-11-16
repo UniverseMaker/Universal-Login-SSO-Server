@@ -30,13 +30,13 @@
      <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
      글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
      **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
-<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
-<script src="assets/rui-theme.js?v=1.10.0"></script>
-<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
-<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
-<link rel="stylesheet" href="assets/style.css?v=1.10.0">
-<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
-<script src="assets/theme-ui.js?v=1.10.0" defer></script>
+<script src="assets/rui-ulogin-pre.js?v=1.10.1"></script>
+<script src="assets/rui-theme.js?v=1.10.1"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.1">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.1">
+<link rel="stylesheet" href="assets/style.css?v=1.10.1">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.1">
+<script src="assets/theme-ui.js?v=1.10.1" defer></script>
 </head>
 <body class="ul-auth-body">
 <!-- v1.8.6 — G16/G17 공통 로그인 틀(GUIDELINE 4-2장). 왼쪽 시스템 면·오른쪽 위 밝기 버튼은 RUI.login 이 그리고,
@@ -143,6 +143,13 @@
             <span class="field-error" id="agree-error"></span>
           </div>
 
+          <div class="field" id="note-field" hidden>
+            <label for="reg-note">신청 메모</label>
+            <textarea id="reg-note" name="applicant_note" rows="2" maxlength="500" aria-describedby="hint-note"></textarea>
+            <span class="field-error"></span>
+            <span class="hint" id="hint-note">선택. 소속·가입 목적 등 승인에 참고할 내용</span>
+          </div>
+
           <p class="text-xs text-muted" id="cooldown-note" role="status" aria-live="polite" hidden></p>
 
           <button type="submit" class="btn btn-primary btn-block btn-lg" id="submit-btn">가입하기</button>
@@ -151,7 +158,25 @@
 
       <div class="card-foot">
         <a class="btn btn-ghost btn-sm" id="link-login" href="login.html">기존 계정 로그인</a>
+        <button type="button" class="btn btn-ghost btn-sm" id="open-status" hidden>신청 결과 확인</button>
       </div>
+    </section>
+
+    <!-- v1.10.1 가입 신청 결과 확인(접수번호는 본문으로만 보낸다) -->
+    <section class="card auth-card" id="status-card" hidden>
+      <div class="card-head"><h1>신청 결과 확인</h1></div>
+      <div class="card-body">
+        <form class="form" id="status-form" novalidate>
+          <div class="field">
+            <label for="st-receipt">접수번호</label>
+            <input type="text" id="st-receipt" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" class="mono">
+            <span class="field-error"></span>
+          </div>
+          <button type="submit" class="btn btn-primary" id="st-btn">조회</button>
+        </form>
+        <div id="st-result" role="status" aria-live="polite"></div>
+      </div>
+      <div class="card-foot"><a class="btn btn-ghost btn-sm" href="login.html" id="st-login">로그인 화면으로</a></div>
     </section>
 
     <!-- 가입 완료 -->
@@ -165,9 +190,9 @@
 
 </div><!-- /#ul-pane -->
 
-<script src="assets/ulogin-shell.js?v=1.10.0"></script>
-<script src="assets/api.js?v=1.10.0"></script>
-<script src="assets/ui.js?v=1.10.0"></script>
+<script src="assets/ulogin-shell.js?v=1.10.1"></script>
+<script src="assets/api.js?v=1.10.1"></script>
+<script src="assets/ui.js?v=1.10.1"></script>
 <script>
 /* ============================================================================
  * register.html — 회원가입
@@ -191,6 +216,8 @@
 
   var sso = { service_id: param('service_id'), redirect_uri: param('redirect_uri') };
   var ssoMode = !!(sso.service_id && sso.redirect_uri);
+  var regMode = 'open';   // v1.10.1: register_status.register_mode (closed|approval|open)
+  var entryParam = param('entry');
 
   function withSso(target) {
     var next = new URLSearchParams();
@@ -423,6 +450,60 @@
     }
   }
 
+  /* ---- 가입 신청 접수 화면 (v1.10.1, 202 approval_required) -------------
+   * data.receipt 는 이 응답에서만 볼 수 있다(원문 재조회 불가). 복사 버튼을 둔다. */
+  function showRequested(data) {
+    clear(doneBody);
+    clear(doneFoot);
+    cardDone.querySelector('h1').textContent = '가입 신청이 접수되었습니다';
+    doneBody.appendChild(alertNode('신청이 접수됐습니다. 관리자 승인 후 로그인할 수 있습니다.', 'success'));
+    var rc = String((data && data.receipt) || '');
+    if (rc) {
+      doneBody.appendChild(el('p', { class: 'text-sm' }, '접수번호 (다시 볼 수 없으니 보관해 주세요)'));
+      doneBody.appendChild(el('p', { class: 'mono', id: 'receipt-val', style: 'word-break:break-all', text: rc }));
+      doneFoot.appendChild(el('button', { class: 'btn btn-secondary', type: 'button', on: { click: function (ev) {
+        var b = ev.currentTarget;
+        function ok() { b.textContent = '복사됨'; }
+        try { navigator.clipboard.writeText(rc).then(ok, function () { fallbackCopy(rc); ok(); }); }
+        catch (e) { fallbackCopy(rc); ok(); }
+      } } }, '접수번호 복사'));
+    }
+    doneFoot.appendChild(el('a', { class: 'btn btn-ghost', href: withSso('login.html') }, '로그인 화면으로'));
+    cardReg.hidden = true;
+    cardDone.hidden = false;
+  }
+  function fallbackCopy(t) {
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* noop */ }
+    document.body.removeChild(ta);
+  }
+
+  var STATUS_LABEL = { pending: '심사 대기 중', approved: '승인됨. 로그인할 수 있습니다', rejected: '승인되지 않았습니다', expired: '신청 기간이 지났습니다' };
+  $('#open-status').addEventListener('click', function () {
+    cardReg.hidden = true; $('#status-card').hidden = false;
+    try { $('#st-receipt').focus(); } catch (e) { /* noop */ }
+  });
+  $('#status-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = $('#status-form'), out = $('#st-result'), sb = $('#st-btn');
+    clearFormErrors(f); clear(out);
+    var rc = $('#st-receipt').value.trim();
+    if (!rc) { formErrors(f, { code: 'VALIDATION_FAILED', message: '접수번호를 입력해 주세요.', field: 'receipt' }); return; }
+    setBusy(sb, true);
+    apiPost('/api/auth/register_request_status', { receipt: rc })
+      .then(function (d) {
+        setBusy(sb, false);
+        out.appendChild(alertNode(STATUS_LABEL[d.status] || String(d.status || ''), d.status === 'approved' ? 'success' : (d.status === 'pending' ? 'info' : 'warn')));
+        if (d.created_at) { out.appendChild(el('p', { class: 'text-xs text-muted', text: '신청 ' + d.created_at })); }
+        if (d.notice) { out.appendChild(el('p', { class: 'text-sm', text: '안내: ' + d.notice })); }
+      })
+      .catch(function (err) {
+        setBusy(sb, false);
+        out.appendChild(alertNode(err.code === 'NOT_FOUND' ? '일치하는 접수번호가 없습니다.' : errorMessage(err), 'danger'));
+      });
+  });
+
   /* ---- 제출 ---------------------------------------------------------- */
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -449,6 +530,13 @@
     if (inNick.value.trim()) { body.nickname = inNick.value.trim(); }
     if (inPhone.value.trim()) { body.phone = inPhone.value.trim(); }
     if (sso.service_id) { body.service_id = sso.service_id; }
+    if (regMode === 'approval') {
+      /* 설계 130 2-4: 선택 키 redirect_uri / entry / applicant_note */
+      if (sso.redirect_uri) { body.redirect_uri = sso.redirect_uri; }
+      body.entry = (entryParam === 'sso' || ssoMode) ? 'sso' : 'register_page';
+      var note = $('#reg-note').value.trim();
+      if (note) { body.applicant_note = note; }
+    }
 
     setBusy(btn, true);
 
@@ -457,6 +545,7 @@
         setBusy(btn, false);
         inPw.value = '';
         inPw2.value = '';
+        if (data && data.approval_required === true) { showRequested(data); return; }
         showDone(data);
       })
       .catch(function (err) {
@@ -522,7 +611,15 @@
 
   apiGet('/api/auth/register_status')
     .then(function (data) {
-      if (data && data.allow_register === true) {
+      var rm = data && data.register_mode;
+      if (data && data.allow_register === true && rm !== 'closed') {
+        if (rm === 'approval') {
+          regMode = 'approval';
+          $('#register-title').textContent = '가입 신청';
+          btn.textContent = '가입 신청';
+          $('#note-field').hidden = false;
+          $('#open-status').hidden = false;
+        }
         clear(elChecking);
         elChecking.hidden = true;
         cardClosed.hidden = true;
@@ -530,7 +627,7 @@
         try { inUsername.focus(); } catch (e) { /* noop */ }
         return;
       }
-      showClosed('현재 신규 가입 중단, 관리자 문의', 'warn', false);
+      showClosed('현재 가입을 받지 않습니다.', 'warn', false);
     })
     .catch(function (err) {
       showClosed('가입 가능 여부를 확인하지 못했습니다. ' + errorMessage(err) +

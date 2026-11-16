@@ -35,15 +35,15 @@
      <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
      글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
      **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
-<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
-<script src="assets/rui-theme.js?v=1.10.0"></script>
-<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
-<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
-<link rel="stylesheet" href="assets/style.css?v=1.10.0">
-<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
-<link rel="stylesheet" href="assets/mypage.css?v=1.10.0">
-<script src="assets/theme-ui.js?v=1.10.0" defer></script>
-<script src="assets/mypage-shell.js?v=1.10.0" defer></script>
+<script src="assets/rui-ulogin-pre.js?v=1.10.1"></script>
+<script src="assets/rui-theme.js?v=1.10.1"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.1">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.1">
+<link rel="stylesheet" href="assets/style.css?v=1.10.1">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.1">
+<link rel="stylesheet" href="assets/mypage.css?v=1.10.1">
+<script src="assets/theme-ui.js?v=1.10.1" defer></script>
+<script src="assets/mypage-shell.js?v=1.10.1" defer></script>
 </head>
 <body class="ul-admin-body">
 <!-- 앱 틀: 왼쪽 메뉴 + 위쪽 띠(관리자 콘솔과 같은 마크업). data-ul-shell 이 있으면 theme-ui.js 는 공개 화면용 버튼을 달지 않는다. -->
@@ -275,6 +275,10 @@
           </div>
           <div class="card-body">
             <div id="points-stats"></div>
+            <div class="field" id="points-filter-wrap" hidden>
+              <label for="points-service">서비스</label>
+              <select id="points-service" name="service_id"><option value="">전체</option></select>
+            </div>
             <div id="points-list"></div>
             <div id="points-pager"></div>
           </div>
@@ -344,6 +348,8 @@
                   <option value="fail_ratelimit">실패 · 시도 횟수 초과</option>
                   <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
                   <option value="fail_service_access">실패 · 이 시스템 사용 권한 없음</option>
+                  <option value="fail_emergency_unset">실패 · 비상 계정 미설정</option>
+                  <option value="fail_emergency_scope">실패 · 비상 계정 연동 로그인 불가</option>
                   <option value="fail_client_auth">실패 · 연동 앱 인증</option>
                   <!-- 옵션 문구는 LOGIN_RESULT 맵과 글자 단위로 같아야 한다.
                        값 집합은 server/api/me/login_logs.php 의 v_enum 목록이 정본이다. -->
@@ -377,6 +383,12 @@
 
       <!-- ---------------- 서비스 ---------------- -->
       <section class="tab-panel" data-tab-panel="services" hidden>
+        <div class="card">
+          <div class="card-head"><h2>내 접근 권한</h2></div>
+          <div class="card-body">
+            <div id="access-list"></div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head">
             <h2>가입한 서비스</h2>
@@ -438,8 +450,8 @@
  </div>
 </div>
 
-<script src="assets/api.js?v=1.10.0"></script>
-<script src="assets/ui.js?v=1.10.0"></script>
+<script src="assets/api.js?v=1.10.1"></script>
+<script src="assets/ui.js?v=1.10.1"></script>
 <script>
 /* ============================================================================
  * mypage.html — 로그인 후 첫 화면 (메뉴: 내 시스템 / 내 정보 / 보안 / 포인트 / 이용 서비스 / 로그인 기기 / 로그인 이력 / 회원 탈퇴)
@@ -476,6 +488,8 @@
     session: null,     // GET /api/me → data.session(계약 §3-4)
     ctl: null,         // tabs() 컨트롤러
     pointsPage: 1,
+    pointsService: '',        // v1.10.1 서비스 거르기(service_id, '' = 전체)
+    pointsServices: {},       // 본 적 있는 service_id → 이름
     sessionsPage: 1,
     servicesPage: 1,
     loginLogsPage: 1
@@ -576,6 +590,8 @@
     fail_service_blocked: '실패 · 서비스 이용 제한',
     /* v1.9.0 — 관리자가 정한 시스템별 사용 권한에 걸린 경우(설계 116 §7). */
     fail_service_access: '실패 · 이 시스템 사용 권한 없음',
+    fail_emergency_unset: '실패 · 비상 계정 미설정',
+    fail_emergency_scope: '실패 · 비상 계정 연동 로그인 불가',
     /* v1.4.0 — 연동 앱이 SSO 코드를 교환할 때 앱 자신의 자격증명(`service_secret`)이
        틀린 경우다. **회원의 비밀번호가 틀린 것이 아니다.** 내 계정 이력에 이 줄이
        보이면 내가 쓰는 앱의 설정 문제이지 내 비밀번호 문제가 아니라는 뜻이므로,
@@ -1071,11 +1087,36 @@
     ]));
   }
 
+  /* v1.10.1 — reason 라벨. 연동 시스템(s2s)이 적립·사용한 건을 구분한다. */
+  var POINT_REASON = { s2s_earn: '적립(연동 시스템)', s2s_spend: '사용(연동 시스템)' };
+
+  /* 서비스 거르기 — 이번 응답에서 본 서비스를 모아 목록에 더한다(me/points items[].service_id · service_name). */
+  function updatePointsFilter(items) {
+    (items || []).forEach(function (it) {
+      if (it.service_id) { state.pointsServices[it.service_id] = it.service_name || state.pointsServices[it.service_id] || it.service_id; }
+    });
+    var sel = $('#points-service');
+    var ids = Object.keys(state.pointsServices);
+    if (state.pointsService && ids.indexOf(state.pointsService) < 0) { ids.push(state.pointsService); }
+    $('#points-filter-wrap').hidden = (ids.length === 0 && !state.pointsService);
+    clear(sel);
+    sel.appendChild(el('option', { value: '' }, '전체'));
+    ids.sort().forEach(function (id) {
+      var nm = state.pointsServices[id];
+      var o = el('option', { value: id }, (nm && nm !== id) ? nm + ' (' + id + ')' : id);
+      if (id === state.pointsService) { o.selected = true; }
+      sel.appendChild(o);
+    });
+  }
+
   function renderPointsList(d) {
     var box = $('#points-list');
     clear(box);
 
     var items = d.items || [];
+    if (state.pointsService) {
+      items = items.filter(function (it) { return it.service_id === state.pointsService; });
+    }
     if (!items.length) {
       mount(box, emptyNode('포인트 내역이 없습니다.', '포인트를 적립하거나 사용하면 여기에 기록됩니다.'));
       return;
@@ -1096,7 +1137,7 @@
         (delta > 0 ? '+' : '') + fmtNum(delta));
 
       var reasonCell = el('td', null, [
-        el('span', { class: 'mono', text: dash(it.reason) }),
+        el('span', { text: POINT_REASON[it.reason] || dash(it.reason) }),
         (it.ref_type || it.ref_id)
           ? sub(dash(it.ref_type) + ' · ' + dash(it.ref_id))
           : null
@@ -1107,7 +1148,10 @@
         deltaCell,
         el('td', { class: 'num' }, fmtNum(it.balance_after)),
         reasonCell,
-        el('td', null, it.service_id ? el('span', { class: 'mono', text: String(it.service_id) }) : '-'),
+        el('td', null, it.service_id
+          ? [text(it.service_name || String(it.service_id)),
+             (it.service_name ? sub(String(it.service_id)) : null)]
+          : '-'),
         el('td', null, dash(it.memo))
       ]));
     });
@@ -1121,8 +1165,11 @@
     showLoading(list, '포인트 내역을 불러오는 중…');
     clear($('#points-pager'));
 
-    return apiGet('/api/me/points', { page: state.pointsPage, per_page: PER_PAGE })
+    var q = { page: state.pointsPage, per_page: PER_PAGE };
+    if (state.pointsService) { q.service_id = state.pointsService; }   // TODO(backend): me/points 의 service_id 쿼리 필터(없으면 현재 쪽만 거른다)
+    return apiGet('/api/me/points', q)
       .then(function (d) {
+        updatePointsFilter(d.items);
         renderPointsStats(d);
         renderPointsList(d);
         /* 목록 응답 { total, page, per_page } 를 그대로 넘긴다. */
@@ -1141,6 +1188,10 @@
       });
   }
 
+  $('#points-service').addEventListener('change', function () {
+    state.pointsService = this.value;
+    loadPoints(1);
+  });
   $('#btn-points-reload').addEventListener('click', function () { loadPoints(state.pointsPage); });
 
   /* ======================================================================
@@ -1429,8 +1480,42 @@
     mount(box, t.wrap);
   }
 
+  var ACCESS_LEVELS = { none: '없음', view: '조회', use: '사용', admin: '관리' };
+
+  function loadAccess() {
+    var box = $('#access-list');
+    showLoading(box, '접근 권한을 불러오는 중…');
+    return apiGet('/api/me/access')
+      .then(function (d) {
+        clear(box);
+        var items = (d && d.items) || [];
+        if (!items.length) {
+          mount(box, emptyNode('접근 가능한 시스템이 없습니다.'));
+          return;
+        }
+        var t = tableNode(['시스템', '단계', '기간', '그룹']);
+        items.forEach(function (it) {
+          t.tbody.appendChild(el('tr', null, [
+            el('td', null, [
+              el('div', null, dash(it.service_name || it.service_id)),
+              el('div', null, el('span', { class: 'mono text-xs', text: dash(it.service_id) }))
+            ]),
+            el('td', { class: 'nowrap' }, ACCESS_LEVELS[it.level] || dash(it.level)),
+            el('td', { class: 'nowrap' }, it.until ? fmtDate(it.until) + '까지' : '기간 제한 없음'),
+            /* TODO(backend): me/access 응답에 그룹 키가 없다. 추가되면 it.groups 를 표시 */
+            el('td', null, Array.isArray(it.groups) && it.groups.length ? it.groups.join(', ') : '-')
+          ]));
+        });
+        mount(box, t.wrap);
+      })
+      .catch(function (err) {
+        showError(box, err, '접근 권한을 불러올 수 없습니다');
+      });
+  }
+
   function loadServices(page) {
     state.servicesPage = page || 1;
+    loadAccess();
     var list = $('#services-list');
     showLoading(list, '가입한 서비스를 불러오는 중…');
     clear($('#services-pager'));

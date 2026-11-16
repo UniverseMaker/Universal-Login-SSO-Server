@@ -139,6 +139,10 @@ if (!defined('T_ACCESS_GROUP_MEMBERS')) {
 if (!defined('T_ACCESS_GROUP_SERVICES')) {
     define('T_ACCESS_GROUP_SERVICES', DB_PREFIX . 'access_group_services');
 }
+// v1.10.1 — 가입 신청(마이그레이션 0011). v1.10.0 이전 config.php 에는 이 줄이 없다.
+if (!defined('T_REGISTER_REQUESTS')) {
+    define('T_REGISTER_REQUESTS', DB_PREFIX . 'register_requests');
+}
 // v1.9.0 — 플랫폼(마이그레이션 0007). v1.8.x 이전 config.php 에는 이 일곱 줄이 없다.
 if (!defined('T_RC_DRAFTS')) {
     define('T_RC_DRAFTS', DB_PREFIX . 'rc_drafts');
@@ -190,6 +194,11 @@ if (!defined('T_PLAT_USAGE')) {
 // ---------------------------------------------------------------------
 if (!defined('SECRET_ACCESS_LOG')) {
     define('SECRET_ACCESS_LOG', true);
+}
+// v1.10.1 — 가입 방식(settingsdef 17번째)의 폴백 상수. (1) 기본값이 안전한 쪽(closed) (2) 없으면 관리자 화면의
+// 폴백 표시가 빈 문자열로 떨어진다. **판정은 이 상수가 아니라 core/auth.php register_mode_effective() 다**(설계 130 §1-1).
+if (!defined('REGISTER_MODE')) {
+    define('REGISTER_MODE', 'closed');
 }
 // v1.9.0 — 플랫폼 설정 3키(core/settingsdef.php)의 폴백. 위 두 조건을 만족한다:
 //   (1) 기본값이 안전한 쪽 — 보존일은 길게(지우지 않는 쪽), 스위치는 켜짐(계약 §0 이 이미 통지된 기능)
@@ -316,7 +325,9 @@ if (PHP_SAPI !== 'cli' && proxy_trust_probably_missing() && random_int(1, 200) =
 // HTTPS 강제 — 리더 판정 D-6
 //   HTTPS 없이 운영하면 access_token 과 AI API 키가 평문으로 흐른다.
 // ---------------------------------------------------------------------
-if (PHP_SAPI !== 'cli' && defined('FORCE_HTTPS') && FORCE_HTTPS) {
+// v1.10.1 D-374 — 서버 PC 전용 화면(/local-admin)은 루프백 http 로만 열린다(server/core/localonly.php 판정을 이미 통과).
+// 그 화면에는 https 리다이렉트가 의미가 없고(공개 Host 로 보내면 404), 리다이렉트하면 화면이 열리지 않는다.
+if (PHP_SAPI !== 'cli' && defined('FORCE_HTTPS') && FORCE_HTTPS && !defined('ULOGIN_LOCAL_ONLY_PAGE')) {
     if (!request_is_https()) {
         // 리더 판정 D-67 / 감사 V11-L-6.
         // 리다이렉트하기 **전에** 프록시 설정 모순을 먼저 잡는다. `TRUST_PROXY=true` +

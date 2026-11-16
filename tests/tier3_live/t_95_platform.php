@@ -817,8 +817,8 @@ function pf_sc_access(array $B): void
     $view = pf_ok(pf_http($B, 'GET', $SA . '?uuid=' . $u1['uuid'], null, $B['fx']['tok']['ad']), 'user view');
     assert_eq(array('uuid', 'systems'), array_keys($view), 'service_access ?uuid keys');
     $sv = pf_ok(pf_http($B, 'GET', $SA . '?service_id=svc-a', null, $B['fx']['tok']['ad']), 'service view');
-    assert_eq(array('service_id', 'access_rule', 'can_list_users', 'level_aware', 'features', 'grants'), array_keys($sv),
-        'service_access ?service_id keys (+ v1.10.0 level_aware)');
+    assert_eq(array('service_id', 'access_rule', 'can_list_users', 'level_aware', 'can_search_users', 'features', 'grants'), array_keys($sv),
+        'service_access ?service_id keys (+ v1.10.0 level_aware · can_search_users)');
     // deny → 세션 회수
     $g2 = pf_ok(pf_admin($B, 'sa', $SA, array('action' => 'set_grant', 'service_id' => 'svc-a', 'uuid' => $u1['uuid'], 'grant' => 'deny')), 'deny');
     assert_true($g2['revoked_sessions'] >= 1, 'removing access revokes that service\'s sessions');

@@ -110,8 +110,11 @@ if (!function_exists('url_custom_scheme_check')) {
             return false;
         }
         // RFC 8252 private-use scheme 으로 쓰지 못하는 이름(D-369). http/https 는 원래 규칙으로 간다
-        $deny = ['javascript', 'data', 'file', 'vbscript', 'blob', 'about', 'ftp', 'ws', 'wss', 'http', 'https'];
-        if (in_array($scheme, $deny, true) || preg_match('/^[a-z][a-z0-9+.\-]{2,63}$/', $scheme) !== 1) {
+        // v1.10.0 감사 L-3 / D-372 — OS·브라우저가 다른 앱을 여는 scheme 추가: Windows 셸(search-ms·shell·ms-*),
+        // 전화·문자·메일(tel·sms·mailto), Android intent. 점(.) 필수는 걸지 않는다(myapp 등록값 유지).
+        $deny = ['javascript', 'data', 'file', 'vbscript', 'blob', 'about', 'ftp', 'ws', 'wss', 'http', 'https',
+                 'search-ms', 'shell', 'mailto', 'tel', 'sms', 'intent'];
+        if (in_array($scheme, $deny, true) || strncmp($scheme, 'ms-', 3) === 0 || preg_match('/^[a-z][a-z0-9+.\-]{2,63}$/', $scheme) !== 1) {
             $reason = '이 scheme 은 복귀 주소로 쓸 수 없습니다. (공개 클라이언트의 사용자 지정 scheme 은 영문 소문자 3~64자)';
             return null;
         }

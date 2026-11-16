@@ -53,6 +53,7 @@ function pl_audit_mask(array $o, string $viewerRole): array
 {
     $o['ip'] = mask_for_viewer('ip', $o['ip'], $viewerRole);
     $o['user_agent'] = mask_for_viewer('ua', $o['user_agent'], $viewerRole);
+    $o['sender_ip'] = (string) mask_for_viewer('ip', $o['sender_ip'], $viewerRole);   // v1.10.0 감사 M-2
     return $o;
 }
 
@@ -177,7 +178,14 @@ if ($method === 'GET') {
     $items = [];
     foreach ($rows as $r) {
         // v1.10.0 (설계 127 §4) — 감사 ip·user_agent 원문은 superadmin 만. 내보내기(superadmin)는 원문(체인 대조)
-        $items[] = $kind === 'logs' ? pl_log_out($r) : pl_audit_mask(pl_audit_out($r, false), ctx_global_role($ctx));
+        // v1.10.0 감사 M-2 / D-372 — 로그 행의 sender_ip 도 같은 마스킹 한 곳을 거친다(감사 행은 pl_audit_mask 안에서)
+        if ($kind === 'logs') {
+            $lo = pl_log_out($r);
+            $lo['sender_ip'] = (string) mask_for_viewer('ip', $lo['sender_ip'], ctx_global_role($ctx));
+            $items[] = $lo;
+        } else {
+            $items[] = pl_audit_mask(pl_audit_out($r, false), ctx_global_role($ctx));
+        }
     }
     $next = null;
     if ($more && $rows !== []) {

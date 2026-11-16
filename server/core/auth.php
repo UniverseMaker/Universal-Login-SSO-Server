@@ -219,28 +219,259 @@ function admin_service_id_reject_former(?string $sid): void
     }
 }
 
+// =====================================================================
+// v1.10.1 가입 방식 closed|approval|open (설계 130 §1 · D-371)
+//   v1.8.2 의 registration_open() 은 아래 register_mode_effective() 의 얇은 포장으로 남는다.
+//   부르는 곳 3개가 같은 값을 내야 한다(v1.8.1 의 「링크는 보이는데 가입은 막힘」 재발 방지):
+//     api/auth/register.php · api/auth/register_status.php($service = null) · api/sso/validate.php(그 서비스)
+// =====================================================================
+
+const REGISTER_MODES     = ['closed', 'approval', 'open'];
+const REGISTER_MODE_RANK = ['closed' => 0, 'approval' => 1, 'open' => 2];
+
 /**
- * 신규 가입을 받는가 — **판정은 이 함수 한 곳에만 있다** (v1.8.2).
+ * 전역 가입 방식. **결정 순서는 이 함수 한 곳**(설계 130 §1-1).
+ *   1. settings.register_mode 행이 있고 enum 안 → 그 값
+ *   2. 행이 있는데 enum 밖·빈 값·NULL → closed + log_throttled (fail-closed)
+ *   3. 행 없음 → 옛 allow_register(DB 행 → ALLOW_REGISTER 상수) 참이면 open, 거짓이면 closed
+ * 3 이 있는 이유: 0011 직후 모든 설치본의 동작이 v1.10.0 과 같아야 한다(D-371 Q-1).
  *
- * 부르는 곳 3개가 같은 값을 내야 한다:
- *   api/auth/register.php         — 실제 가입 거절(403 REGISTRATION_DISABLED)
- *   api/auth/register_status.php  — 화면이 링크·폼을 감출지 정하는 공개 읽기($service = null)
- *   api/sso/validate.php          — SSO 진입 화면의 같은 판단($service = 그 서비스)
- * v1.8.1 까지 이 식이 register·validate 두 곳에 따로 적혀 있었고, SSO 파라미터가 없는
- * 화면은 값을 받을 길이 없어 차단 상태에서도 「회원가입」 링크를 그렸다.
- *
- * 전역 설정(`settings.allow_register`, 없으면 config 의 ALLOW_REGISTER) AND
- * (서비스가 주어졌으면) 그 서비스의 `allow_register`. 둘 중 하나라도 꺼져 있으면 false.
+ * @param array $rows skey => ['svalue' => …] (settings_all() 또는 admin_settings_rows() 모양)
  */
+function register_mode_global_from_rows(array $rows): string
+{
+    if (isset($rows['register_mode'])) {
+        $v = $rows['register_mode']['svalue'] ?? null;
+        $v = $v === null ? '' : (string) $v;
+        if (in_array($v, REGISTER_MODES, true)) {
+            return $v;
+        }
+        log_throttled('register_mode_invalid', '[ulogin] settings.register_mode is not closed|approval|open - treated as closed');
+        return 'closed';
+    }
+    if (isset($rows['allow_register']) && $rows['allow_register']['svalue'] !== null) {
+        $raw   = (string) $rows['allow_register']['svalue'];
+        $allow = ($raw === '1' || $raw === 'true' || $raw === 'on');
+    } else {
+        $allow = defined('ALLOW_REGISTER') ? (bool) ALLOW_REGISTER : false;
+    }
+    return $allow ? 'open' : 'closed';
+}
+
+/** 서비스 상한. allow_register=1 → open, 0 → closed. 서비스가 없으면(직접 가입) 상한 없음. */
+function register_mode_service_cap(?array $service): string
+{
+    if ($service === null) {
+        return 'open';
+    }
+    return empty($service['allow_register']) ? 'closed' : 'open';
+}
+
+/** 둘 중 더 엄격한 쪽. 모르는 값은 closed. */
+function register_mode_stricter(string $a, string $b): string
+{
+    if (!isset(REGISTER_MODE_RANK[$a]) || !isset(REGISTER_MODE_RANK[$b])) {
+        return 'closed';
+    }
+    return REGISTER_MODE_RANK[$a] <= REGISTER_MODE_RANK[$b] ? $a : $b;
+}
+
+/**
+ * 가입 방식 유효값 — **판정은 이 함수 한 곳에만 있다.**
+ * 유효값 = min(전역, 서비스 상한). 서비스 플래그로 전역보다 느슨해질 수 없다(설계 130 §1-2 9칸 표).
+ */
+function register_mode_effective(?array $service = null): string
+{
+    return register_mode_stricter(register_mode_global_from_rows(settings_all()), register_mode_service_cap($service));
+}
+
+/** 신규 가입(또는 신청)을 받는가. approval 도 true 다(링크를 보여 「가입 신청」으로 표기 — §1-3). */
 function registration_open(?array $service = null): bool
 {
-    if (!(bool) setting_get('allow_register', ALLOW_REGISTER)) {
-        return false;
+    return register_mode_effective($service) !== 'closed';
+}
+
+/**
+ * 쓰기 목표 [mode, allow_register]. $mode(새 키)가 있으면 그것, 없으면 옛 키 규칙(설계 130 §1-1):
+ *   allow_register=false → closed · true → 현재 closed 면 open, approval·open 이면 그대로.
+ * allow_register 는 언제나 (mode === 'open') — v1.10.0 으로 되돌려도 approval 은 「닫힘」으로 떨어진다.
+ */
+function register_mode_write_target(?string $mode, ?bool $legacyAllow, string $current): array
+{
+    if ($mode === null) {
+        if ($legacyAllow === null) {
+            $mode = $current;
+        } elseif ($legacyAllow === false) {
+            $mode = 'closed';
+        } else {
+            $mode = $current === 'closed' ? 'open' : $current;
+        }
     }
-    if ($service !== null && empty($service['allow_register'])) {
-        return false;
+    if (!in_array($mode, REGISTER_MODES, true)) {
+        $mode = 'closed';
     }
-    return true;
+    return [$mode, $mode === 'open'];
+}
+
+/** register_mode 와 allow_register 를 **같은 트랜잭션**에서 쓴다(롤백 안전). */
+function register_mode_write(string $mode): void
+{
+    list($m, $allow) = register_mode_write_target($mode, null, 'closed');
+    db_tx(function () use ($m, $allow) {
+        setting_set('register_mode', $m, 'string', '가입 방식');
+        setting_set('allow_register', $allow, 'bool', '신규 가입 허용');
+    });
+}
+
+/**
+ * 계정 생성 본문(users · user_services · 가입 보너스 · 약관 동의). **반드시 db_tx() 안에서 부른다.**
+ * open 경로(register.php)와 승인 경로(admin/register_requests.php approve)가 공유한다(설계 130 §2-1).
+ *
+ * @param array       $f  username, email, password_hash, name, nickname, phone, marketing(bool),
+ *                        require_verify(bool), bonus(int), consents(null = 지금 발행본 | [{code, terms_id}])
+ * @param string|null $consentAt 동의 시각(null 이면 $now). 승인 경로는 신청 시각
+ */
+function register_create_user(array $f, ?array $svc, string $now, string $ip, ?string $consentAt): int
+{
+    // users 행을 변수로 잡아 둔다 — 아래 user_services 의 grant-only 판정이
+    // **같은 전역 등급**을 보아야 한다(D-49). 리터럴을 두 번 쓰면 어긋난다.
+    $bonus   = max(0, (int) $f['bonus']);
+    $userRow = [
+        'uuid'                => gen_uuid4(),
+        'username'            => (string) $f['username'],
+        'email'               => (string) $f['email'],
+        'password_hash'       => (string) $f['password_hash'],
+        'password_changed_at' => $now,
+        'name'                => $f['name'] ?? null,
+        'nickname'            => $f['nickname'] ?? null,
+        'phone'               => $f['phone'] ?? null,
+        'status'              => !empty($f['require_verify']) ? 'pending' : 'active',
+        'account_level'       => 'basic',
+        'role'                => 'user',
+        'billing_tier'        => 'free',
+        'points'              => $bonus,
+        'total_points_earned' => $bonus,
+        'total_points_spent'  => 0,
+        'marketing_agreed'    => !empty($f['marketing']) ? 1 : 0,
+        'timezone'            => 'Asia/Seoul',
+        'locale'              => 'ko-KR',
+        'created_at'          => $now,
+        'updated_at'          => $now,
+    ];
+    $uid = db_insert(T_USERS, $userRow);
+
+    // 서비스 매핑 (auto_join=0 이어도 명시적 가입 경로이므로 만든다)
+    // 등급 오버라이드는 **grant-only** 다 — D-49 / M-16 / Q-3. 판정은 service_grade_overrides() 한 곳.
+    if ($svc !== null) {
+        $ov = service_grade_overrides($svc, $userRow);
+        db_insert(T_USER_SERVICES, [
+            'user_id'       => $uid,
+            'service_id'    => (string) $svc['service_id'],
+            'account_level' => $ov['account_level'],   // NULL = 전역 상속
+            'role'          => $ov['role'],            // 항상 NULL
+            'billing_tier'  => $ov['billing_tier'],    // 항상 NULL
+            'status'        => 'active',
+            'joined_at'     => $now,
+            'last_used_at'  => $now,
+        ]);
+    }
+
+    if ($bonus > 0) {
+        log_point($uid, [
+            'delta'         => $bonus,
+            'balance_after' => $bonus,
+            'reason'        => 'signup_bonus',
+            'service_id'    => $svc['service_id'] ?? null,
+            'memo'          => '가입 보너스',
+        ]);
+    }
+
+    $consents = $f['consents'] ?? null;
+    if ($consents === null) {
+        $consents = register_consents_now(!empty($f['marketing']));
+    }
+    foreach ($consents as $c) {
+        $tid = is_array($c) ? (int) ($c['terms_id'] ?? 0) : 0;
+        if ($tid <= 0) {
+            continue;
+        }
+        db_insert(T_CONSENTS, [
+            'user_id'   => $uid,
+            'terms_id'  => $tid,
+            'agreed'    => 1,
+            'agreed_at' => $consentAt !== null ? $consentAt : $now,
+            'ip'        => $ip,
+        ]);
+    }
+    return $uid;
+}
+
+/** 지금 발행된 최신 약관 [{code, terms_id}]. 약관이 아직 없는 설치본은 빈 배열(가입은 되어야 한다). */
+function register_consents_now(bool $marketing): array
+{
+    $codes = ['tos', 'privacy'];
+    if ($marketing) {
+        $codes[] = 'marketing';
+    }
+    $out = [];
+    foreach ($codes as $code) {
+        $t = db_one(
+            'SELECT id FROM ' . T_TERMS . ' WHERE code = ? AND published_at IS NOT NULL'
+            . ' ORDER BY published_at DESC, id DESC LIMIT 1',
+            [$code]
+        );
+        if ($t !== null) {
+            $out[] = ['code' => $code, 'terms_id' => (int) $t['id']];
+        }
+    }
+    return $out;
+}
+
+/** 이메일 인증 메일(require_email_verify=1 일 때). register.php 와 승인 경로가 같이 쓴다. */
+function register_send_verify_mail(int $userId, string $email, string $ip): void
+{
+    $token = gen_token(32);
+    db_insert(T_EMAIL_VERIFY, [
+        'token_hash' => token_hash($token),
+        'user_id'    => $userId,
+        'email'      => $email,
+        'expires_at' => at_utc((int) EMAIL_VERIFY_TTL),
+        'created_ip' => $ip,
+        'created_at' => now_utc(),
+    ]);
+    $link = base_url() . '/public/verify.html?token=' . rawurlencode($token);
+    send_mail(
+        $email,
+        '[' . setting_get('site_name', SITE_NAME) . '] 이메일 인증',
+        "아래 링크를 눌러 이메일 인증을 완료해 주세요. (24시간 유효)\n\n" . $link . "\n"
+    );
+}
+
+/**
+ * 승인 대기 신청의 비밀번호 해시(로그인 「계정 없음」 분기 전용, 설계 130 §2-4).
+ * 같은 username·email 의 **유효한 pending** 신청이 있으면 그 해시, 없으면 null. 표가 없으면(0011 전) null.
+ */
+function register_pending_hash(string $norm): ?string
+{
+    $r = register_pending_row($norm);
+    return $r === null ? null : (string) $r['password_hash'];
+}
+
+/** v1.10.1 L-3 — 위와 같은 조회에 신청 id 를 함께(잠금 카운트 키). 없으면 null. */
+function register_pending_row(string $norm): ?array
+{
+    if (!defined('T_REGISTER_REQUESTS')) {
+        return null;
+    }
+    try {
+        $r = db_one('SELECT id, password_hash FROM ' . T_REGISTER_REQUESTS
+            . ' WHERE (username = ? OR email = ?) AND status = ? AND expires_at > ? AND password_hash IS NOT NULL'
+            . ' ORDER BY id DESC LIMIT 1', [$norm, $norm, 'pending', now_utc()]);
+    } catch (Throwable $e) {
+        log_throttled('regreq_pending_lookup', '[ulogin] register_requests lookup failed (migration 0011 pending?): ' . get_class($e));
+        return null;
+    }
+    return $r === null ? null : ['id' => (int) $r['id'], 'password_hash' => (string) $r['password_hash']];
 }
 
 /**
@@ -366,7 +597,7 @@ function validate_username_format(string $u): void
  */
 function validate_password(string $pw, ?string $username = null, string $field = 'password', int $roleRank = 0): void
 {
-    // v1.9.1 D-362 - role_rank 20 이상은 12자 이상 + 흔한 비밀번호 거절(호출자가 대상 계정의 rank 를 넘긴다)
+    // v1.9.1 D-362 - role_rank 20 이상은 10자 이상(v1.10.1 D-373, 종전 12) + 흔한 비밀번호 거절(호출자가 대상 계정의 rank 를 넘긴다)
     em_enforce_strong_password($pw, $username, $roleRank, $field);
     $min = (int) setting_get('password_min_length', PASSWORD_MIN_LENGTH);
     if ($min < 8) {

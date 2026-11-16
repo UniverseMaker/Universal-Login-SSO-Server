@@ -25,6 +25,8 @@ require_once __DIR__ . '/../../core/bootstrap.php';
 require_once __DIR__ . '/../../core/urlrules.php';
 // 서비스 삭제 시 외부 계정 스냅숏 정리(v1.8.4 설계 92 E절).
 require_once __DIR__ . '/../../core/accountlink.php';
+// v1.10.1 공동 포인트 허용·한도 검증(설계 130 §4-3). 저장·읽기·번들이 같은 points_cfg_check() 를 쓴다.
+require_once __DIR__ . '/../../core/points.php';
 
 only_method('GET', 'POST', 'PUT', 'DELETE');
 
@@ -70,6 +72,8 @@ function admin_service_public(array $r, int $secretCount, int $userCount): array
         // v1.9.1 - 비상 로그인 확인값 허용·유효 일수(emergency/1 1-1장). 0008 이전 DB 는 기본값
         'emergency_allow'       => !isset($r['emergency_allow']) || (int) $r['emergency_allow'] === 1,
         'emergency_days'        => isset($r['emergency_days']) ? (int) $r['emergency_days'] : 30,
+        // v1.10.1 — 공동 포인트(설계 130 §4-3 순수 추가). NULL·깨짐이면 null(= 막음). 0011 이전 DB 도 null
+        'points'                => points_cfg_from_row($r),
         'status'                => (string) $r['status'],
         // v1.8.6 — 개명 별칭(설계 104 E-1). 0006 이전 DB 에는 컬럼이 없어 null 이다.
         'former_service_id'     => isset($r['former_service_id']) && $r['former_service_id'] !== '' ? (string) $r['former_service_id'] : null,
@@ -80,6 +84,23 @@ function admin_service_public(array $r, int $secretCount, int $userCount): array
         'created_at'            => iso($r['created_at']),
         'updated_at'            => iso($r['updated_at']),
     ];
+}
+
+/**
+ * v1.10.1 — 본문의 `points`(객체|null) → 저장값(정규 JSON|null). 형이 틀리면 400 VALIDATION_FAILED(field=points).
+ * @param mixed $v
+ */
+function admin_points_json($v): ?string
+{
+    if ($v === null) {
+        return null;
+    }
+    $reason = null;
+    $cfg = points_cfg_check($v, $reason);
+    if ($cfg === null) {
+        v_fail('points', (string) $reason);
+    }
+    return points_cfg_encode($cfg);
 }
 
 /**
@@ -265,6 +286,11 @@ if ($method === 'POST') {
         'created_at'            => $now,
         'updated_at'            => $now,
     ];
+    // v1.10.1 — 새 서비스 기본값은 NULL(막음). 주어졌을 때만 넣는다(0011 이전 DB 에 컬럼이 없어도 생성은 된다)
+    $pointsNew = array_key_exists('points', $body) ? admin_points_json($body['points']) : null;
+    if ($pointsNew !== null) {
+        $row['points_json'] = $pointsNew;
+    }
 
     if (array_key_exists('payload_fields', $body) && $body['payload_fields'] !== null) {
         if (!is_array($body['payload_fields'])) {
@@ -298,6 +324,10 @@ if ($method === 'POST') {
         // 시크릿 평문·해시는 남기지 않는다
         'service_secret' => $secretPlain !== null ? '(set)' : null,
     ], v_string($body, 'reason', 0, 255, false));
+    if ($pointsNew !== null) {
+        admin_log_write($adminId, 'service.points', 'service', $serviceId, ['points' => null],
+            ['points' => json_decode($pointsNew, true)], v_string($body, 'reason', 0, 255, false));
+    }
 
     $fresh = admin_service_row($serviceId);
     list($sc, $uc) = admin_service_counts($serviceId);
@@ -410,6 +440,21 @@ if ($method === 'PUT') {
         }
     }
 
+    // --- v1.10.1 공동 포인트 — 변경은 service.update 와 따로 'service.points' 로 남긴다(설계 130 §4-3) ---
+    $pointsChange = null;
+    if (array_key_exists('points', $body)) {
+        $pNew = admin_points_json($body['points']);
+        $pOld = isset($target['points_json']) && $target['points_json'] !== '' ? (string) $target['points_json'] : null;
+        if ($pNew !== $pOld) {
+            $set['points_json'] = $pNew;
+            $changed[]          = 'points';
+            $pointsChange = [
+                ['points' => $pOld === null ? null : json_decode($pOld, true)],
+                ['points' => $pNew === null ? null : json_decode($pNew, true)],
+            ];
+        }
+    }
+
     // --- 시크릿 -------------------------------------------------
     $regenerate  = (bool) v_bool($body, 'regenerate_secret', false, false);
     $secretPlain = null;
@@ -442,7 +487,11 @@ if ($method === 'PUT') {
     }
 
     $logId = null;
-    if ($changed !== []) {
+    if ($pointsChange !== null) {
+        $logId = admin_log_write($adminId, 'service.points', 'service', $sid, $pointsChange[0], $pointsChange[1],
+            v_string($body, 'reason', 0, 255, false));
+    }
+    if (array_diff($changed, ['points']) !== []) {
         $logId = admin_log_write($adminId, 'service.update', 'service', $sid,
             $before === [] ? null : $before, $after === [] ? null : $after,
             v_string($body, 'reason', 0, 255, false));

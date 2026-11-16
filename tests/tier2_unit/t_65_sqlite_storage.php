@@ -66,10 +66,10 @@ t('S-1/S-2 schema.sql translates to SQLite and matches its own expectation both 
     require_ext('pdo_sqlite');
     $r = mig_sqlite_translation_check(t65_schema());
     // 0건 가드 — 처리한 대상 수부터 본다(규약 7)
-    assert_eq(31, $r['tables'], 'tables translated (v1.9.0 0007 +7, v1.9.1 0008 +1, v1.10.0 0010 +3)');
+    assert_eq(32, $r['tables'], 'tables translated (v1.9.0 0007 +7, v1.9.1 0008 +1, v1.10.0 0010 +3, v1.10.1 0011 +1)');
     // v1.8.4 마이그레이션 0005 — ext_accounts 6 · link_jobs 3 · link_job_items 2 = +11 (설계 92 C절 DDL 그대로)
     // v1.9.0 0007 — user_services 1 · rc_drafts 1 · rc_versions 1 · plat_logs 5 · plat_audit 5 · plat_collections 1 · plat_docs 5 · plat_usage 1 = +20
-    assert_eq(95, $r['indexes'], 'indexes translated (design A-4 counted 56, +11 from 0005, +1 uq_services_former from 0006, +20 from 0007, +2 from 0008, +5 from 0010)');
+    assert_eq(102, $r['indexes'], 'indexes translated (design A-4 counted 56, +11 from 0005, +1 uq_services_former from 0006, +20 from 0007, +2 from 0008, +5 from 0010, +7 from 0011)');
     assert_true($r['columns'] > 150, 'columns translated: ' . $r['columns']);
     assert_clean($r['errors'], 'translation equivalence (C-4 layer 1)');
 });
@@ -353,7 +353,7 @@ t('D-5-6 a missing or 0-byte database file is refused and NOT created; PRAGMAs a
         $pdo = null;
         $again = ulogin_pdo_open_sqlite($g);   // create=false, quick_check=true — 정상 파일은 열린다
         // 신규 설치는 migrations/ 전 파일을 baseline 으로 기록한다 — 0001~0006 (v1.8.4 에 0005, v1.8.6 에 0006 추가)
-        assert_eq('10', (string) $again->query('SELECT COUNT(*) FROM app_ulogin_schema_migrations')->fetchColumn(), 'baseline rows');
+        assert_eq('11', (string) $again->query('SELECT COUNT(*) FROM app_ulogin_schema_migrations')->fetchColumn(), 'baseline rows');
         $again = null;
     } finally {
         t65_rmdir($d);

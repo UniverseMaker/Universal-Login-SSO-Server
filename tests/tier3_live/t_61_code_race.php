@@ -195,13 +195,17 @@ function race_seed_base(PDO $pdo, int $points = 0): array
     return array($uid, 'race-app', $redirect);
 }
 
-/** 유효한 code 1개. 반환: [code 원문, auth_codes.id] */
+/** 경쟁 시험의 PKCE verifier(43~128자). race-app 은 공개 클라이언트라 v1.10.0 감사 H-1 부터 PKCE 가 필수다. */
+const RACE_VERIFIER = 'race-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
+
+/** 유효한 code 1개(S256 challenge 포함). 반환: [code 원문, auth_codes.id] */
 function race_seed_code(PDO $pdo, int $uid, string $sid, string $redirect): array
 {
     $code = bin2hex(random_bytes(32));
+    $challenge = rtrim(strtr(base64_encode(hash('sha256', RACE_VERIFIER, true)), '+/', '-_'), '=');
     $pdo->prepare('INSERT INTO app_ulogin_auth_codes (code_hash, user_id, service_id, redirect_uri, state,'
         . ' code_challenge, expires_at, used_at, created_ip, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)')
-        ->execute(array(hash('sha256', $code), $uid, $sid, $redirect, 'st-race', null,
+        ->execute(array(hash('sha256', $code), $uid, $sid, $redirect, 'st-race', $challenge,
             race_now(300), '127.0.0.1', race_now()));
     return array($code, (int) $pdo->lastInsertId());
 }
@@ -476,7 +480,7 @@ function race_exchange_round(string $box, int $n, string $tag): array
     $jobs = array();
     for ($i = 0; $i < $n; $i++) {
         $jobs[] = array('mode' => 'http', 'script' => $script, 'uri' => '/server/api/auth/exchange.php',
-            'post' => array('code' => $code, 'service_id' => $sid, 'redirect_uri' => $redirect));
+            'post' => array('code' => $code, 'service_id' => $sid, 'redirect_uri' => $redirect, 'code_verifier' => RACE_VERIFIER));
     }
     $res = race_spawn($box, $jobs, 1.5 + 0.08 * $n);
     race_assert_synced($res, 'exchange N=' . $n);

@@ -44,6 +44,9 @@ const CAN_MAP = [
     // 쓰기가 superadmin 인 이유: 연결은 「남의 시스템 로컬 계정으로 들어가는 열쇠」를 주는 조작이다.
     'account_link.view'     => 'admin',
     'account_link.manage'   => 'superadmin',
+    // v1.10.1 가입 신청(설계 130 §2-5 · D-371 Q-3). 판정은 require_global_role() — 전역 users.role 만. 결정은 감사 필수.
+    'register.view'         => 'admin',
+    'register.decide'       => 'admin',
 ];
 
 function rank_of(array $map, ?string $v): int

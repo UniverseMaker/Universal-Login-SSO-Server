@@ -1,0 +1,13 @@
+/* ulogin v1.10.1 — 비상 관리자 계정 로컬 설정 화면(server/local_admin.php → /local-admin) 전용 보정. D-374
+   공용 틀(rui · style.css · ulogin-theme.css)의 토큰만 쓴다. 색을 새로 만들지 않는다. */
+.la-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 4px; }
+.la-notes { margin: 8px 0 14px; padding-left: 18px; color: var(--rui-ink-3, var(--text-muted)); font-size: 12.5px; line-height: 1.75; }
+.la-flash { margin: 0 0 12px; }
+.la-form { display: grid; gap: 12px; margin-top: 4px; }
+.la-pw-row { display: flex; gap: 6px; align-items: stretch; }
+.la-pw-row input { flex: 1 1 auto; min-width: 0; }
+.la-eye { flex: 0 0 auto; white-space: nowrap; }
+.la-unlock { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid var(--rui-line, var(--border)); }
+.la-cli { margin-top: 16px; line-height: 1.7; word-break: keep-all; }
+.la-cli code { font-size: 11.5px; }

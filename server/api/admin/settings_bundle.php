@@ -60,6 +60,8 @@ require_once __DIR__ . '/../../core/bootstrap.php';
 require_once __DIR__ . '/../../core/secretguard.php';
 require_once __DIR__ . '/../../core/settingsdef.php';
 require_once __DIR__ . '/../../core/urlrules.php';
+// v1.10.1 — 서비스 `points`(공동 포인트 허용·한도) 검증은 관리 API 와 같은 points_cfg_check() 다(D-371 Q-6).
+require_once __DIR__ . '/../../core/points.php';
 
 only_method('GET', 'POST');
 
@@ -698,6 +700,7 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
         'service_id', 'service_name', 'description', 'is_confidential', 'service_secret',
         'redirect_whitelist', 'allowed_origins', 'auto_join', 'allow_register',
         'default_account_level', 'session_ttl', 'refresh_ttl', 'payload_fields', 'status', 'secrets',
+        'points',   // v1.10.1 (D-371 Q-6) — 객체 | null. 비밀이 아니다
     ];
     $allowedAll = array_merge($allowed, SB_RESERVED_SERVICE);
     foreach ($svc as $k => $unused) {
@@ -853,6 +856,24 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
                 }
             }
             $out['fields']['payload_fields'] = json_encode($pf, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+    }
+
+    // --- points (v1.10.1) — 객체|null. 키 7개가 정확히 맞아야 한다(하나라도 틀리면 거절) ---
+    if (array_key_exists('points', $svc)) {
+        if ($svc['points'] === null) {
+            $out['fields']['points_json'] = null;   // NULL = 공동 포인트 막음
+        } else {
+            $pReason = null;
+            $pCfg = points_cfg_check($svc['points'], $pReason);
+            if ($pCfg === null) {
+                sb_add($errs, sb_ptr(array_merge($seg, ['points'])), 'invalid_value',
+                    'points 가 올바르지 않습니다: ' . (string) $pReason,
+                    'object {enabled, earn, spend: bool, per_tx_max: 1~1000000, daily_user_earn_max · daily_user_spend_max · '
+                    . 'daily_service_earn_max: 1~100000000} | null', sb_got($svc['points']));
+            } else {
+                $out['fields']['points_json'] = points_cfg_encode($pCfg);
+            }
         }
     }
 
@@ -1244,6 +1265,7 @@ function sb_service_state(?array $r): ?array
         'refresh_ttl'           => (int) $r['refresh_ttl'],
         'payload_fields'        => $r['payload_fields'] !== null ? (string) $r['payload_fields'] : null,
         'status'                => (string) $r['status'],
+        'points_json'           => isset($r['points_json']) && $r['points_json'] !== '' ? (string) $r['points_json'] : null,   // v1.10.1
         // 해시는 그대로 담지 않는다. **있는가**와 **어떤 것인가**만 남긴다.
         'service_secret'        => ($r['service_secret_hash'] !== null && $r['service_secret_hash'] !== '')
             ? hash('sha256', (string) $r['service_secret_hash']) : null,
@@ -1394,13 +1416,31 @@ function sb_build_plan(array $norm, bool $forUpdate, bool $tenseDone, array &$er
     $hasAllowPublicCol = admin_secrets_has_allow_public();
 
     // ---------- settings ----------
+    // v1.10.1 (설계 130 §1-1) — register_mode · allow_register 는 한 쌍이다. 어느 쪽이든 오면 둘 다 읽고,
+    // 쓰기 목표를 register_mode_write_target() 한 곳으로 정한다(새 키 우선 · 옛 키 규칙 · allow = mode==='open').
+    // 그래서 같은 번들을 두 번 적용하면 두 번째는 무연산이다(멱등).
+    $regTouched = array_key_exists('register_mode', $norm['settings']) || array_key_exists('allow_register', $norm['settings']);
     $sKeys = array_keys($norm['settings']);
+    if ($regTouched) {
+        $sKeys = array_values(array_unique(array_merge($sKeys, ['register_mode', 'allow_register'])));
+    }
     $rows  = $forUpdate ? admin_settings_rows_for_update($sKeys) : admin_settings_rows($sKeys);
+    if ($regTouched) {
+        $givenAllow = array_key_exists('allow_register', $norm['settings']) ? (bool) $norm['settings']['allow_register'] : null;
+        $givenMode  = array_key_exists('register_mode', $norm['settings']) ? (string) $norm['settings']['register_mode'] : null;
+        list($tMode, $tAllow) = register_mode_write_target($givenMode, $givenAllow, register_mode_global_from_rows($rows));
+        if ($givenMode !== null && $givenAllow !== null && $givenAllow !== $tAllow) {
+            sb_warn($warnings, sb_ptr(['settings', 'allow_register']), 'register_mode_overrides_allow_register',
+                'register_mode 가 함께 오면 allow_register 는 (register_mode === "open") 으로 맞춥니다. 받은 값은 쓰지 않습니다.');
+        }
+        $norm['settings']['register_mode']  = $tMode;
+        $norm['settings']['allow_register'] = $tAllow;
+    }
     $planSettings = ['create_or_update' => [], 'unchanged' => [], 'skipped' => []];
     $opSettings   = [];
     foreach ($norm['settings'] as $k => $to) {
         $def  = $defs[$k];
-        $from = admin_setting_value($k, $def, $rows);
+        $from = admin_setting_value_eff($k, $def, $rows);   // v1.10.1 — register_mode 는 실제 판정값과 비교
         $state['settings'][$k] = $from;
         $entry = ['path' => sb_ptr(['settings', $k]), 'skey' => $k, 'from' => $from, 'to' => $to];
         if ($from === $to) {
@@ -1860,7 +1900,7 @@ if ($method === 'GET') {
     $rows = admin_settings_rows(array_keys($defs));
     $settings = [];
     foreach ($defs as $k => $def) {
-        $settings[$k] = admin_setting_value($k, $def, $rows);
+        $settings[$k] = admin_setting_value_eff($k, $def, $rows);   // v1.10.1 — register_mode 는 실제 판정값
     }
 
     $svcRows = db_all('SELECT * FROM ' . T_SERVICES . ' ORDER BY service_id ASC');
@@ -1910,6 +1950,7 @@ if ($method === 'GET') {
             'refresh_ttl'           => (int) $r['refresh_ttl'],
             'payload_fields'        => ($pf === null || $pf === '') ? null : array_values(json_col($pf)),
             'status'                => (string) $r['status'],
+            'points'                => points_cfg_from_row($r),   // v1.10.1 (D-371 Q-6). null = 막음
             'secrets'               => $secs,
         ];
     }

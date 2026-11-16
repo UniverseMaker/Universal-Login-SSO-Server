@@ -11,6 +11,9 @@ declare(strict_types=1);
  * 후보는 SQL LIMIT 200 으로 뽑은 뒤 판정하고 limit(기본 10, 최대 20)으로 자른다. 완전 일치가 먼저, 그다음 name 오름차순.
  * 빈도: IP 300/300(인증 전) · 서비스 30/60(인증 뒤). 호출마다 감사(sso.user_search) — **검색어 원문은 남기지 않는다**.
  * 감사 기록 실패면 500(users.php 와 같다 — 결과가 나갔는데 기록이 없는 상태를 만들지 않는다).
+ * v1.10.0 보안 감사 M-3 / D-372 — 게이트 `services.can_search_users`(기본 0, 행 플래그) + 서비스별 하루 상한 500.
+ *   게이트가 없으면 등록된 아무 서비스나 접두 검색을 반복해 계정 명단을 다시 만들 수 있었다.
+ *   막힌 서비스는 403 FORBIDDEN(sso/users.php 의 can_list_users 와 같은 모양).
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
 require_once __DIR__ . '/../../core/accountlink.php';
@@ -36,6 +39,10 @@ if (array_key_exists('limit', $in) && $in['limit'] !== null) {
 $svc = al_s2s_auth($in);
 $sid = (string) $svc['service_id'];
 rate_limit('svcapi:search:' . $sid, 30, 60);
+if (empty($svc['can_search_users'])) {   // USER-SEARCH-GATE
+    throw new AppError('FORBIDDEN', 403, ['message' => '이 서비스는 계정 찾기를 쓸 수 없습니다.']);
+}
+rate_limit('svcapi:search:day:' . $sid, 500, 86400);   // USER-SEARCH-DAILY — 하루 500회(UTC 자정 기준 창)
 
 // 후보 — 필드는 판정에 필요한 것만 읽는다(이메일·전화 등은 SELECT 하지 않는다, T1-2)
 $cols = 'id, uuid, username, name, status, account_kind, role';

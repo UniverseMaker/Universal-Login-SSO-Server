@@ -631,6 +631,18 @@ function av_sc_search(array $B): void
         return av_http($B, 'POST', '/server/api/sso/user_search.php', array_merge(array('service_id' => 'svc-s',
             'service_secret' => $B['fx']['sec']['svc-s']), $b));
     };
+    // v1.10.0 감사 M-3 — 기본은 막힘(can_search_users=0) → 403. 관리 API 로 켠다(GET 에도 보인다)
+    av_err($call(array('q' => 'kim1')), 403, 'FORBIDDEN', 'user_search without can_search_users (USER-SEARCH-GATE)');
+    $sv = av_ok(av_get($B, 'ad', '/server/api/admin/service_access.php?service_id=svc-s'), 'service_access GET');
+    assert_true($sv['can_search_users'] === false, 'GET can_search_users false by default');
+    $r = av_ok(av_post($B, 'sa', '/server/api/admin/service_access.php', array('action' => 'set_rule', 'service_id' => 'svc-s',
+        'access_rule' => 'granted', 'can_search_users' => true)), 'set_rule can_search_users');
+    assert_true($r['can_search_users'] === true, 'set_rule echoes can_search_users');
+    assert_eq(1, (int) av_q($B, "SELECT can_search_users FROM app_ulogin_services WHERE service_id = 'svc-s'")[0]['can_search_users'], 'flag stored');
+    $r = av_ok(av_post($B, 'sa', '/server/api/admin/service_access.php', array('action' => 'set_rule', 'service_id' => 'svc-s',
+        'access_rule' => 'granted')), 'set_rule without the key keeps the flag');
+    assert_true($r['can_search_users'] === true, 'missing key keeps the flag');
+    av_reset_rl($B);
     $d = av_ok($call(array('q' => '김')), '1 char');
     assert_eq(array(), $d['items'], '1 char matches username exactly only');
     $d = av_ok($call(array('q' => '김민', 'limit' => 20)), 'prefix');
@@ -657,6 +669,12 @@ function av_sc_search(array $B): void
         $last = $call(array('q' => 'kim1'));
     }
     av_err($last === null ? $call(array('q' => 'kim1')) : $last, 429, 'RATE_LIMITED', '31st call');
+    // v1.10.0 감사 M-3 — 서비스별 하루 상한 500(USER-SEARCH-DAILY): 이미 500회 쓴 날은 501번째가 429
+    av_reset_rl($B);
+    $day = intdiv(time(), 86400) * 86400;
+    av_x($B, 'INSERT INTO app_ulogin_rate_limits (bucket, window_start, count, expires_at) VALUES (?,?,?,?)',
+        array('svcapi:search:day:svc-s', gmdate('Y-m-d H:i:s', $day), 500, gmdate('Y-m-d H:i:s', $day + 2 * 86400)));
+    av_err($call(array('q' => 'kim1')), 429, 'RATE_LIMITED', '501st call of the day');
     // 감사 실패 주입 → 500
     av_reset_rl($B);
     av_x($B, 'DROP TABLE app_ulogin_plat_audit');
@@ -683,6 +701,25 @@ function av_sc_mask(array $B): void
     }
     $l = av_ok(av_get($B, 'mg', '/server/api/admin/logs.php?type=login&q=Secr3t'), 'search masked input');
     assert_eq(0, (int) $l['total'], 'unknown-id input is not searchable (oracle closed)');
+    // v1.10.0 감사 M-2 — ip 필터는 superadmin 만(가린 끝자리 대입 오라클)
+    av_err(av_get($B, 'ad', '/server/api/admin/logs.php?type=login&ip=203.0.113.77'), 403, 'FORBIDDEN', 'ip filter as admin', 'ip');
+    av_err(av_get($B, 'mg', '/server/api/admin/logs.php?type=login&ip=203.0.113.77'), 403, 'FORBIDDEN', 'ip filter as manager', 'ip');
+    $l = av_ok(av_get($B, 'sa', '/server/api/admin/logs.php?type=login&ip=203.0.113.77'), 'ip filter as superadmin');
+    assert_true((int) $l['total'] >= 1, 'superadmin ip filter works');
+    // M-2 — 이메일 부분 일치는 superadmin 만(아이디·이름에 없는 조각으로 확인)
+    foreach (array('mg' => 0, 'ad' => 0) as $k => $want) {
+        $u = av_ok(av_get($B, $k, '/server/api/admin/users.php?q=test.invalid'), 'users q as ' . $k);
+        assert_eq($want, (int) $u['total'], 'email LIKE closed for ' . $k);
+    }
+    $u = av_ok(av_get($B, 'sa', '/server/api/admin/users.php?q=test.invalid'), 'users q as sa');
+    assert_true((int) $u['total'] >= 6, 'email LIKE open for superadmin');
+    // M-2 — 플랫폼 로그 sender_ip 마스킹
+    av_ok(av_s2s($B, '/server/api/platform/logs.php', 'svc-a', array('events' => array(av_ev()))), 'log ingest');
+    foreach (array('ad' => '127.0.0.x', 'sa' => '127.0.0.1') as $k => $want) {
+        $pl = av_ok(av_get($B, $k, '/server/api/admin/platform_logs.php?kind=logs&service_id=svc-a'), 'platform logs as ' . $k);
+        assert_true(count($pl['items']) >= 1, 'platform log row visible to ' . $k);
+        assert_eq($want, $pl['items'][0]['sender_ip'], 'sender_ip as ' . $k);
+    }
     // T3-9 owner 컬렉션
     av_ok(av_post($B, 'sa', '/server/api/admin/platform_tables.php', array('action' => 'upsert_collection', 'service_id' => 'svc-a',
         'name' => 'diary', 'read_rule' => 'owner', 'write_rule' => 'owner', 'indexes' => array())), 'owner collection');
@@ -694,6 +731,14 @@ function av_sc_mask(array $B): void
     assert_true($li['items'][0]['data_bytes'] > 0, 'data_bytes given');
     $one = av_ok(av_get($B, 'sa', '/server/api/admin/platform_tables.php?service_id=svc-a&collection=diary&doc_id=d1'), 'doc');
     assert_eq(null, $one['doc']['data'], 'owner doc data null for superadmin');
+    // v1.10.0 감사 M-1 — 문서가 있는 owner 컬렉션의 read_rule 은 바꿀 수 없다(관리 콘솔·s2s 둘 다)
+    av_err(av_post($B, 'sa', '/server/api/admin/platform_tables.php', array('action' => 'upsert_collection', 'service_id' => 'svc-a',
+        'name' => 'diary', 'read_rule' => 'auth', 'write_rule' => 'owner', 'indexes' => array())), 403, 'FORBIDDEN',
+        'owner -> auth with documents refused (console)', 'read_rule');
+    av_err(av_s2s($B, '/server/api/platform/collections.php', 'svc-a', array('op' => 'upsert', 'name' => 'diary', 'read_rule' => 'public',
+        'write_rule' => 'owner', 'indexes' => array())), 403, 'FORBIDDEN', 'owner -> public with documents refused (s2s)', 'read_rule');
+    assert_eq('owner', (string) av_q($B, "SELECT read_rule FROM app_ulogin_plat_collections WHERE name = 'diary'")[0]['read_rule'],
+        'read_rule unchanged');
     assert_not_contains('my private note', json_encode($li) . json_encode($one), 'no byte of the note');
     av_err(av_post($B, 'sa', '/server/api/admin/platform_tables.php', array('action' => 'doc_set', 'service_id' => 'svc-a',
         'collection' => 'diary', 'doc_id' => 'd1', 'data' => array('x' => 1), 'expected_version' => 1)), 403, 'FORBIDDEN', 'doc_set refused');
@@ -702,6 +747,9 @@ function av_sc_mask(array $B): void
     av_ok(av_post($B, 'sa', '/server/api/admin/platform_tables.php', array('action' => 'doc_delete', 'service_id' => 'svc-a',
         'collection' => 'diary', 'doc_id' => 'd1', 'expected_version' => 1, 'reason' => 'user request')), 'delete with reason');
     assert_eq(1, count(av_q($B, "SELECT id FROM app_ulogin_plat_audit WHERE action = 'admin.doc.delete_owner'")), 'audited');
+    // 문서가 없으면 바꿀 수 있다(M-1 은 「문서가 있을 때」만)
+    av_ok(av_post($B, 'sa', '/server/api/admin/platform_tables.php', array('action' => 'upsert_collection', 'service_id' => 'svc-a',
+        'name' => 'diary', 'read_rule' => 'auth', 'write_rule' => 'owner', 'indexes' => array())), 'empty owner collection may change');
 }
 
 /** emergency_admin CLI 실행. $stdin 은 표준입력(파이프)으로 넘긴다. */
@@ -727,6 +775,14 @@ function av_em_cli(array $B, string $args, string $stdin = ''): array
 function av_sc_emergency(array $B): void
 {
     av_reset_rl($B);
+    // v1.10.0 감사 M-4 — --init --username=(선택). 형식 검사 · --init 밖에서는 거절
+    list($rc, $o) = av_em_cli($B, '--init --username=em_boss');
+    assert_eq(0, $rc, 'init --username dry-run (' . $o . ')');
+    assert_contains('username=em_boss', $o, 'dry-run names the chosen username');
+    list($rc, $o) = av_em_cli($B, '--init --username=AB');
+    assert_eq(2, $rc, 'bad --username refused');
+    list($rc, $o) = av_em_cli($B, '--status --username=em_boss');
+    assert_eq(2, $rc, '--username only with --init');
     list($rc, $o) = av_em_cli($B, '--init');
     assert_eq(0, $rc, 'init dry-run (' . $o . ')');
     assert_eq(0, count(av_q($B, "SELECT id FROM app_ulogin_users WHERE username = 'admin'")), 'dry-run wrote nothing');
@@ -744,6 +800,14 @@ function av_sc_emergency(array $B): void
     assert_eq(1, count(av_q($B, "SELECT id FROM app_ulogin_login_logs WHERE result = 'fail_emergency_unset'")), 'logged unset');
     assert_eq(0, (int) av_q($B, "SELECT failed_login_count FROM app_ulogin_users WHERE username = 'admin'")[0]['failed_login_count'],
         'unset attempts are not counted');
+    // v1.10.0 감사 L-1 — authorize 경로(불변 파일)의 미설정 실패도 감사에 남고, 실패 횟수는 세지 않는다
+    $fa0 = count(av_q($B, "SELECT id FROM app_ulogin_plat_audit WHERE action = 'emergency.login.failure'"));
+    av_err(av_http($B, 'POST', '/server/api/sso/authorize.php', array('username' => 'admin', 'password' => '!unset', 'service_id' => 'svc-a',
+        'redirect_uri' => 'https://app.test/cb')), 401, 'AUTH_INVALID_CREDENTIALS', 'unset authorize', 'password');
+    assert_eq($fa0 + 1, count(av_q($B, "SELECT id FROM app_ulogin_plat_audit WHERE action = 'emergency.login.failure'")),
+        'authorize failure audited (EMERGENCY-FAIL-CORE)');
+    assert_eq(0, (int) av_q($B, "SELECT failed_login_count FROM app_ulogin_users WHERE username = 'admin'")[0]['failed_login_count'],
+        'unset authorize attempts are not counted');
     // 정책 위반은 거절
     list($rc, $o) = av_em_cli($B, '--set-password --apply', "short1!\nshort1!\n");
     assert_eq(1, $rc, 'policy enforced');
@@ -754,6 +818,18 @@ function av_sc_emergency(array $B): void
     assert_not_contains(AV_EM_PW, $o, 'CLI never prints the value');
     list($rc, $o) = av_em_cli($B, '--status');
     assert_contains('password=set', $o, 'status set');
+    // v1.10.0 감사 M-4 — --unlock 이 로그인 빈도 버킷(login:user:아이디·이메일)도 지운다
+    $win = intdiv(time(), 300) * 300;
+    foreach (array('login:user:admin', 'login:user:admin@emergency.ulogin.invalid', 'login:user:av_u1') as $bk) {
+        av_x($B, 'INSERT INTO app_ulogin_rate_limits (bucket, window_start, count, expires_at) VALUES (?,?,?,?)',
+            array($bk, gmdate('Y-m-d H:i:s', $win), 99, gmdate('Y-m-d H:i:s', $win + 600)));
+    }
+    av_err(av_http($B, 'POST', '/server/api/auth/login.php', array('username' => 'admin', 'password' => AV_EM_PW)), 429, 'RATE_LIMITED',
+        'bucket full before unlock');
+    list($rc, $o) = av_em_cli($B, '--unlock --apply');
+    assert_eq(0, $rc, 'unlock (' . $o . ')');
+    assert_eq(0, count(av_q($B, "SELECT id FROM app_ulogin_rate_limits WHERE bucket LIKE 'login:user:admin%'")), 'unlock cleared the buckets');
+    assert_eq(1, count(av_q($B, "SELECT id FROM app_ulogin_rate_limits WHERE bucket = 'login:user:av_u1'")), 'other accounts untouched');
     // 로그인: 콘솔 전용 · 1시간 · refresh 없음
     av_reset_rl($B);
     $d = av_ok(av_http($B, 'POST', '/server/api/auth/login.php', array('username' => 'admin', 'password' => AV_EM_PW, 'remember' => true)),
@@ -767,6 +843,12 @@ function av_sc_emergency(array $B): void
     assert_eq(0, count(av_q($B, 'SELECT id FROM app_ulogin_user_services WHERE user_id = ?', array((int) $em['id']))), 'no membership row');
     av_err(av_http($B, 'PUT', '/server/api/me/password.php', array('current_password' => AV_EM_PW, 'password' => 'Other-pass-123456',
         'password_confirm' => 'Other-pass-123456'), $etok), 403, 'FORBIDDEN', 'me/password blocked');
+    // v1.10.0 감사 L-2 — 탈퇴·이메일 변경도 비상 계정은 막는다
+    av_err(av_http($B, 'POST', '/server/api/me/withdraw.php', array('password' => AV_EM_PW, 'confirm' => 'admin'), $etok), 403, 'FORBIDDEN',
+        'me/withdraw blocked');
+    av_err(av_http($B, 'PUT', '/server/api/me/email.php', array('password' => AV_EM_PW, 'email' => 'new-admin@test.invalid'), $etok), 403,
+        'FORBIDDEN', 'me/email blocked');
+    assert_eq('active', (string) av_q($B, "SELECT status FROM app_ulogin_users WHERE username = 'admin'")[0]['status'], 'still active');
     av_err(av_http($B, 'PUT', '/server/api/admin/user_detail.php?uuid=' . $em['uuid'], array('name' => 'x'), $B['fx']['tok']['sa']), 403,
         'FORBIDDEN', 'admin edit blocked');
     av_err(av_override($B, 'u1', 'svc-a', array('grant' => 'allow', 'uuid' => $em['uuid'])), 400, 'VALIDATION_FAILED', 'no grants', 'uuid');
@@ -808,9 +890,9 @@ function av_sc_migrate(array $B): void
     $schema = (string) file_get_contents($B['root'] . '/server/schema.sql');
     $old = preg_replace('~^CREATE TABLE IF NOT EXISTS `app_ulogin_(?:access_groups|access_group_members|access_group_services)` \(.*?\n\) ENGINE[^;]*;~ms',
         '', $schema, -1, $nt);
-    $old = preg_replace('~^\s*`(?:level_aware|access_level|access_starts_at|access_ends_at|access_note|access_updated_by|access_updated_at|account_kind|is_emergency)`[^\n]*\n~m',
+    $old = preg_replace('~^\s*`(?:level_aware|can_search_users|access_level|access_starts_at|access_ends_at|access_note|access_updated_by|access_updated_at|account_kind|is_emergency)`[^\n]*\n~m',
         '', (string) $old, -1, $nc);
-    if ($nt !== 3 || $nc !== 9) {
+    if ($nt !== 3 || $nc !== 10) {
         fail('HARNESS-FAIL could not derive the 0009-state schema (' . $nt . '/' . $nc . ')');
     }
     $oldFile = $B['base'] . '/schema_0009.sql';
@@ -862,6 +944,11 @@ function av_sc_scheme(array $B): void
         'javascript: refused', 'redirect_whitelist');
     av_err($svc(array('service_id' => 'hc-data', 'redirect_whitelist' => array('data:text/html,x'))), 400, 'VALIDATION_FAILED',
         'data: refused', 'redirect_whitelist');
+    // v1.10.0 감사 L-3 — 다른 앱을 여는 scheme
+    foreach (array('ms-settings://x', 'ms-word://x', 'search-ms://query', 'shell://x', 'mailto://a', 'tel://x', 'sms://x', 'intent://x') as $i => $u) {
+        av_err($svc(array('service_id' => 'hc-deny' . $i, 'redirect_whitelist' => array($u))), 400, 'VALIDATION_FAILED',
+            $u . ' refused', 'redirect_whitelist');
+    }
     $c = $svc(array());
     assert_eq(201, $c['status'], 'public + custom scheme accepted (' . substr($c['body'], 0, 200) . ')');
     av_err(av_http($B, 'PUT', '/server/api/admin/services.php?service_id=hc-app', array('is_confidential' => true,
@@ -877,6 +964,101 @@ function av_sc_scheme(array $B): void
     $x = av_ok(av_http($B, 'POST', '/server/api/auth/exchange.php', array('code' => $a['code'], 'service_id' => 'hc-app',
         'redirect_uri' => 'myapp://auth', 'code_verifier' => $v)), 'exchange custom');
     assert_true(isset($x['access_token']), 'token issued');
+}
+
+/** v1.10.0 감사 H-1 — 공개 클라이언트는 PKCE 없이 발급된 code 를 교환하지 못한다. confidential 은 그대로. */
+function av_sc_pkce(array $B): void
+{
+    av_reset_rl($B);
+    $c = av_post($B, 'sa', '/server/api/admin/services.php', array('service_id' => 'pub-app', 'service_name' => 'Pub',
+        'is_confidential' => false, 'redirect_whitelist' => array('https://app.test/cb'), 'allowed_origins' => array()));
+    assert_eq(201, $c['status'], 'public service (' . substr($c['body'], 0, 200) . ')');
+    $auth = function (string $sid, ?string $ch) use ($B) {
+        $b = array('username' => 'av_u1', 'password' => AV_PW, 'service_id' => $sid, 'redirect_uri' => 'https://app.test/cb');
+        if ($ch !== null) {
+            $b['code_challenge'] = $ch;
+            $b['code_challenge_method'] = 'S256';
+        }
+        return av_ok(av_http($B, 'POST', '/server/api/sso/authorize.php', $b), 'authorize ' . $sid);
+    };
+    // 공개 + challenge 없음 → code 는 나오지만(authorize 불변, D-234) 교환은 거절
+    $a = $auth('pub-app', null);
+    av_err(av_http($B, 'POST', '/server/api/auth/exchange.php', array('code' => $a['code'], 'service_id' => 'pub-app',
+        'redirect_uri' => 'https://app.test/cb')), 400, 'SSO_CODE_INVALID', 'public client without PKCE (H-1)');
+    assert_eq(0, count(av_q($B, "SELECT id FROM app_ulogin_sessions WHERE service_id = 'pub-app'")), 'no session issued');
+    // 공개 + challenge 없음 + 아무 verifier → 그래도 거절
+    $a = $auth('pub-app', null);
+    list($v0) = av_pkce();
+    av_err(av_http($B, 'POST', '/server/api/auth/exchange.php', array('code' => $a['code'], 'service_id' => 'pub-app',
+        'redirect_uri' => 'https://app.test/cb', 'code_verifier' => $v0)), 400, 'SSO_CODE_INVALID', 'public client, verifier but no challenge');
+    // 공개 + PKCE → 200
+    list($v, $ch) = av_pkce();
+    $a = $auth('pub-app', $ch);
+    $x = av_ok(av_http($B, 'POST', '/server/api/auth/exchange.php', array('code' => $a['code'], 'service_id' => 'pub-app',
+        'redirect_uri' => 'https://app.test/cb', 'code_verifier' => $v)), 'public client with PKCE');
+    assert_true(isset($x['access_token']), 'public + PKCE token');
+    // confidential + challenge 없음 → secret 으로 200(바뀌지 않는다)
+    $a = $auth('svc-a', null);
+    $x = av_ok(av_http($B, 'POST', '/server/api/auth/exchange.php', array('code' => $a['code'], 'service_id' => 'svc-a',
+        'redirect_uri' => 'https://app.test/cb', 'service_secret' => $B['fx']['sec']['svc-a'])), 'confidential without PKCE');
+    assert_true(isset($x['access_token']), 'confidential token');
+}
+
+/** v1.10.0 감사 L-4 — access_gc_expired() 커서: 200건을 넘는 만료도 다음 호출에서 이어 읽어 회수한다. */
+function av_sc_gc(array $B): void
+{
+    $pdo = av_pdo($B);
+    $now = av_now();
+    $insU = $pdo->prepare('INSERT INTO app_ulogin_users (uuid, username, email, password_hash, status, role, created_at, updated_at)'
+        . ' VALUES (?,?,?,?,?,?,?,?)');
+    $insUs = $pdo->prepare('INSERT INTO app_ulogin_user_services (user_id, service_id, status, joined_at, access_grant, access_ends_at)'
+        . ' VALUES (?,?,?,?,?,?)');
+    $pdo->beginTransaction();
+    $last = null;
+    for ($i = 0; $i < 250; $i++) {
+        $insU->execute(array(gen_uuid4(), 'gc' . $i, 'gc' . $i . '@t.invalid', 'x', 'active', 'user', $now, $now));
+        $uid = (int) $pdo->lastInsertId();
+        // 끝난 시각이 서로 다르게(오래된 것부터) — 마지막 행이 가장 최근
+        $insUs->execute(array($uid, 'svc-u', 'active', $now, 'allow', av_now(-3600 + $i)));
+        $last = $uid;
+    }
+    $pdo->commit();
+    av_token($pdo, (int) $last, 'svc-u');
+    $pdo = null;
+    $alive = function () use ($B, $last) {
+        return count(av_q($B, "SELECT id FROM app_ulogin_sessions WHERE user_id = ? AND service_id = 'svc-u' AND revoked_at IS NULL",
+            array((int) $last)));
+    };
+    assert_eq(1, $alive(), 'session alive before gc');
+    // bootstrap 의 확률적 GC(1/100)가 끼어들지 않게 ULOGIN_PLATFORM_PATH 를 먼저 정의한 CLI 로 정확히 한 번 돌린다
+    $gc = function () use ($B) {
+        $f = $B['root'] . '/server/tools/_gc_' . bin2hex(random_bytes(3)) . '.php';
+        file_put_contents($f, "<?php
+declare(strict_types=1);
+define('ULOGIN_PLATFORM_PATH', 1);
+"
+            . "require __DIR__ . '/../core/bootstrap.php';
+access_gc_expired();
+");
+        $rc = 0;
+        $out = h_run(h_q(h_php_bin()) . ' -c ' . h_q(av_ini()) . ' ' . h_q($f), $rc, 60.0);
+        @unlink($f);
+        return array($rc, $out);
+    };
+    $cursor = function () use ($B) {
+        $r = av_q($B, "SELECT svalue FROM app_ulogin_settings WHERE skey = 'access.gc_cursor'");
+        return $r === array() ? null : json_decode((string) $r[0]['svalue'], true);
+    };
+    list($rc, $o) = $gc();
+    assert_eq(0, $rc, 'gc run 1 (' . substr($o, -300) . ')');
+    $c1 = $cursor();
+    assert_true(is_array($c1) && isset($c1['us']), 'cursor stored');
+    assert_eq(1, $alive(), 'row 250 not reached in the first 200');
+    list($rc, $o) = $gc();
+    assert_eq(0, $rc, 'gc run 2');
+    assert_eq(0, $alive(), 'second run continued past 200 and revoked row 250 (GC-CURSOR)');
+    $c2 = $cursor();
+    assert_true(is_array($c2) && strcmp((string) $c2['us'][0], (string) $c1['us'][0]) > 0, 'cursor advanced');
 }
 
 // =====================================================================
@@ -904,6 +1086,12 @@ t('T3-11 migration 0010 on SQLite: 0009 state -> apply -> verify clean, re-apply
 t('D-369 custom scheme only for public clients; javascript/data refused; exact match; authorize + exchange carry it', function () {
     av_sc_scheme(av_box('scheme'));
 });
+t('H-1 public client needs PKCE at exchange; confidential unchanged', function () {
+    av_sc_pkce(av_box('pkce'));
+});
+t('L-4 access gc continues past 200 rows with a cursor', function () {
+    av_sc_gc(av_box('gc'));
+});
 
 // 변이(D-186) — 일곱 개 모두 빨개져야 한다
 t('mutant A1: deny priority removed', function () {
@@ -929,6 +1117,17 @@ t('mutant A5: user_search level filter removed', function () {
 t('mutant A6: emergency account allowed into SSO', function () {
     av_mutant('a6', array(array('server/core/access.php', "    if ((string) (\$user['account_kind'] ?? 'normal') === 'emergency') {\n        return \$out('none', 'rule', 'emergency_account');",
         "    if (false) {\n        return \$out('none', 'rule', 'emergency_account');")), 'av_sc_emergency');
+});
+t('mutant H1: public client PKCE check removed from exchange', function () {
+    av_mutant('h1', array(array('server/api/auth/exchange.php', "    } elseif (empty(\$service['is_confidential'])\n              && trim(",
+        "    } elseif (false\n              && trim(")), 'av_sc_pkce');
+});
+t('mutant M3: user_search gate removed', function () {
+    av_mutant('m3', array(array('server/api/sso/user_search.php', "if (empty(\$svc['can_search_users'])) {   // USER-SEARCH-GATE",
+        "if (false) {   // USER-SEARCH-GATE")), 'av_sc_search');
+});
+t('mutant L4: gc cursor ignored', function () {
+    av_mutant('l4', array(array('server/core/access.php', "    \$raw = setting_get('access.gc_cursor', null);", "    \$raw = null;")), 'av_sc_gc');
 });
 t('mutant A7: owner document data exposed', function () {
     av_mutant('a7', array(array('server/api/admin/platform_tables.php', "\$ownerOnly = (string) \$coll['read_rule'] === 'owner';   // OWNER-DATA-HIDDEN",

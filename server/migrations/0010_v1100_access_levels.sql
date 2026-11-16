@@ -2,7 +2,7 @@
 --
 -- 대상: 0009 까지 적용된 기존 DB. 신규 설치는 schema.sql 이 이미 이 표·컬럼을 갖는다(baseline).
 -- 설계 `_workspace/127_architect_v1100_design.md` §1 · 판정 D-367.
---   services        + level_aware · access_rule COMMENT(all_view)
+--   services        + level_aware · can_search_users(보안 감사 M-3 / D-372) · access_rule COMMENT(all_view)
 --   user_services   + access_level · access_starts_at · access_ends_at · access_note · access_updated_by · access_updated_at
 --   users           + account_kind
 --   ext_accounts    + is_emergency
@@ -19,6 +19,11 @@
 -- ---------------------------------------------------------------------
 -- @skip-if: column-exists app_ulogin_services level_aware
 ALTER TABLE `app_ulogin_services` ADD COLUMN `level_aware` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=서비스가 view 단계를 이해함(K4). 재등록하면 0';
+
+-- v1.10.0 보안 감사 M-3 (D-372) — 계정 찾기(sso/user_search.php) 허용 플래그. 기본 0 = 막음.
+-- 0010 이 운영 DB 에 아직 적용되지 않은 시점에 같은 파일에 넣었다(0010b 로 나누지 않음).
+-- @skip-if: column-exists app_ulogin_services can_search_users
+ALTER TABLE `app_ulogin_services` ADD COLUMN `can_search_users` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1이면 sso/user_search.php 계정 찾기 허용(감사 M-3). 재등록하면 0';
 
 -- @skip-if: never
 ALTER TABLE `app_ulogin_services`

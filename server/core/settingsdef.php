@@ -48,7 +48,7 @@ if (!function_exists('settings_defs')) {
      * 리더 판정 D-40 으로 `auth_code_ttl` 을 12번째로 **맨 뒤에 추가**했다 — 중간에 끼우면
      * 기존 11개의 `items` 인덱스가 밀려 관리자 화면의 표 순서가 바뀐다.
      * v1.4.0 후속으로 `secret_access_log` 를 **13번째로 맨 뒤에** 더했다. 같은 규칙이다.
-     * **새 키는 언제나 맨 뒤다.** 지금 total 은 16 이다(v1.9.0 이 plat.* 3개를 맨 뒤에 더했다).
+     * **새 키는 언제나 맨 뒤다.** 지금 total 은 17 이다(v1.9.0 이 plat.* 3개, v1.10.1 이 register_mode 를 맨 뒤에 더했다).
      */
     function settings_defs(): array
     {
@@ -88,6 +88,9 @@ if (!function_exists('settings_defs')) {
             'plat.enabled'              => ['bool', '통합로그인 플랫폼 사용(로그·감사·설정·테이블)', 'PLAT_ENABLED',              null, null, null, null],
             'plat.log_retention_days'   => ['int',  '플랫폼 로그 보존(일)',                        'PLAT_LOG_RETENTION_DAYS',   1,    365,  null, null],
             'plat.audit_retention_days' => ['int',  '플랫폼 감사 보존(일)',                        'PLAT_AUDIT_RETENTION_DAYS', 90,   3650, null, null],
+            // v1.10.1 (설계 130 §1-1) — 17번째, **맨 뒤에.** 쓰기는 allow_register 와 함께(register_mode_write).
+            // 읽기 값은 admin_setting_value_eff() 가 register_mode_effective 규칙으로 돌려준다(행이 없어도 실제 동작과 같은 값).
+            'register_mode'             => ['string', '가입 방식',                                 'REGISTER_MODE',             null, null, ['closed', 'approval', 'open'], [1, 16]],
         ];
     }
 }
@@ -139,6 +142,22 @@ if (!function_exists('admin_setting_value')) {
             return (string) $v;
         }
         return $vtype === 'int' ? 0 : ($vtype === 'bool' ? false : '');
+    }
+}
+
+if (!function_exists('admin_setting_value_eff')) {
+    /**
+     * v1.10.1 — 화면·번들에 보이는 값. `register_mode` 만 다르다: DB 행이 없을 때 상수(REGISTER_MODE)가 아니라
+     * **실제 판정**(register_mode_global_from_rows — 행 없음이면 allow_register 를 따라간다)을 낸다.
+     * $rows 에 register_mode · allow_register 두 행이 들어 있어야 한다(없으면 없는 것으로 판정).
+     * @return mixed
+     */
+    function admin_setting_value_eff(string $key, array $def, array $rows)
+    {
+        if ($key === 'register_mode') {
+            return register_mode_global_from_rows($rows);
+        }
+        return admin_setting_value($key, $def, $rows);
     }
 }
 

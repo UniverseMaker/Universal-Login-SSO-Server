@@ -45,6 +45,12 @@ $rows = db_all(
     $params
 );
 
+// v1.10.1 — 행마다 service_name(null 가능) 순수 추가(설계 130 §4-6). 서비스 이름표를 한 번에 읽는다.
+$svcNames = [];
+foreach (db_all('SELECT service_id, service_name FROM ' . T_SERVICES) as $s) {
+    $svcNames[(string) $s['service_id']] = (string) $s['service_name'];
+}
+
 $items = [];
 foreach ($rows as $r) {
     $items[] = [
@@ -53,6 +59,8 @@ foreach ($rows as $r) {
         'balance_after' => (int) $r['balance_after'],
         'reason'        => (string) $r['reason'],
         'service_id'    => $r['service_id'] !== null ? (string) $r['service_id'] : null,
+        'service_name'  => ($r['service_id'] !== null && isset($svcNames[(string) $r['service_id']]))
+            ? $svcNames[(string) $r['service_id']] : null,
         'ref_type'      => $r['ref_type'] !== null ? (string) $r['ref_type'] : null,
         'ref_id'        => $r['ref_id'] !== null ? (string) $r['ref_id'] : null,
         'memo'          => $r['memo'] !== null ? (string) $r['memo'] : null,

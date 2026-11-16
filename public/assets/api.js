@@ -93,7 +93,7 @@
     AUTH_ACCOUNT_SUSPENDED: '정지된 계정입니다. 관리자에게 문의해 주세요.',
     AUTH_ACCOUNT_WITHDRAWN: '탈퇴한 계정입니다.',
     AUTH_ACCOUNT_DORMANT: '휴면 상태의 계정입니다. 관리자에게 문의해 주세요.',
-    AUTH_ACCOUNT_PENDING: '가입 처리 대기 중인 계정입니다.',
+    AUTH_ACCOUNT_PENDING: '승인 대기 중인 계정입니다.',
     AUTH_EMAIL_UNVERIFIED: '이메일 인증이 필요합니다.',
     AUTH_PASSWORD_MISMATCH: '현재 비밀번호가 올바르지 않습니다.',
     FORBIDDEN: '권한이 없습니다.',

@@ -158,6 +158,9 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_services` (
   `emergency_days`        INT             NOT NULL DEFAULT 30 COMMENT '비상 확인값 유효 일수(1~365)',
   -- v1.10.0 (마이그레이션 0010) — 접근 단계(설계 127 §1 K4)
   `level_aware`           TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '1=서비스가 view 단계를 이해함(K4). 재등록하면 0',
+  `can_search_users`      TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '1이면 sso/user_search.php 계정 찾기 허용(감사 M-3). 재등록하면 0',
+  -- v1.10.1 (마이그레이션 0011) — 공동 포인트 s2s 허용·한도(설계 130 §4-3). NULL·깨짐 = 막음(fail-closed)
+  `points_json`           TEXT            NULL COMMENT '공동 포인트 s2s 허용·한도 {enabled,earn,spend,per_tx_max,daily_*}. NULL=막음. 재등록하면 NULL',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_services_service_id` (`service_id`),
   KEY `idx_services_status` (`status`),
@@ -409,7 +412,8 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_point_logs` (
   UNIQUE KEY `uq_point_logs_idem` (`user_id`, `idempotency_key`),
   KEY `idx_point_logs_user`    (`user_id`, `created_at`),
   KEY `idx_point_logs_reason`  (`reason`, `created_at`),
-  KEY `idx_point_logs_created` (`created_at`)
+  KEY `idx_point_logs_created` (`created_at`),
+  KEY `idx_point_logs_service` (`service_id`, `created_at`)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- (user_id, idempotency_key) UNIQUE: idempotency_key 가 NULL 인 행은 MySQL 에서
 -- 중복 허용되므로 일반 적립/차감에는 영향이 없다. consume 재시도만 DB가 막는다.
@@ -927,4 +931,49 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_access_group_services` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_ags_group_service` (`group_id`, `service_id`),
   KEY `idx_ags_service` (`service_id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =====================================================================
+-- v1.10.1 — 가입 신청 (마이그레이션 0011, 설계 130 §2-2)
+--   approval 모드의 신청은 이 표에만 쓴다. users 행은 관리자 승인 때 만든다(§2-1).
+--   상태 전이: pending → approved | rejected | expired. 끝 상태에서 나가는 전이는 없다.
+--   password_hash 는 승인·거부·만료 때 NULL 로 지운다. 결정된 행은 180일 뒤 gc 가 지운다.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS `app_ulogin_register_requests` (
+  `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `receipt_hash`     CHAR(64)        NOT NULL COMMENT '접수번호(32바이트 난수 hex)의 sha256. 원문은 응답 1회만',
+  `status`           VARCHAR(12)     NOT NULL DEFAULT 'pending' COMMENT 'pending|approved|rejected|expired',
+  `username`         VARCHAR(50)     NOT NULL,
+  `email`            VARCHAR(190)    NOT NULL,
+  `email_domain`     VARCHAR(190)    NOT NULL,
+  `password_hash`    VARCHAR(255)    NULL COMMENT '승인 시 users 로 옮기고 승인·거부·만료 시 NULL',
+  `name`             VARCHAR(80)     NULL,
+  `nickname`         VARCHAR(50)     NULL,
+  `phone`            VARCHAR(30)     NULL,
+  `marketing_agreed` TINYINT(1)      NOT NULL DEFAULT 0,
+  `consents_json`    TEXT            NULL COMMENT '[{code, terms_id}]. 승인 시 agreed_at = created_at',
+  `applicant_note`   VARCHAR(500)    NULL,
+  `source`           VARCHAR(10)     NOT NULL DEFAULT 'direct' COMMENT 'direct|service',
+  `service_id`       VARCHAR(64)     NULL,
+  `redirect_uri`     VARCHAR(500)    NULL COMMENT '화이트리스트와 일치할 때만',
+  `redirect_valid`   TINYINT(1)      NOT NULL DEFAULT 0,
+  `entry`            VARCHAR(16)     NOT NULL DEFAULT 'register_page' COMMENT 'register_page|sso',
+  `ip`               VARCHAR(45)     NULL,
+  `user_agent`       VARCHAR(255)    NULL,
+  `created_at`       DATETIME        NOT NULL,
+  `expires_at`       DATETIME        NOT NULL,
+  `decided_at`       DATETIME        NULL,
+  `decided_by`       BIGINT UNSIGNED NULL,
+  `decision_reason`  VARCHAR(255)    NULL COMMENT '내부 사유(관리자만)',
+  `decision_notice`  VARCHAR(200)    NULL COMMENT '신청자에게 보이는 안내',
+  `user_id`          BIGINT UNSIGNED NULL COMMENT '승인으로 만든 계정',
+  `meta_json`        TEXT            NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_regreq_receipt` (`receipt_hash`),
+  KEY `idx_regreq_status` (`status`, `created_at`),
+  KEY `idx_regreq_ip` (`ip`, `created_at`),
+  KEY `idx_regreq_domain` (`email_domain`, `created_at`),
+  KEY `idx_regreq_email` (`email`),
+  KEY `idx_regreq_username` (`username`)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

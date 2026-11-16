@@ -340,6 +340,9 @@ define('LOCKOUT_MINUTES',      15);        // 잠금 지속 시간(분)
 define('PASSWORD_MIN_LENGTH',  8);
 define('SIGNUP_BONUS_POINTS',  100);
 define('ALLOW_REGISTER',       true);
+// v1.10.1 — 가입 방식 closed|approval|open (설계 130 §1-1). 화면 폴백 표시용이다. 실제 판정은
+// settings.register_mode 행 → 없으면 allow_register(DB 행 → ALLOW_REGISTER) 순서다. 새 설치는 install.php 가 행을 쓴다.
+define('REGISTER_MODE',        'closed');
 define('REQUIRE_EMAIL_VERIFY', false);
 define('MAINTENANCE_MODE',     false);
 define('SITE_NAME',            'ulogin');
@@ -391,6 +394,8 @@ define('T_EMERGENCY',     DB_PREFIX . 'emergency');
 define('T_ACCESS_GROUPS',         DB_PREFIX . 'access_groups');
 define('T_ACCESS_GROUP_MEMBERS',  DB_PREFIX . 'access_group_members');
 define('T_ACCESS_GROUP_SERVICES', DB_PREFIX . 'access_group_services');
+// v1.10.1 추가 — 가입 신청(마이그레이션 0011). core/bootstrap.php 가드 · install.php 와 한 벌이다.
+define('T_REGISTER_REQUESTS',     DB_PREFIX . 'register_requests');
 // v1.9.0 추가 — 통합로그인 플랫폼(마이그레이션 0007). core/bootstrap.php 가드 · install.php 와 한 벌이다.
 define('T_RC_DRAFTS',     DB_PREFIX . 'rc_drafts');
 define('T_RC_VERSIONS',   DB_PREFIX . 'rc_versions');

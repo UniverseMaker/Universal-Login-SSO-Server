@@ -143,6 +143,9 @@ if (!defined('ULOGIN_MIGRATE_CTX')) {
     define('ULOGIN_MIGRATE_CTX', 1);
 }
 require_once INS_DIR . '/migrations/lib.php';
+// v1.10.1 보안 L-2 (D-375) — 첫 superadmin 도 관리자 강화 규칙(10자 이상 · 흔한 비밀번호 거절)을 받는다.
+// 규칙 본문은 core/pwstrong.php 하나(core/emergency.php 와 공용). 의존성 0(DB·config 안 읽음)이라 위 제약을 깨지 않는다.
+require_once INS_DIR . '/core/pwstrong.php';
 
 $INS_STEP_NAMES = [
     1 => '환경 점검',
@@ -838,6 +841,8 @@ function ins_config_spec($v)
         ['PASSWORD_MIN_LENGTH',  '8',       null, null],
         ['SIGNUP_BONUS_POINTS',  (string) (int) $v['signup_bonus'], null, null],
         ['ALLOW_REGISTER',       $b($v['allow_register']),        null, null],
+        ['REGISTER_MODE',        $v['allow_register'] ? "'open'" : "'closed'", null,
+            "가입 방식 closed|approval|open (v1.10.1). 화면 폴백 표시용 — 판정은 DB settings.register_mode 가 한다."],
         ['REQUIRE_EMAIL_VERIFY', $b($v['require_email_verify']),  null, null],
         ['MAINTENANCE_MODE',     'false', null, null],
         ['SITE_NAME',            $q($v['site_name']), null, null],
@@ -879,6 +884,8 @@ function ins_config_spec($v)
         ['T_ACCESS_GROUPS',         "DB_PREFIX . 'access_groups'",         null, null],
         ['T_ACCESS_GROUP_MEMBERS',  "DB_PREFIX . 'access_group_members'",  null, null],
         ['T_ACCESS_GROUP_SERVICES', "DB_PREFIX . 'access_group_services'", null, null],
+        // v1.10.1 추가(가입 신청, 마이그레이션 0011). 가드 블록과 함께 고쳤다.
+        ['T_REGISTER_REQUESTS',     "DB_PREFIX . 'register_requests'",     null, null],
         // v1.9.0 추가(플랫폼, 마이그레이션 0007). 가드 블록과 함께 고쳤다.
         ['T_RC_DRAFTS',     "DB_PREFIX . 'rc_drafts'",           null, null],
         ['T_RC_VERSIONS',   "DB_PREFIX . 'rc_versions'",         null, null],
@@ -2119,7 +2126,8 @@ function ins_step4($err = null, $vals = null)
             'mail_from'      => '',
             'mail_from_name' => 'ulogin',
             'force_https'    => ins_is_https() ? '1' : '',
-            'allow_register' => '1',
+            // v1.10.1 — 기본값 closed(설계 130 §1-1 · D-371 Q-1). 켜면 open 으로 시드한다.
+            'allow_register' => '',
             'require_verify' => '',
             'signup_bonus'   => '100',
         ];
@@ -2293,7 +2301,7 @@ function ins_step5($err = null, $vals = null)
     echo '<label>이름<input type="text" name="admin_name" value="' . ins_h($vals['name'])
        . '" maxlength="80"><span class="hint">선택 항목. 관리자 콘솔에 표시됩니다.</span></label>';
     echo '<label>비밀번호<input type="password" name="admin_pw" required autocomplete="new-password">'
-       . '<span class="hint">8자 이상 + 영문·숫자·특수문자 중 2종 이상. 아이디와 같은 문자열은 쓸 수 없습니다.</span></label>';
+       . '<span class="hint">10자 이상 + 영문·숫자·특수문자 중 2종 이상. 흔히 쓰는 비밀번호·반복·키보드 순서와 아이디를 넣은 비밀번호는 쓸 수 없습니다.</span></label>';
     echo '<label>비밀번호 확인<input type="password" name="admin_pw2" required autocomplete="new-password"></label>';
     echo '<button type="submit">다음: 첫 서비스 등록</button></form></div>';
     ins_page_end();
@@ -2329,6 +2337,11 @@ function ins_handle_step5(&$S)
         return;
     }
     $pwErr = ins_validate_password($pw, $username);
+    if ($pwErr === null) {
+        // v1.10.1 L-2 — 이 계정은 superadmin 이다. core/auth.php validate_password() 가 rank 20 이상에 거는
+        // 강화 규칙(pw_strong_problem)을 같은 함수로 건다. 일반 회원 규칙(위 ins_validate_password)은 그대로.
+        $pwErr = pw_strong_problem((string) $pw, $username);
+    }
     if ($pwErr !== null) {
         ins_step5($pwErr, $vals);
         return;
@@ -3057,6 +3070,8 @@ function ins_finalize(&$S)
         // 2-5) settings 시드 — DB 값이 config 상수보다 우선한다. 관리자 콘솔에서 바로 수정 가능.
         $seed = [
             ['allow_register',       $cfg['allow_register'] ? '1' : '0',       'bool',   '신규 가입 허용'],
+            // v1.10.1 — 가입 방식 행(17번째 키). allow_register 와 같은 트랜잭션 의미로 맞춘다(open ⇔ 1).
+            ['register_mode',        $cfg['allow_register'] ? 'open' : 'closed', 'string', '가입 방식'],
             ['require_email_verify', $cfg['require_email_verify'] ? '1' : '0', 'bool',   '가입 시 이메일 인증 필수'],
             ['signup_bonus_points',  (string) $cfg['signup_bonus'],            'int',    '가입 보너스 포인트'],
             ['login_fail_threshold', '5',                                      'int',    '락아웃 임계 실패 횟수'],

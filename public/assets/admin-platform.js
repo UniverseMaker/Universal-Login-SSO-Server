@@ -917,10 +917,11 @@
       var form = el('form', { novalidate: true });
       var rule = select('access_rule', Object.keys(RULE_LABEL).map(function (k) { return [k, RULE_LABEL[k]]; }), d.access_rule);
       var clu = checkField('can_list_users', '이 시스템 서버의 회원 목록 조회 허용', d.can_list_users);
+      var csu = checkField('can_search_users', '이 시스템 서버의 회원 찾기(공유 대상 검색) 허용', d.can_search_users);
       var la = checkField('level_aware', '보기 단계를 구현한 시스템', d.level_aware,
         '이 시스템이 보기 단계를 구현했을 때만 켜세요. 꺼져 있으면 「보기」 회원은 들어갈 수 없습니다.');
       var ta = area('features', d.features === null || d.features === undefined ? '' : json(d.features, true), 7);
-      mount(form, [field('쓸 수 있는 회원', rule), clu.box, la.box,
+      mount(form, [field('쓸 수 있는 회원', rule), clu.box, csu.box, la.box,
         field('기능(scopes) 등록부 (JSON)', ta, '예: [{"id":"export","name":"내보내기","default":true}] · 비우면 관리 안 함')]);
       var before = ta.value;
       modal({
@@ -928,7 +929,7 @@
         onConfirm: function () {
           clearFormErrors(form);
           var feat = ta.value !== before ? parseJson(form, 'features', ta.value, true) : null;
-          return apiPost(P_ACCESS, { action: 'set_rule', service_id: sid, access_rule: rule.value, can_list_users: clu.input.checked, level_aware: la.input.checked })
+          return apiPost(P_ACCESS, { action: 'set_rule', service_id: sid, access_rule: rule.value, can_list_users: clu.input.checked, can_search_users: csu.input.checked, level_aware: la.input.checked })
             .then(function (r) {
               toast('규칙: ' + lbl(RULE_LABEL, r.access_rule) + (r.level_aware ? ' · 보기 단계 지원' : ''), 'success');
               if (ta.value === before) { return null; }
@@ -1352,7 +1353,8 @@
         ['서비스', serviceName(d.service_id) + ' (' + d.service_id + ')'],
         ['쓸 수 있는 회원', lbl(RULE_LABEL, d.access_rule)],
         ['보기 단계 지원', d.level_aware ? '예' : '아니오'],
-        ['회원 목록 조회', d.can_list_users ? '허용' : '막음']
+        ['회원 목록 조회', d.can_list_users ? '허용' : '막음'],
+        ['회원 찾기', d.can_search_users ? '허용' : '막음']
       ]));
       host.appendChild(rc.box);
 

@@ -1,11 +1,15 @@
 <?php
 declare(strict_types=1);
 /**
- * POST /api/auth/register — 회원가입
- * 담당 계약: 01_architect_api_contract.md §4-1
- * 응답 최상위 키: user, email_verification_required, granted_points, auto_login
+ * POST /api/auth/register — 회원가입 (open) / 가입 신청 (approval)
+ * 담당 계약: 01_architect_api_contract.md §4-1 · 설계 130 §1-3 · §2-4 (v1.10.1)
+ * 응답 최상위 키
+ *   open     201: user, email_verification_required, granted_points, auto_login, approval_required(false)
+ *   approval 202: approval_required(true), request{status, created_at}, receipt, auto_login(false)
+ *   closed   403: REGISTRATION_DISABLED (종전과 같다)
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
+require_once __DIR__ . '/../../core/regreq.php';
 
 // 1) 메서드
 only_method('POST');
@@ -16,9 +20,11 @@ rate_limit('register:ip:' . client_ip(), 5, 3600);
 // 3) 입력
 $in = body_json();
 
-// 가입 허용 판정은 core/auth.php 의 registration_open() 한 곳에만 있다(v1.8.2).
+// 가입 방식 판정은 core/auth.php 의 register_mode_effective() 한 곳에만 있다(v1.10.1 — v1.8.2 registration_open 의 후계).
 // 화면용 공개 읽기 api/auth/register_status.php 가 같은 함수를 부른다 — 여기서 식을 다시 쓰지 마라.
-if (!registration_open()) {
+// 전역이 closed 면 입력 검증 전에 거절한다(빈 본문도 403 — v1.10.0 과 같은 응답).
+$mode = register_mode_effective(null);
+if ($mode === 'closed') {
     throw new AppError('REGISTRATION_DISABLED', 403);
 }
 
@@ -46,25 +52,49 @@ if (v_bool($in, 'agree_privacy', false, false) !== true) {
     v_fail('agree_privacy', '개인정보 처리방침에 동의해야 가입할 수 있습니다.');
 }
 
+// v1.10.1 선택 키 3개(approval 에서만 저장한다). entry 는 enum 밖이면 register_page.
+$redirectIn = v_string($in, 'redirect_uri', 0, 500);
+$entryIn    = in_raw($in, 'entry');
+$noteIn     = v_string($in, 'applicant_note', 0, 500);
+
 // service_id 는 선택. 주어졌으면 실재하는 활성 서비스여야 한다.
 $serviceId = v_service_id($in, 'service_id');   // v1.8.6 — 옛 id 는 여기서 새 id 로(설계 104 C-1)
 $service   = null;
 if ($serviceId !== null) {
     $service = service_require($serviceId);
-    if (!registration_open($service)) {
+    $mode    = register_mode_effective($service);   // min(전역, 서비스 상한)
+    if ($mode === 'closed') {
         throw new AppError('REGISTRATION_DISABLED', 403);
     }
 }
 
-// 4) 중복 확인 (경쟁 상태는 UNIQUE 제약으로 한 번 더 막는다)
-if (db_val('SELECT id FROM ' . T_USERS . ' WHERE username = ?', [$username]) !== null) {
-    throw new AppError('DUPLICATE_USERNAME', 409, ['field' => 'username']);
-}
-if (db_val('SELECT id FROM ' . T_USERS . ' WHERE email = ?', [$email]) !== null) {
-    throw new AppError('DUPLICATE_EMAIL', 409, ['field' => 'email']);
+// 4) 중복 확인 — users 와 유효한 pending 신청 둘 다(경쟁 상태는 UNIQUE 제약 · tx 재확인으로 한 번 더 막는다)
+regreq_assert_unique($username, $email, true);
+
+// 4-b) approval — 신청 행만 만든다. users 행은 관리자 승인 때 만든다(설계 130 §2-1).
+if ($mode === 'approval') {
+    $sub = regreq_submit([
+        'username'       => $username,
+        'email'          => $email,
+        'password'       => $password,
+        'name'           => $name,
+        'nickname'       => $nickname,
+        'phone'          => $phone,
+        'marketing'      => $marketing,
+        'applicant_note' => ($noteIn === null || $noteIn === '') ? null : $noteIn,
+        'entry'          => is_string($entryIn) ? $entryIn : null,
+        'redirect_uri'   => $redirectIn,
+    ], $service);
+    json_out([
+        'approval_required' => true,
+        'request'           => ['status' => 'pending', 'created_at' => iso($sub['created_at'])],
+        // 접수번호 원문은 이 응답 1회만. DB 에는 sha256 만 있다.
+        'receipt'           => $sub['receipt'],
+        'auto_login'        => false,
+    ], 202);
 }
 
-// 5) 생성 — users + user_services + point_logs + user_consents 를 한 트랜잭션으로
+// 5) 생성 — users + user_services + point_logs + user_consents 를 한 트랜잭션으로(core/auth.php register_create_user)
 $requireVerify = (bool) setting_get('require_email_verify', REQUIRE_EMAIL_VERIFY);
 $bonus         = (int) setting_get('signup_bonus_points', SIGNUP_BONUS_POINTS);
 if ($bonus < 0) {
@@ -72,92 +102,23 @@ if ($bonus < 0) {
 }
 $now = now_utc();
 $ip  = client_ip();
+$pwHash = password_hash($password, PASSWORD_DEFAULT);
 
 try {
-    $userId = db_tx(function () use ($username, $email, $password, $name, $nickname, $phone,
+    $userId = db_tx(function () use ($username, $email, $pwHash, $name, $nickname, $phone,
                                      $marketing, $requireVerify, $bonus, $service, $now, $ip) {
-        // users 행을 변수로 잡아 둔다 — 아래 user_services 의 grant-only 판정이
-        // **같은 전역 등급**을 보아야 한다(D-49). 리터럴을 두 번 쓰면 어긋난다.
-        $userRow = [
-            'uuid'                => gen_uuid4(),
-            'username'            => $username,
-            'email'               => $email,
-            'password_hash'       => password_hash($password, PASSWORD_DEFAULT),
-            'password_changed_at' => $now,
-            'name'                => $name,
-            'nickname'            => $nickname,
-            'phone'               => $phone,
-            'status'              => $requireVerify ? 'pending' : 'active',
-            'account_level'       => 'basic',
-            'role'                => 'user',
-            'billing_tier'        => 'free',
-            'points'              => $bonus,
-            'total_points_earned' => $bonus,
-            'total_points_spent'  => 0,
-            'marketing_agreed'    => $marketing ? 1 : 0,
-            'timezone'            => 'Asia/Seoul',
-            'locale'              => 'ko-KR',
-            'created_at'          => $now,
-            'updated_at'          => $now,
-        ];
-        $uid = db_insert(T_USERS, $userRow);
-
-        // 서비스 매핑 (auto_join=0 이어도 명시적 가입 경로이므로 만든다)
-        //
-        // 등급 오버라이드는 **grant-only** 다 — 리더 판정 D-49 / 감사 M-16 / QA Q-3.
-        // 종전에는 `default_account_level` 을 그대로 박아 넣어, 서비스 기본값이 'basic'
-        // 이면 이후 이메일 인증으로 전역 등급이 'verified' 로 올라도 그 서비스에서는
-        // 오버라이드 'basic' 이 이겨 `min_account_level='verified'` 시크릿이 조용히 사라졌다.
-        // 판정 규칙은 core/auth.php 의 service_grade_overrides() 한 곳에만 있고
-        // 자동 가입(ensure_user_service)과 이 경로가 그것을 공유한다. 여기서 재구현하지 마라.
-        if ($service !== null) {
-            $ov = service_grade_overrides($service, $userRow);
-            db_insert(T_USER_SERVICES, [
-                'user_id'       => $uid,
-                'service_id'    => (string) $service['service_id'],
-                'account_level' => $ov['account_level'],   // NULL = 전역 상속
-                'role'          => $ov['role'],            // 항상 NULL
-                'billing_tier'  => $ov['billing_tier'],    // 항상 NULL
-                'status'        => 'active',
-                'joined_at'     => $now,
-                'last_used_at'  => $now,
-            ]);
-        }
-
-        // 가입 보너스 원장
-        if ($bonus > 0) {
-            log_point($uid, [
-                'delta'         => $bonus,
-                'balance_after' => $bonus,
-                'reason'        => 'signup_bonus',
-                'service_id'    => $service['service_id'] ?? null,
-                'memo'          => '가입 보너스',
-            ]);
-        }
-
-        // 약관 동의 이력 — 발행된 최신 버전 기준
-        $codes = ['tos', 'privacy'];
-        if ($marketing) {
-            $codes[] = 'marketing';
-        }
-        foreach ($codes as $code) {
-            $t = db_one(
-                'SELECT id FROM ' . T_TERMS . ' WHERE code = ? AND published_at IS NOT NULL'
-                . ' ORDER BY published_at DESC, id DESC LIMIT 1',
-                [$code]
-            );
-            if ($t === null) {
-                continue;   // 약관이 아직 등록되지 않은 설치본에서도 가입은 되어야 한다
-            }
-            db_insert(T_CONSENTS, [
-                'user_id'   => $uid,
-                'terms_id'  => (int) $t['id'],
-                'agreed'    => 1,
-                'agreed_at' => $now,
-                'ip'        => $ip,
-            ]);
-        }
-        return $uid;
+        return register_create_user([
+            'username'       => $username,
+            'email'          => $email,
+            'password_hash'  => $pwHash,
+            'name'           => $name,
+            'nickname'       => $nickname,
+            'phone'          => $phone,
+            'marketing'      => $marketing,
+            'require_verify' => $requireVerify,
+            'bonus'          => $bonus,
+            'consents'       => null,   // 지금 발행된 최신 약관
+        ], $service, $now, $ip, null);
     });
 } catch (Throwable $e) {
     if (db_is_duplicate($e)) {
@@ -172,21 +133,7 @@ try {
 
 // 6) 이메일 인증 메일 (require_email_verify=1 일 때만)
 if ($requireVerify) {
-    $token = gen_token(32);
-    db_insert(T_EMAIL_VERIFY, [
-        'token_hash' => token_hash($token),
-        'user_id'    => $userId,
-        'email'      => $email,
-        'expires_at' => at_utc((int) EMAIL_VERIFY_TTL),
-        'created_ip' => $ip,
-        'created_at' => $now,
-    ]);
-    $link = base_url() . '/public/verify.html?token=' . rawurlencode($token);
-    send_mail(
-        $email,
-        '[' . setting_get('site_name', SITE_NAME) . '] 이메일 인증',
-        "아래 링크를 눌러 이메일 인증을 완료해 주세요. (24시간 유효)\n\n" . $link . "\n"
-    );
+    register_send_verify_mail($userId, $email, $ip);
 }
 
 // 7) 응답 — 가입 직후 토큰은 발급하지 않는다(auto_login 은 항상 false).
@@ -204,4 +151,5 @@ json_out([
     'email_verification_required' => $requireVerify,
     'granted_points'              => $bonus,
     'auto_login'                  => false,
+    'approval_required'           => false,   // v1.10.1 순수 추가(설계 130 §1-3)
 ], 201);

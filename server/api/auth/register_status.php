@@ -3,7 +3,7 @@ declare(strict_types=1);
 /**
  * GET /api/auth/register_status — 신규 가입을 받는가 (v1.8.2 신규 · 인증 불필요)
  * 담당 계약: 신규 추가 항목(순수 추가 — 기존 엔드포인트 shape 무변경)
- * 응답 최상위 키: allow_register
+ * 응답 최상위 키: allow_register, register_mode(v1.10.1)
  *
  * 왜 있는가: v1.8.1 까지 화면이 가입 허용 여부를 받는 길은 SSO 경로의 `sso/validate` 뿐이었다.
  * SSO 파라미터 없이 `/login` 을 열면 값을 받을 데가 없어 **전역 가입 차단 상태에서도**
@@ -24,6 +24,10 @@ require_once __DIR__ . '/../../core/bootstrap.php';
 
 only_method('GET');
 
+// v1.10.1 (설계 130 §1-3) — register_mode 순수 추가. allow_register = (mode !== 'closed') — approval 이면 링크를 보이고
+// 화면이 「가입 신청」으로 표기한다. 두 값 모두 register_mode_effective() 한 번에서 나온다(어긋날 수 없게).
+$regMode = register_mode_effective(null);
 json_out([
-    'allow_register' => registration_open(),
+    'allow_register' => $regMode !== 'closed',
+    'register_mode'  => $regMode,
 ]);

@@ -23,6 +23,7 @@ require_once __DIR__ . '/../../core/accessadmin.php';
 //   POST set_override{uuid, service_id, grant, level?, starts_at?, ends_at?, note?}
 //        → uuid, service_id, access_grant, access_level, starts_at, ends_at, access_note, effective{level,until,source}, allowed, revoked_sessions
 //   POST revoke{uuid, service_id, note?} = deny · 무기한 + 세션 회수 → 위와 같은 모양
+//   GET ?service_id · POST set_rule += can_search_users(bool, 감사 M-3 / D-372 — sso/user_search.php 허용. 기본 false)
 //   비상 계정을 대상으로 하면 400 field uuid. allowed·level 은 서버 판정값(access_level_eval) — 화면이 다시 판정하지 않는다.
 
 only_method('GET', 'POST');
@@ -149,6 +150,7 @@ if ($method === 'GET') {
         'access_rule'    => (string) ($s['access_rule'] ?? 'all'),
         'can_list_users' => !empty($s['can_list_users']),
         'level_aware'    => (int) ($s['level_aware'] ?? 0) === 1,
+        'can_search_users' => !empty($s['can_search_users']),   // v1.10.0 감사 M-3 — 순수 추가
         'features'       => features_registry($s),
         'grants'         => ['items' => $items, 'total' => $total, 'page' => (int) $pgPage, 'per_page' => (int) $pgPer],
     ]);
@@ -166,17 +168,20 @@ if ($action === 'set_rule') {
     $rule = v_enum($in, 'access_rule', ACCESS_RULES, true);
     $clu = array_key_exists('can_list_users', $in) ? v_bool($in, 'can_list_users', true) : !empty($s['can_list_users']);
     $la  = array_key_exists('level_aware', $in) ? (bool) v_bool($in, 'level_aware', true) : ((int) ($s['level_aware'] ?? 0) === 1);
-    db_exec('UPDATE ' . T_SERVICES . ' SET access_rule = ?, can_list_users = ?, level_aware = ?, updated_at = ? WHERE id = ?',
-        [$rule, $clu ? 1 : 0, $la ? 1 : 0, now_utc(), (int) $s['id']]);
+    // v1.10.0 감사 M-3 / D-372 — 계정 찾기 허용. 키가 없으면 지금 값을 유지한다(can_list_users 와 같은 규약).
+    $csu = array_key_exists('can_search_users', $in) ? (bool) v_bool($in, 'can_search_users', true) : !empty($s['can_search_users']);
+    db_exec('UPDATE ' . T_SERVICES . ' SET access_rule = ?, can_list_users = ?, level_aware = ?, can_search_users = ?, updated_at = ? WHERE id = ?',
+        [$rule, $clu ? 1 : 0, $la ? 1 : 0, $csu ? 1 : 0, now_utc(), (int) $s['id']]);
     em_reconcile_service($sid);   // v1.9.1 - 접근을 잃은 계정의 비상 확인값 폐기
     // v1.10.0 (§2) — 규칙·level_aware 변경으로 입장을 잃은 계정의 이 서비스 세션을 바로 회수한다.
     $aff = acc_revoke_service_sessions($sid);
     log_admin($adminId, 'access.rule.update', 'service', $sid,
         ['access_rule' => (string) ($s['access_rule'] ?? 'all'), 'can_list_users' => !empty($s['can_list_users']),
-         'level_aware' => (int) ($s['level_aware'] ?? 0) === 1],
-        ['access_rule' => $rule, 'can_list_users' => $clu, 'level_aware' => $la, 'revoked_sessions' => $aff['revoked_sessions']]);
+         'level_aware' => (int) ($s['level_aware'] ?? 0) === 1, 'can_search_users' => !empty($s['can_search_users'])],
+        ['access_rule' => $rule, 'can_list_users' => $clu, 'level_aware' => $la, 'can_search_users' => $csu,
+         'revoked_sessions' => $aff['revoked_sessions']]);
     json_out(['service_id' => $sid, 'access_rule' => $rule, 'can_list_users' => $clu, 'level_aware' => $la,
-        'affected' => $aff, 'revoked_sessions' => $aff['revoked_sessions']]);
+        'can_search_users' => $csu, 'affected' => $aff, 'revoked_sessions' => $aff['revoked_sessions']]);
 }
 
 if ($action === 'set_features_registry') {

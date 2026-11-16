@@ -11,6 +11,13 @@
 
 ---
 
+## v1.10.1_20261116 (가입 방식 3택 · 가입 신청 승인 · 공동 포인트 s2s)
+- 마이그레이션 0011(`register_requests` 표 · `services.points_json` · `point_logs(service_id, created_at)` 색인). 설정 `register_mode`(closed·approval·open, 17번째 키) — 판정은 `register_mode_effective()` 한 곳, 행이 없으면 기존 `allow_register` 를 따라가 운영은 closed 그대로. `register_status`·`sso/validate` 에 `register_mode`, 가입 201 에 `approval_required:false` 순수 추가.
+- approval: 가입 API 가 202 + 접수번호(users 행 없음), 승인 전 로그인은 `AUTH_ACCOUNT_PENDING`. `auth/register_request_status.php`(결과 조회) · `admin/register_requests.php`(목록·상세 판단 재료 8종·승인·거부, admin 이상·감사) · `stats.users.register_requests_pending` · 남용 방지 3종(IP 대기 3 · 거부 7일 · 대기열 200).
+- 공동 포인트 s2s `points/s2s_balance|earn|spend|history.php`(본문 secret · use 이상 · 서비스별 허용·한도 24시간 · 멱등 키 `s2s:`+sha256 · 감사 체인). 원장 본문은 `core/points.php` `points_apply()` 로 올려 `consume.php` 와 공유. 설정 번들에 `register_mode`·서비스 `points` 포함. `me/points` 행에 `service_name`.
+- 관리자(rank 20 이상)·비상 계정 비밀번호 최소 길이 12 → 10자(D-373). 흔한 비밀번호·패턴 거절은 그대로.
+- 비상 계정 로컬 설정 화면 `/local-admin`(D-374): 루프백 주소·루프백 Host:포트·프록시/터널 헤더 0개 세 조건을 모두 만족할 때만 열림(그 밖은 404). 상태 배지·정하기/바꾸기·잠김 풀기, CSRF 1회용·Origin·빈도 제한·no-store, CLI 와 같은 `em_local_*()` 호출. `tools/emergency-admin.bat` 래퍼.
+
 ## v1.10.0_20261116 (접근 단계 · 데이터 독립 · 비상 관리자 계정)
 - 마이그레이션 0010: 서비스별 단계 none·view·use·admin(그룹·계정 덮어쓰기·기간·회수). exchange·session·refresh·login(service_id)에 `access_level`·`access`, userinfo에 `access` 순수 추가. view 는 `level_aware=1` 서비스만 입장, 시크릿 없음.
 - 관리 API `admin/access_groups.php`·`admin/access_matrix.php`·`service_access.php`(set_override·revoke·level_aware), 계정 찾기 `sso/user_search.php`(s2s), `me/access.php`.
@@ -28,6 +35,44 @@
 - `/api/me/password`: 틀린 현재 비밀번호는 세션별 버킷(10/시간), 성공 변경은 계정별 버킷(10/시간)으로 분리
 - 비상 확인값 보존 sweep: 시각 offset 대신 커서(settings `em.sweep_cursor`)로 이어서 훑는다. 호출당 100건 상한 유지
 - 중첩 17단 이상의 data/값은 400(비밀 키 검사 우회 차단), 전부 중복인 감사 배치의 receipt 는 자기 서비스 행
+
+## v1.9.1_20261111 (비상 확인값 발급 · 관리자 비밀번호 정책)
+- 마이그레이션 0008. 비밀번호를 직접 확인하는 로그인·변경·재설정 때, 연결된 서비스마다 비상 로그인용 확인값(PBKDF2-SHA256, 서비스별 HMAC)을 발급해 `sso/link_events` 피드로 전달한다. 비밀번호 변경·정지·탈퇴·연결 해제·접근 회수 때 폐기 사건을 보낸다.
+- 서비스 폼에 「비상 로그인 허용」·유효 일수, 회원 상세에 확인값 폐기(superadmin).
+- 관리자 등급(role rank 20 이상) 비밀번호는 변경·재설정 때 12자 이상, 흔한 비밀번호와 그 변형을 거절한다(v1.10.1에서 10자로 조정).
+
+## v1.9.0_20261111 (플랫폼 API · 서비스별 접근 제한)
+- 마이그레이션 0007. 연결 시스템용 플랫폼 API: 전역 설정(초안·게시·되돌리기·조건부 값·etag), 운영 로그 수집, 감사 기록 수집(HMAC-SHA256 해시 체인과 검사), 문서 테이블(컬렉션·규칙·색인), 사용량 집계.
+- 서비스별 접근 규칙(`all`·`granted`·`admin`)과 계정별 허용·거부, 서비스 안 기능 권한 `features`. `sso/userinfo`·`sso/users` 추가.
+- 관리 콘솔에 플랫폼 6탭(전역 설정·운영 로그·감사 기록·테이블·사용량·접근 권한). SQLite `quick_check`는 첫 요청과 최대 10분 간격으로만 돈다.
+
+## v1.8.13 · v1.8.12 · v1.8.11 · v1.8.10 · v1.8.9 · v1.8.8 · v1.8.7 (2026-11-11, 화면·운영 정비)
+- v1.8.13·v1.8.12: 공용 테마 갱신, 위쪽 메뉴 구분선 제거와 세로 정렬.
+- v1.8.11: 마이페이지를 연결 시스템 포털로 바꿈. 여러 시스템의 같은 관리자 계정을 통합 계정 하나로 묶는 CLI `server/tools/unify_admin.php`.
+- v1.8.10: 명칭을 「통합로그인시스템 / 통합로그인서비스 / 통합로그인」으로 통일.
+- v1.8.9: `php -S` 라우터를 허용 목록 방식으로 바꾸고 문서 파일을 웹에서 내지 않는다. v1.8.8: 화면 자산 캐시 규칙. v1.8.7: 새 판 배포 알림과 `/version.json`.
+
+## v1.8.6_20261111 (계정 연결 · service_id 전환)
+- 마이그레이션 0005·0006. 시스템이 자기 계정 목록을 보내는 `sso/accounts_push`, 관리 콘솔 「계정 연결」(계획 → 확정, 작업 기록).
+- service_id 바꾸기(옛 id를 별칭으로 유지), 서비스 토큰으로 관리 API를 부를 수 없게 막음(High 수정).
+- 공통 로그인 화면 부품과 화면 문구 정리. v1.8.4는 배포 없이 닫았고 v1.8.5 번호는 쓰지 않았다.
+
+## v1.8.3_20261111 (공용 테마 · 화면 구조)
+- research-ui 공용 테마 적용, 로그인 화면 좌우 분할, 관리 콘솔 왼쪽 메뉴. 화면 × 폭 × 밝기 조합 점검.
+
+## v1.8.2_20261111 (가입 차단 표시)
+- `auth/register_status`로 가입 가능 여부를 화면에 반영(판정 실패 시 막힌 쪽으로). 라우터 보강.
+
+## v1.8.1_20261111 (`/public` 없는 주소)
+- `/login`·`/admin`·`/mypage` 같은 짧은 주소를 화면 파일로 잇는 라우터를 버전 폴더 `tools/router-ulogin.php`로 옮김.
+
+## v1.8.0_20261110 (SQLite 기본 · 설치 토큰)
+- 저장소 기본값을 SQLite로 바꾸고 MySQL은 `DB_DRIVER`로 고르는 선택 어댑터로 둠. `schema.sql`을 실행 시점에 SQLite DDL로 번역한다.
+- 설치기를 열 때 서버 파일에 있는 설치 토큰을 요구한다(설치 선점 방지). 동시 요청 경합 수정.
+
+## v1.7.0_20261110 (테마 · 무음 SSO · 등록 CLI, 배포 없이 v1.8.0에 흡수)
+- 무음 SSO `sso/authorize_session`(이미 로그인한 브라우저 세션으로 code 발급, 별도 빈도 제한·로그 구분).
+- research-ui 테마 첫 적용, 서비스 일괄 등록 CLI `tools/register_services.php`, 상시 실행 구성.
 
 ---
 

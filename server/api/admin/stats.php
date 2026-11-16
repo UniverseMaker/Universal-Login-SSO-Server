@@ -118,6 +118,14 @@ $activeSessions = (int) db_val(
     [$now]
 );
 
+// v1.10.1 — 가입 신청 대기(설계 130 §2-5 순수 추가). 기존 users.pending(이메일 미인증 계정)은 키를 그대로 둔다(D-371 Q-4).
+//          0011 미적용이면 0(통계 화면 전체를 죽이지 않는다 — 신청 기능 자체가 없는 상태다).
+$regPending = 0;
+if (db_table_exists(T_REGISTER_REQUESTS)) {
+    $regPending = (int) db_val('SELECT COUNT(*) FROM ' . T_REGISTER_REQUESTS . ' WHERE status = ? AND expires_at > ?',
+        ['pending', $now]);
+}
+
 json_out([
     'users' => [
         'total'     => (int) ($u['total'] ?? 0),
@@ -129,6 +137,7 @@ json_out([
         'new_today' => (int) ($u['new_today'] ?? 0),
         'new_7d'    => (int) ($u['new_7d'] ?? 0),
         'new_30d'   => (int) ($u['new_30d'] ?? 0),
+        'register_requests_pending' => $regPending,
     ],
     'logins' => [
         'today'           => (int) ($lg['today'] ?? 0),

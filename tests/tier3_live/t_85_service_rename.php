@@ -936,7 +936,7 @@ function srt_sc_migrate(array $B): void
     assert_eq(0, $c4, 'status clean (' . substr($o4, -300) . ')');
     $pdo = new PDO('sqlite:' . $db, null, null, array(PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION));
     // v1.9.0 — 0007 도 같은 apply 에서 이어 돈다(0004 모양 → 0005 → 0006 → 0007). verify 가 그 최종 형태를 schema.sql 과 대조한다.
-    assert_eq(10, (int) $pdo->query('SELECT COUNT(*) FROM app_ulogin_schema_migrations')->fetchColumn(), '10 migration rows (0001~0004 baseline + 0005~0010 applied)');
+    assert_eq(11, (int) $pdo->query('SELECT COUNT(*) FROM app_ulogin_schema_migrations')->fetchColumn(), '11 migration rows (0001~0004 baseline + 0005~0011 applied)');
     $pdo->exec("UPDATE app_ulogin_services SET former_service_id = 'old1' WHERE service_id = 'mgm'");
     $pdo->exec("INSERT INTO app_ulogin_services (service_id, service_name, redirect_whitelist, created_at, updated_at) VALUES ('b', 'x', '[]', '2026-01-01 00:00:00', '2026-01-01 00:00:00')");
     $pdo->exec("INSERT INTO app_ulogin_services (service_id, service_name, redirect_whitelist, created_at, updated_at) VALUES ('c', 'x', '[]', '2026-01-01 00:00:00', '2026-01-01 00:00:00')");
@@ -1156,7 +1156,7 @@ $SRT_MUTANTS = array(
     'G5 orphan check removed' => array(array(array($SR, "    if (\$orphans !== []) {", "    if (false && \$orphans !== []) {")), 'srt_sc_rerun_revert', false),
     'G6 exchange echo removed' => array(array(array('server/api/auth/exchange.php', "service_id_echo(\$sessOut, \$issued['row']);", "// echo removed")), 'srt_sc_sso', true),
     'G6 exchange input not normalised' => array(array(array('server/api/auth/exchange.php', "\$serviceId   = (string) v_service_id(\$in, 'service_id', true);", "\$serviceId   = (string) v_string(\$in, 'service_id', 1, 64, true);")), 'srt_sc_sso', true),
-    'G7 validate records alias use' => array(array(array('server/api/sso/validate.php', "\$allowRegister = registration_open(\$service);", "service_alias_touch((string) \$service['service_id']);\n\$allowRegister = registration_open(\$service);")), 'srt_sc_s2s', true),
+    'G7 validate records alias use' => array(array(array('server/api/sso/validate.php', "\$regMode       = register_mode_effective(\$service);", "service_alias_touch((string) \$service['service_id']);\n\$regMode       = register_mode_effective(\$service);")), 'srt_sc_s2s', true),
     'G7 10-minute cap removed' => array(array(array($AU, "            . ' AND (former_last_used_at IS NULL OR former_last_used_at < ?)',", "            . ' AND (former_last_used_at IS NULL OR former_last_used_at < ? OR 1 = 1)',")), 'srt_sc_s2s', true),
     'G8 service_id_taken dropped from admin create' => array(array(array('server/api/admin/services.php', "    if (service_id_taken(\$serviceId) !== null) {", "    if (db_val('SELECT id FROM ' . T_SERVICES . ' WHERE service_id = ?', [\$serviceId]) !== null) {")), 'srt_sc_reuse', true),
     'G10 handoff carries the secret hash' => array(array(array('tools/register_services.php', "        'secret_unchanged'   => true,", "        'secret_unchanged'   => true, 'service_secret_hash' => (string) \$row['service_secret_hash'],")), 'srt_sc_handoff', false),

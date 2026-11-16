@@ -57,7 +57,8 @@ function plat_metric_for(string $kind, string $metric): string
 /** 사용량 지표(설계 §3 plat_usage.metric). 이 밖의 이름은 기록하지 않는다. */
 const PLAT_METRICS = ['log_events', 'log_bytes', 'audit_events', 'cfg_reads', 'doc_reads', 'doc_writes', 'denied',
                       'sso_userinfo', 'sso_users_subjects', 'log_events_user', 'doc_reads_user', 'doc_writes_user',
-                      'sso_user_search'];   // v1.10.0 (설계 127 §3-3)
+                      'sso_user_search',    // v1.10.0 (설계 127 §3-3)
+                      'points_balance', 'points_earn', 'points_spend', 'points_history'];   // v1.10.1 (설계 130 §4-6)
 
 /**
  * A7 · 0-8 ① — 키 이름에 이 낱말이 **들어가면**(대소문자 무시) 비밀값으로 본다.

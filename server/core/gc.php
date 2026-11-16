@@ -79,6 +79,16 @@ function gc_expired(): void
         error_log('[ulogin] gc access expiry failed: ' . $e->getMessage());
     }
 
+    // v1.10.1 가입 신청 — 만료(pending → expired · 비밀번호 해시 삭제) · 결정 뒤 180일 삭제. 규칙은 core/regreq.php 한 곳.
+    try {
+        if (!function_exists('regreq_gc')) {
+            require_once __DIR__ . '/regreq.php';
+        }
+        regreq_gc();
+    } catch (Throwable $e) {
+        error_log('[ulogin] gc register requests failed: ' . $e->getMessage());
+    }
+
     // v1.8.4 계정 연결 작업 — 별도 try. 0005 미적용 설치본에서 표가 없어도 위 정리는 이미 끝났다.
     // done 항목은 지우지 않는다(시스템 사건 피드의 원장). 규칙은 core/accountlink.php 의 al_gc() 한 곳.
     try {
