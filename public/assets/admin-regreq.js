@@ -1,5 +1,5 @@
 /* ============================================================================
- * ulogin v1.10.1 — 관리자 콘솔 「가입 신청」 탭 (admin-regreq.js)
+ * ulogin v1.10.2 — 관리자 콘솔 「가입 신청」 탭 (admin-regreq.js)
  *
  * 설계 : _workspace/130_architect_v1101_design.md 2-5절
  * 호출 : GET  /api/admin/register_requests?status=&page=&per_page=   목록
@@ -113,7 +113,12 @@
   }
 
   function openDetail(id) {
-    apiGet(API, { id: id }).then(function (r) { showDetail(r); })
+    /* 상세 응답은 {request: {...}} 로 감싸 온다(서버 register_requests.php GET ?id=). 풀어서 넘긴다. */
+    apiGet(API, { id: id }).then(function (d) {
+      var r = d && d.request;
+      if (!r) { throw new Error('가입 신청 상세 응답에 request 가 없습니다.'); }
+      showDetail(r);
+    })
       .catch(function (err) { toast(errorMessage(err), 'danger'); });
   }
 

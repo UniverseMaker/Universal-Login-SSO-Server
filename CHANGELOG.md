@@ -11,6 +11,9 @@
 
 ---
 
+## v1.10.2_20261116 (가입 신청 상세 창 수정)
+- 관리 콘솔 가입 신청 「보고서」 상세가 `{request:…}` 래퍼를 풀지 않아 빈 값으로 열리고 승인 버튼이 없던 결함 수정(`admin-regreq.js`). 화면이 서버 응답 키를 읽는지 보는 정적 시험 추가(`t_81_regreq_ui_static.php`).
+
 ## v1.10.1_20261116 (가입 방식 3택 · 가입 신청 승인 · 공동 포인트 s2s)
 - 마이그레이션 0011(`register_requests` 표 · `services.points_json` · `point_logs(service_id, created_at)` 색인). 설정 `register_mode`(closed·approval·open, 17번째 키) — 판정은 `register_mode_effective()` 한 곳, 행이 없으면 기존 `allow_register` 를 따라가 운영은 closed 그대로. `register_status`·`sso/validate` 에 `register_mode`, 가입 201 에 `approval_required:false` 순수 추가.
 - approval: 가입 API 가 202 + 접수번호(users 행 없음), 승인 전 로그인은 `AUTH_ACCOUNT_PENDING`. `auth/register_request_status.php`(결과 조회) · `admin/register_requests.php`(목록·상세 판단 재료 8종·승인·거부, admin 이상·감사) · `stats.users.register_requests_pending` · 남용 방지 3종(IP 대기 3 · 거부 7일 · 대기열 200).

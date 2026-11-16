@@ -126,8 +126,8 @@ All captures come from a freshly installed demo instance with fake data.
 
 | | |
 |---|---|
-| ![Registration requests](docs/images/22-admin-register-requests.png)<br>**Registration requests** — applications from approval mode with their status (pending, approved, rejected) | ![Registration mode](docs/images/24-admin-settings-register-mode.png)<br>**Registration mode** — closed, approval or open |
-| ![Local admin screen](docs/images/25-local-admin.png)<br>**`/local-admin`** — the emergency-account screen, opened on the server machine with a one-time key link | |
+| ![Registration requests](docs/images/22-admin-register-requests.png)<br>**Registration requests** — applications from approval mode with their status (pending, approved, rejected) | ![Request detail](docs/images/23-admin-register-request-detail.png)<br>**Request detail (report)** — review the evidence, then approve or reject |
+| ![Registration mode](docs/images/24-admin-settings-register-mode.png)<br>**Registration mode** — closed, approval or open | ![Local admin screen](docs/images/25-local-admin.png)<br>**`/local-admin`** — the emergency-account screen, opened on the server machine with a one-time key link |
 
 ### Admin console — logs and platform
 
@@ -354,7 +354,6 @@ Exit codes: `0` pass · `1` failure · `2` bad arguments · `3` nothing ran · `
 - **No absolute session lifetime and no HSTS header.** Refreshing keeps a session alive; add HSTS in your web server.
 - **No log retention policy.** Sign-in, admin, point and secret-delivery logs are not pruned automatically.
 - **PKCE is not enforced for confidential clients.** Services with a `service_secret` can exchange without `code_challenge`. Public clients must use PKCE, so they cannot integrate from `file://` where `crypto.subtle` is unavailable — serve the app from a local web server.
-- **In v1.10.1 the registration-request detail dialog opens empty.** The screen reads the response without unwrapping its `request` key, so the dialog's approve/reject buttons are unusable; until it is fixed, approve or reject through the `admin/register_requests.php` API.
 - **`docs/PORTFOLIO.md` and `docs/screenshots/` are v1.3.0-era records.** Current screens are in `docs/images/`.
 
 ---

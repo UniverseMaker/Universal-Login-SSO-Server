@@ -124,8 +124,8 @@ sequenceDiagram
 
 | | |
 |---|---|
-| ![가입 신청 목록](docs/images/22-admin-register-requests.png)<br>**가입 신청** — 승인제에서 들어온 신청과 상태(대기·승인·거부) | ![가입 방식 설정](docs/images/24-admin-settings-register-mode.png)<br>**가입 방식** — 가입 불가·가입 신청·즉시 승인 중 하나 |
-| ![로컬 관리 화면](docs/images/25-local-admin.png)<br>**`/local-admin`** — 서버 PC에서 1회용 열쇠 링크로 연 비상 계정 설정 화면 | |
+| ![가입 신청 목록](docs/images/22-admin-register-requests.png)<br>**가입 신청** — 승인제에서 들어온 신청과 상태(대기·승인·거부) | ![가입 신청 상세](docs/images/23-admin-register-request-detail.png)<br>**신청 상세(보고서)** — 판단 자료를 보고 승인·거부 |
+| ![가입 방식 설정](docs/images/24-admin-settings-register-mode.png)<br>**가입 방식** — 가입 불가·가입 신청·즉시 승인 중 하나 | ![로컬 관리 화면](docs/images/25-local-admin.png)<br>**`/local-admin`** — 서버 PC에서 1회용 열쇠 링크로 연 비상 계정 설정 화면 |
 
 ### 관리 콘솔 — 로그와 플랫폼
 
@@ -350,7 +350,6 @@ php tests/run.php
 - **세션 절대 수명과 HSTS 헤더가 없다.** refresh를 계속하면 세션이 이어진다. HSTS는 웹 서버 설정으로 붙여야 한다.
 - **로그 보존 정책이 없다.** 로그인·관리·포인트·시크릿 전달 기록은 자동으로 줄지 않는다.
 - **기밀 클라이언트에는 PKCE를 강제하지 않는다.** `service_secret`이 있는 서비스는 `code_challenge` 없이도 교환할 수 있다. 공개 클라이언트는 PKCE가 필수라서 `crypto.subtle`이 없는 `file://`에서는 연동할 수 없다(로컬 웹서버로 열어야 한다).
-- **v1.10.1 관리 콘솔의 가입 신청 상세 창이 빈 값으로 열린다.** 화면이 응답의 `request` 키를 벗기지 않고 읽는다. 그 창의 승인·거부 버튼을 쓸 수 없으니, 고쳐질 때까지 승인·거부는 `admin/register_requests.php` API로 한다.
 - **`docs/PORTFOLIO.md`와 `docs/screenshots/`는 v1.3.0 시점 기록이다.** 최신 화면은 `docs/images/`에 있다.
 
 ---
