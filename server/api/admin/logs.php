@@ -48,6 +48,7 @@ if (!function_exists('admin_parse_dt')) {
 }
 
 $ctx  = require_auth();
+$viewerRole = ctx_global_role($ctx);   // v1.10.0 (설계 127 §4) — IP·UA·입력값 마스킹 기준(mask_for_viewer)
 $type = (string) v_enum($_GET, 'type', ['login', 'admin', 'secret_access'], false, 'login');
 
 $fromAt = admin_parse_dt(in_raw($_GET, 'from'), 'from', false);
@@ -77,12 +78,25 @@ if ($type === 'login') {
     // 회수 사유가 refresh_rotated / refresh_reuse 일 때만 fail_refresh_reuse 이고
     // 나머지는 이 값으로 온다. **화이트리스트를 한쪽만 고치면 필터에서 사라진다** —
     // 이 배열과 api/me/login_logs.php 의 v_enum 목록은 항상 함께 본다.
-    $results = ['success', 'fail_credential', 'fail_locked', 'fail_status', 'fail_ratelimit',
-                'fail_service_blocked', 'fail_client_auth', 'fail_migrate_auth',
-                'fail_refresh_reuse', 'fail_refresh_revoked', 'logout'];
+    // v1.7.0: success_silent 추가 (설계 A-6 / D-235). 무재인증(무음) SSO 로 발급된 code 를
+    // exchange 가 교환했을 때의 성공이다 — **비밀번호를 한 번도 묻지 않은 로그인**이라
+    // success 와 구분해 남긴다. 무음 경로에 동의 화면을 두지 않기로 한 판정의 조건이
+    // 「사후에 확인할 수 있을 것」이었고, 이 필터가 그 확인 창구다.
+    // summary 는 이 배열을 그대로 키로 쓰므로 0건이어도 키가 나간다 — **값 추가이지
+    // shape 변경이 아니다**(키는 늘고 기존 키는 그대로다).
+    // v1.7.0 수정 라운드: issued_silent 추가 (감사 M17-3). **success_silent 와 다른 사건이다.**
+    //   issued_silent  = 무음 code 를 **발급**했다 (api/sso/authorize_session.php)
+    //   success_silent = 그 code 가 **교환**돼 토큰이 나갔다 (api/auth/exchange.php)
+    // 발급만 있고 교환이 없는 줄 = 제3자가 피해자 브라우저를 무음 경로로 몰아넣었는데
+    // 서비스가 state 불일치로 거절한 모양이다. **공격 시도가 가장 잘 보이는 자리**이고,
+    // 1차 구현에서는 그 경우에 로그가 0행이었다.
+    $results = ['success', 'success_silent', 'issued_silent', 'fail_credential', 'fail_locked',
+                'fail_status', 'fail_ratelimit', 'fail_service_blocked', 'fail_service_access', 'fail_emergency_unset', 'fail_emergency_scope', 'fail_client_auth',
+                'fail_migrate_auth', 'fail_refresh_reuse', 'fail_refresh_revoked', 'logout'];
 
     $q         = v_string($_GET, 'q', 1, 190, false);
     $serviceId = v_string($_GET, 'service_id', 1, 64, false);
+    admin_service_id_reject_former($serviceId);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
     $ip        = v_string($_GET, 'ip', 1, 45, false);
     $uuid      = v_string($_GET, 'uuid', 1, 64, false);
 
@@ -112,8 +126,11 @@ if ($type === 'login') {
         $params[] = (int) $targetId;
     }
     if ($q !== null) {
-        $like     = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
-        $where[]  = '(l.username_input LIKE ? OR u.username LIKE ?)';
+        // v1.8.0 — ESCAPE 를 명시한다(설계 A30). 패턴과 절은 한 쌍이다 — core/request.php
+        $like     = like_contains($q);
+        $esc      = sql_like_escape();
+        // v1.10.0 (설계 127 §4) — 없는 아이디로 실패한 입력(user_id NULL)은 검색 대상에서도 뺀다(마스킹 우회 오라클 차단)
+        $where[]  = '((l.user_id IS NOT NULL AND l.username_input LIKE ?' . $esc . ') OR u.username LIKE ?' . $esc . ')';
         $params[] = $like;
         $params[] = $like;
     }
@@ -143,11 +160,12 @@ if ($type === 'login') {
             'id'             => (int) $r['id'],
             'user_uuid'      => $r['user_uuid'] !== null ? (string) $r['user_uuid'] : null,
             'username'       => $r['username'] !== null ? (string) $r['username'] : null,
-            'username_input' => (string) $r['username_input'],
+            // v1.10.0 (설계 127 §4) — 마스킹은 core/serializer.php 의 mask_for_viewer() 한 곳
+            'username_input' => (string) mask_for_viewer('username_input', [(string) $r['username_input'], $r['user_uuid'] !== null], $viewerRole),
             'service_id'     => $r['service_id'] !== null ? (string) $r['service_id'] : null,
             'result'         => (string) $r['result'],
-            'ip'             => (string) $r['ip'],
-            'user_agent'     => (string) $r['user_agent'],
+            'ip'             => (string) mask_for_viewer('ip', (string) $r['ip'], $viewerRole),
+            'user_agent'     => (string) mask_for_viewer('ua', (string) $r['user_agent'], $viewerRole),
             'created_at'     => iso($r['created_at']),
         ];
     }
@@ -187,6 +205,7 @@ if ($type === 'secret_access') {
     }
 
     $svcId  = v_string($_GET, 'service_id', 1, 64, false);
+    admin_service_id_reject_former($svcId);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
     $source = v_enum($_GET, 'source', ['login', 'exchange', 'refresh', 'session'], false);
     $uuid   = v_string($_GET, 'uuid', 1, 64, false);
 
@@ -262,8 +281,8 @@ if ($type === 'secret_access') {
             'hits'         => (int) $r['hits'],
             // 키 **이름**만이다. 값은 어떤 경우에도 이 응답에 담기지 않는다.
             'secret_keys'  => $keys,
-            'first_ip'     => (string) $r['first_ip'],
-            'last_ip'      => (string) $r['last_ip'],
+            'first_ip'     => (string) mask_for_viewer('ip', (string) $r['first_ip'], $viewerRole),
+            'last_ip'      => (string) mask_for_viewer('ip', (string) $r['last_ip'], $viewerRole),
             // first_ip 와 last_ip 가 다르면 같은 세션이 여러 IP 에서 쓰였다는 신호다.
             'ip_changed'   => ((string) $r['first_ip'] !== (string) $r['last_ip']),
             'window_start' => iso($r['window_start']),
@@ -360,8 +379,13 @@ $labelSvc = [];
 if ($svcIds !== []) {
     $keys = array_keys($svcIds);
     $ph   = implode(',', array_fill(0, count($keys), '?'));
-    foreach (db_all('SELECT service_id, service_name FROM ' . T_SERVICES . ' WHERE service_id IN (' . $ph . ')', $keys) as $x) {
+    // v1.8.6 — 과거 감사 행(admin_logs)은 옛 id 그대로다(불변 기록). 이름이 보이게 옛 id 로도 찾는다(설계 104 B-2).
+    foreach (db_all('SELECT service_id, service_name, former_service_id FROM ' . T_SERVICES
+        . ' WHERE service_id IN (' . $ph . ') OR former_service_id IN (' . $ph . ')', array_merge($keys, $keys)) as $x) {
         $labelSvc[(string) $x['service_id']] = (string) $x['service_name'];
+        if ($x['former_service_id'] !== null && $x['former_service_id'] !== '' && !isset($labelSvc[(string) $x['former_service_id']])) {
+            $labelSvc[(string) $x['former_service_id']] = (string) $x['service_name'];
+        }
     }
 }
 $labelSec = [];
@@ -400,7 +424,7 @@ foreach ($rows as $r) {
         'before'         => $r['before_json'] === null ? null : json_object(json_col($r['before_json'])),
         'after'          => $r['after_json'] === null ? null : json_object(json_col($r['after_json'])),
         'memo'           => $r['memo'] !== null ? (string) $r['memo'] : null,
-        'ip'             => (string) $r['ip'],
+        'ip'             => (string) mask_for_viewer('ip', (string) $r['ip'], $viewerRole),
         'created_at'     => iso($r['created_at']),
     ];
 }

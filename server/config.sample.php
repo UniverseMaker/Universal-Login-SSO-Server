@@ -19,9 +19,10 @@
  *
  * [상수 집합 동기화 규약 — 중요]
  *   이 파일의 define() 목록은 install.php 가 생성하는 config.php 와 **정확히 같아야 한다**
- *   (현재 54개 — 2026-09-03 실측. 두 파일의 상수 이름 집합이 완전히 일치한다.
+ *   (현재 56개 — v1.8.0 에서 DB_DRIVER · DB_SQLITE_PATH 2개 추가. 2026-09-03 실측 54개 + 2.
+ *    두 파일의 상수 이름 집합이 완전히 일치한다.
  *   재현: 이 파일의 `^define('NAME'` 를 뽑은 목록과 install.php 의 ins_config_spec()
- *   항목 목록을 각각 정렬해 diff 하면 차이가 없고, 양쪽 계수가 54다. 계수는
+ *   항목 목록을 각각 정렬해 diff 하면 차이가 없고, 양쪽 계수가 같다(v1.8.0 은 56 — 리포트에서 실측). 계수는
  *   `grep -c` 로 세지 마라 — 그것은 매치가 아니라 **줄 수**를 센다).
  *   core/ 와 api/ 는 여기 있는 상수를 조건 없이 참조하므로,
  *   하나라도 빠지면 해당 엔드포인트가 `Undefined constant` 로 죽는다.
@@ -31,7 +32,43 @@
 // ---------------------------------------------------------------------
 // DB
 // ---------------------------------------------------------------------
+
+// DB_DRIVER — 저장소. **'sqlite'(v1.8.0 기본) 또는 'mysql'** 두 값뿐이다.
+//   그 밖의 값(대소문자·공백 변형 포함)은 500 으로 멈춘다 — 조용히 MySQL 로 떨어지지 않는다.
+//   🔴 **이 줄이 없는 config.php 는 'mysql' 로 동작한다.** v1.7.0 이하 설치본이 그렇다 —
+//      업그레이드해도 DSN 이 한 글자도 바뀌지 않는다(설계 E-1). 판정은 server/core/dbdriver.php 한 곳.
+//   'sqlite' 이면 아래 DB_HOST·DB_PORT·DB_NAME·DB_USER·DB_PASS·DB_CHARSET 는 **읽지 않는다**
+//   (지우지 않아도 된다 — MySQL 로 되돌릴 때 쓴다). DB_PREFIX 는 두 저장소 모두 쓴다.
+define('DB_DRIVER',  'sqlite');
+
+// DB_SQLITE_PATH — DB_DRIVER='sqlite' 일 때 **필수.** DB 파일 경로.
+//   **상대 경로는 설치 루트(server/ 의 부모) 기준이다.** 기본값은 설치 루트의 **부모** 아래
+//   runtime/data/ — 문서 루트 밖이라 URL 로 가리킬 방법이 없다(D-281 · 보안 H17-4).
+//   절대 경로도 받지만 그러면 폴더째 옮길 때 손으로 고쳐야 한다(G10).
+//   🔴 **파일이 없으면 만들지 않는다 — 503 으로 멈춘다.** SQLite 는 없는 파일을 열면 빈 DB 를
+//      만들고, 경로를 한 글자 틀리면 사용자 전원이 사라진 서비스가 조용히 뜨기 때문이다.
+//      DB 파일을 만드는 것은 install.php 뿐이다. 0바이트 파일·무결성 검사(quick_check) 실패도 503.
+//   살아 있는 DB 를 파일 복사로 백업하지 마라 — `-wal` 에 아직 반영 안 된 커밋이 있다.
+define('DB_SQLITE_PATH', '../runtime/data/ulogin.sqlite');
+
 define('DB_HOST',    'localhost');
+
+// DB_PORT — **선택.** 주석을 풀면 그 포트로 붙는다. 정의하지 않으면 DSN 에 포트 요소를
+//   넣지 않고 드라이버 기본값(3306)으로 간다 — v1.0.0~v1.6.0 과 **완전히 같은 동작**이다.
+//   그래서 기존 설치본을 업그레이드해도 DSN 문자열이 한 글자도 바뀌지 않는다.
+//
+//   🔴 **한 PC 에 다른 MySQL/MariaDB 인스턴스가 함께 돌고 있다면 반드시 적으라.**
+//      포트를 적지 않으면 3306 으로 가고, 그 3306 이 **다른 서비스의 살아 있는 DB** 일 수 있다.
+//      조용히 엉뚱한 DB 에 붙는 것이 이 설정의 유일한 위험이다.
+//      (v1.7.0 상시 서버 구성이 바로 그 상황이다 — 전용 인스턴스가 3307 에 있다.)
+//
+//   값이 1~65535 정수가 아니면 **500 으로 멈춘다. 폴백하지 않는다**(D-241).
+//   환경변수 `ULOGIN_DB_PORT` 가 설정돼 있으면 **그쪽이 이긴다** — 서버 지킴이가
+//   기동 시 넣는 값이고, 「등록부에서 포트를 바꾼다」가 그 경로로 반영된다.
+//   어느 쪽이 쓰였는지는 `GET /api/health`(관리자)의 `checks.db_port_pinned` 로 확인한다.
+//   판정식은 server/core/dbport.php 한 곳에만 있다.
+// define('DB_PORT', 3307);
+
 define('DB_NAME',    'ulogin_db');
 define('DB_USER',    'ulogin_user');
 define('DB_PASS',    '__CHANGE_ME__');
@@ -93,12 +130,48 @@ define('TRUST_PROXY', false);
 //     · TRUST_PROXY=false                  → 이 목록은 쓰이지 않는다. 빈 배열로 둔다
 //     · TRUST_PROXY=true  + 목록이 비어 있음 → **설정 오류. 요청이 500 이 된다** (위 설명 참조)
 //     · TRUST_PROXY=true  + 목록에 IP 있음  → REMOTE_ADDR 가 그 목록에 있는 요청에서만
-//       X-Forwarded-Proto / X-Forwarded-For 를 신뢰한다. core/bootstrap.php 의
+//       X-Forwarded-Proto / X-Forwarded-For 를 신뢰한다. core/transport.php 의
 //       trust_proxy_headers() 와 core/request.php 의 client_ip() 가 **같은 기준**을 쓴다
+//       (v1.7.0 부터 client_ip() 가 그 함수를 **직접 부른다** — 사본이 없다)
 //   비어 있는 채로 TRUST_PROXY=false 이면 REMOTE_ADDR 만 신뢰한다(기본값·안전).
 //   X-Forwarded-For 를 무조건 믿으면 헤더 위조로 레이트리밋이 통째로 우회된다.
 //   프록시·CDN 의 실제 IP 는 호스팅·CDN 사업자에게 확인해 넣는다.
+//
+//   !! TRUST_PROXY=false 인데 **터널·역프록시 뒤**에 두면 그것도 사고다 !!
+//   모든 접속이 127.0.0.1 로 집계되어 IP 레이트리밋이 **전 인터넷 공용 버킷 1개**가 되고
+//   login_logs.ip · sessions.ip 가 전부 같은 값이 된다. 멈추지는 않지만(정상 로컬 개발이
+//   같은 모양이다) 서버 로그에 표본 경고가 남고 `GET /api/health` 의
+//   `proxy_trust_sane` 이 false 가 된다 (v1.7.0 / 감사 M17-2).
+//   >> 오류 로그 검색어: requests arrive from loopback with X-Forwarded-For present
 define('TRUSTED_PROXIES', []);
+
+// TRUSTED_PROXY_HOPS — 실제 클라이언트 IP 가 X-Forwarded-For 의 **오른쪽에서 몇 번째**인가.
+//   기본 1 (= 맨 오른쪽). 리더 판정 D-272 / QA 1회차 실측.
+//
+//   **이 상수가 없으면 1 로 동작한다.** 기존 config.php 를 고치지 않아도 된다.
+//
+//   왜 숫자로 못박는가 — v1.6.0 까지의 client_ip() 는 XFF 를 오른쪽부터 훑되
+//   신뢰 프록시 IP 를 만나면 **건너뛰고 왼쪽으로 더 걸어갔다.** 공격자가 XFF 꼬리에
+//   `127.0.0.1` 을 채워 넣으면 훑기가 밀려 **자기가 고른 값에 닿았다**(실측 재현).
+//   「오른쪽부터 훑는다」는 「맨 오른쪽을 쓴다」와 같지 않다. 이제 건너뛰지 않고
+//   **위치를 고정해** 고른다 — 그 위치를 정하는 것이 이 숫자다.
+//
+//   어떻게 정하나 — 「우리 앞의 신뢰 프록시가 XFF 오른쪽 끝에 **무엇을 덧붙이는가**」로 정한다.
+//     · Cloudflare / cloudflared  → 접속 IP 를 **맨 끝에 append** 한다 → **1**
+//     · 그 앞에 자기 peer 를 한 번 더 덧붙이는 프록시가 한 겹 더 있다 → **2**
+//   확인 방법: TRUST_PROXY 를 켜기 전에 임시로 X-Forwarded-For 원문을 error_log 로
+//   한 번 찍어 **실제 체인 모양을 보고** 숫자를 정하라. 추측하지 마라 — 추측(=건너뛰기)이
+//   바로 위 결함이었다.
+//
+//   틀리면 어떻게 되나 — 그 자리에 유효 IP 가 없으면 REMOTE_ADDR 로 떨어지고
+//   **서버 로그에 남는다**(조용히 넘어가지 않는다). 떨어진 상태는 TRUST_PROXY=false 와
+//   같은 피해(공용 버킷 1개 · 감사 로그 무의미)를 낸다.
+//   >> 오류 로그 검색어: has no usable entry at position
+//
+//   v1.7.0 2차(QA Q17-14): 주석을 풀어 **웹 설치기가 만드는 config.php 와 같은 모양**으로 둔다.
+//   예전에는 이 샘플에만 (주석으로) 있고 설치기 산출물에는 항목조차 없어, 공용 호스팅의 주
+//   설치 경로를 쓴 운영자는 이 손잡이를 볼 수 없었다.
+define('TRUSTED_PROXY_HOPS', 1);
 
 // ---------------------------------------------------------------------
 // 쿠키 (로그인 서버 자체 UI 전용. 로컬 앱은 Bearer 토큰을 쓴다)
@@ -308,3 +381,21 @@ define('T_CONSENTS',      DB_PREFIX . 'user_consents');
 //   core/bootstrap.php 의 가드 블록 **셋을 함께** 고쳐라.
 define('T_MIGRATIONS',    DB_PREFIX . 'schema_migrations');
 define('T_SECRET_ACCESS', DB_PREFIX . 'secret_access_logs');
+// v1.8.4 추가 — 시스템 계정 연결(마이그레이션 0005). core/bootstrap.php 가드 · install.php 와 한 벌이다.
+define('T_EXT_ACCOUNTS',  DB_PREFIX . 'ext_accounts');
+define('T_LINK_JOBS',     DB_PREFIX . 'link_jobs');
+define('T_LINK_ITEMS',    DB_PREFIX . 'link_job_items');
+// v1.9.1 추가 — 비상 로그인 확인값(마이그레이션 0008). core/bootstrap.php 가드 · install.php 와 한 벌이다.
+define('T_EMERGENCY',     DB_PREFIX . 'emergency');
+// v1.10.0 추가 — 접근 단계 그룹(마이그레이션 0010). core/bootstrap.php 가드 · install.php 와 한 벌이다.
+define('T_ACCESS_GROUPS',         DB_PREFIX . 'access_groups');
+define('T_ACCESS_GROUP_MEMBERS',  DB_PREFIX . 'access_group_members');
+define('T_ACCESS_GROUP_SERVICES', DB_PREFIX . 'access_group_services');
+// v1.9.0 추가 — 통합로그인 플랫폼(마이그레이션 0007). core/bootstrap.php 가드 · install.php 와 한 벌이다.
+define('T_RC_DRAFTS',     DB_PREFIX . 'rc_drafts');
+define('T_RC_VERSIONS',   DB_PREFIX . 'rc_versions');
+define('T_PLAT_LOGS',     DB_PREFIX . 'plat_logs');
+define('T_PLAT_AUDIT',    DB_PREFIX . 'plat_audit');
+define('T_PLAT_COLLS',    DB_PREFIX . 'plat_collections');
+define('T_PLAT_DOCS',     DB_PREFIX . 'plat_docs');
+define('T_PLAT_USAGE',    DB_PREFIX . 'plat_usage');

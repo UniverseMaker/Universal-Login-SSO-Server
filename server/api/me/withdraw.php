@@ -15,6 +15,7 @@ declare(strict_types=1);
  * 계정이 남는다.
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
+require_once __DIR__ . '/../../core/accountlink.php';
 
 only_method('POST');
 
@@ -106,6 +107,10 @@ $revoked = db_tx(function () use ($userId, $now, $reason, $newUsername, $newEmai
 
     // 서비스 가입도 차단 상태로 내린다 (행은 남긴다 — 가입 이력이다)
     db_exec('UPDATE ' . T_USER_SERVICES . ' SET status = ? WHERE user_id = ?', ['blocked', $userId]);
+
+    // v1.8.4 — 시스템 계정 연결 자동 해제(설계 92 E절, D-172 소비자). 같은 트랜잭션.
+    // 각 시스템은 사건 피드 `unlinked` 로 그 로컬 계정의 uuid 묶음을 푼다(S-6).
+    al_release_user($userId, 'withdraw');
 
     return $n;
 });

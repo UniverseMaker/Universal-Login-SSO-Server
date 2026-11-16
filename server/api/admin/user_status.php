@@ -186,6 +186,7 @@ require_global_role($ctx, 'admin');
 require_csrf();
 
 $target = admin_user_by_uuid(in_raw($_GET, 'uuid'));
+emergency_target_guard($target);   // v1.10.0 §6-1 — 비상 계정 상태·역할 변경은 CLI 전용(403)
 $uid    = (int) $target['id'];
 
 // D-30: action 3종(suspend / restore / reset-password) 전부에 적용되는 진입부 랭크 가드.
@@ -222,6 +223,7 @@ if ($action === 'suspend') {
 
     $revoked = db_tx(function () use ($uid, $now) {
         db_update(T_USERS, ['status' => 'suspended', 'updated_at' => $now], 'id = ?', [$uid]);
+        em_revoke_user($uid, 'suspended');   // v1.9.1 - 비상 확인값 폐기
         return revoke_user_sessions($uid, 'admin');
     });
 
@@ -356,6 +358,9 @@ $revoked = db_tx(function () use ($uid, $temp, $now) {
         'locked_until'         => null,
         'updated_at'           => $now,
     ], 'id = ?', [$uid]);
+    db_exec('UPDATE ' . T_USERS . ' SET password_epoch = password_epoch + 1 WHERE id = ?', [$uid]);   // v1.9.2
+    // v1.9.1 - 옛 비밀번호의 비상 확인값 폐기(임시 비밀번호로 직접 인증하기 전에는 발급하지 않는다)
+    em_revoke_user($uid, 'admin_reset');
     // 비밀번호가 바뀌면 기존 세션은 전부 무효다
     return revoke_user_sessions($uid, 'admin');
 });

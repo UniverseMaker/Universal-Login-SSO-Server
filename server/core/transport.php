@@ -116,6 +116,47 @@ if (!function_exists('trust_proxy_misconfigured')) {
 }
 
 /**
+ * **역방향** 오설정 — 프록시 뒤인데 신뢰 설정이 꺼져 있는가. 감사 M17-2.
+ *
+ * `trust_proxy_misconfigured()` 가 잡는 것은 `TRUST_PROXY=true` + `TRUSTED_PROXIES=[]`
+ * 한 조합뿐이다. **반대 방향에는 가드가 하나도 없었다:**
+ * `TRUST_PROXY=false` 인데 모든 요청의 peer 가 루프백이면, 그 배포는 거의 확실히
+ * 같은 PC 의 역프록시·터널 뒤이고 `client_ip()` 가 **전원 `127.0.0.1`** 을 돌려준다.
+ *
+ *   · `api:ip:127.0.0.1` 300/60 · `login:ip:…` · `sso_silent:ip:…` 가 **전 인터넷
+ *     공용 버킷 1개**가 된다. 한 명이 분당 300회를 쏘면 전 세계 사용자가 429 다 —
+ *     가장 싼 서비스 거부.
+ *   · `login_logs.ip` · `sessions.ip` · `auth_codes.created_ip` 가 전부 같은 값이 되어
+ *     **감사 기록이 통째로 무의미**해진다. 마이페이지 로그인 이력도 전부 같은 IP 다.
+ *   · **운영자에게는 아무 신호도 가지 않는다.** 화면도 로그도 정상으로 보인다.
+ *
+ * **멈추지는 않는다.** 정상 로컬 개발이 정확히 이 모양이라 500 을 내면 개발이 막힌다.
+ * D-53·D-67·D-75 의 fail-closed 3종과 같은 계열이되 **시끄럽게만** 만든다.
+ * 「앞단이 붙인 흔적(X-Forwarded-For · CF-Connecting-IP)이 있는데 우리가 안 보고 있다」
+ * 를 조건으로 두어 **그냥 로컬 개발에서는 발화하지 않게** 한다.
+ */
+if (!function_exists('proxy_trust_probably_missing')) {
+    function proxy_trust_probably_missing(): bool
+    {
+        // **`TRUST_PROXY` 상수가 아니라 `trust_proxy_headers()` 를 본다** (감사 M17-8 / D-67).
+        // 1차는 상수를 직접 봤다. 그래서 `TRUST_PROXY=true` + `TRUSTED_PROXIES` 에 **실제 peer 가
+        // 없는**(예: 엣지 주소 `10.0.0.5` 만 적고 터널 peer `127.0.0.1` 은 빠진) 상태를 놓쳤다.
+        // 그 상태의 증상 — 전원 127.0.0.1 집계 · 공용 버킷 1개 — 이 **이 함수가 잡으려는
+        // 증상 그 자체**인데, 500 가드(trust_proxy_misconfigured)도 이 가드도 침묵했다.
+        // 「헤더를 실제로 믿는가」의 정의는 trust_proxy_headers() 하나다. 사본을 만들지 마라 —
+        // client_ip() 가 같은 이유로 조건식 사본을 버렸다(D-272).
+        if (trust_proxy_headers()) {
+            return false;
+        }
+        $remote = (string) (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '');
+        if ($remote !== '127.0.0.1' && $remote !== '::1') {
+            return false;
+        }
+        return isset($_SERVER['HTTP_X_FORWARDED_FOR']) || isset($_SERVER['HTTP_CF_CONNECTING_IP']);
+    }
+}
+
+/**
  * 이 요청이 https 로 들어왔는가.
  * 프록시 헤더는 trust_proxy_headers() 가 true 일 때만 본다 (D-51).
  */

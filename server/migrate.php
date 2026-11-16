@@ -126,6 +126,27 @@ require_once MIG_CONFIG;
 // ---------------------------------------------------------------------
 require_once __DIR__ . '/core/transport.php';
 
+// ---------------------------------------------------------------------
+// DB 포트 해석 — `core/dbport.php` (v1.7.0 / D-241)
+//
+// **transport.php 와 같은 근거로 들인다.** 그 파일에는 쿼리가 한 줄도 없고
+// 환경변수 1개 + 상수 1개만 읽는다. 「core/ 의 SELECT 가 최신 스키마를 전제한다」는
+// 이 파일 최상단의 근거에 걸리지 않는다. `ULOGIN_MIGRATE_CTX` 가 이미 정의돼 있어
+// 그쪽 직접 실행 차단도 통과한다.
+//
+// **판정을 이 파일에 복사하지 마라.** 아래 mig_pdo() 가 `ulogin_db_dsn_port()` 를
+// 부른다. 복사하면 `core/db.php` 와 갈리고, 갈리는 방향이
+// **「마이그레이션 화면만 3306 = 사용자의 살아 있는 DB 에 붙는다」**다.
+// V14b-M-3(축약 사본이 마이그레이션 화면만 403 으로 만든 사고)와 같은 형태다.
+// **dbport.php 에 DB·설정·응답 헬퍼를 들이지 마라** — 들이는 순간 이 require 가
+// 위 근거를 깨뜨린다.
+// ---------------------------------------------------------------------
+require_once __DIR__ . '/core/dbport.php';
+// 저장소 판정 + DSN·PRAGMA — `core/dbdriver.php` (v1.8.0 / 설계 A25).
+// **core/db.php · install.php 와 같은 함수로 연다.** 같은 근거(쿼리 0줄)로 들인다.
+// (migrations/lib.php 도 이 파일을 require 한다 — require_once 라 중복 로드는 없다)
+require_once __DIR__ . '/core/dbdriver.php';
+
 if (!MIG_IS_CLI && defined('FORCE_HTTPS') && FORCE_HTTPS) {
     // 프록시 설정 모순은 리다이렉트·거부보다 **먼저** 잡는다 — core/bootstrap.php 의
     // FORCE_HTTPS 분기와 같은 순서다(D-67). `TRUST_PROXY=true` + `TRUSTED_PROXIES=[]`
@@ -164,13 +185,19 @@ function mig_pdo()
 {
     static $pdo = null;
     if ($pdo === null) {
-        $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
-        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES   => false,
-        ]);
-        $pdo->exec("SET time_zone = '+00:00'");
+        // 🔴 **core/db.php 의 db() 와 같은 분기·같은 함수다.** 한쪽만 바뀌면 마이그레이션만
+        //    다른 저장소에 붙는다(V14b-M-3 · D-241 계열). 판정은 ulogin_db_driver_name() 한 곳.
+        if (ulogin_db_driver_name() === 'sqlite') {
+            // create=false — 러너도 DB 파일을 만들지 않는다. 없으면 UloginDbUnavailable.
+            $pdo = ulogin_pdo_open_sqlite(
+                ulogin_sqlite_path_resolve(defined('DB_SQLITE_PATH') ? DB_SQLITE_PATH : ''),
+                array('create' => false, 'quick_check' => true)
+            );
+        } else {
+            // 포트 조각은 core/dbport.php 가 만든다 — core/db.php 와 **같은 함수**다.
+            // 상수도 환경변수도 없으면 빈 문자열이라 v1.6.0 과 글자 단위로 같은 DSN 이다.
+            $pdo = ulogin_pdo_open_mysql(DB_HOST, ulogin_db_dsn_port(), DB_NAME, DB_CHARSET, DB_USER, DB_PASS);
+        }
     }
     return $pdo;
 }
@@ -413,7 +440,8 @@ if (MIG_IS_CLI) {
         if ($cmd === 'status') {
             list($files, $rows, $table) = mig_load();
             $st = mig_status($files, $rows);
-            echo "=== 마이그레이션 상태 (" . DB_NAME . ") ===\n";
+            echo "=== 마이그레이션 상태 ("
+                . (ulogin_db_driver_name() === 'sqlite' ? 'sqlite' : DB_NAME) . ") ===\n";
             if ($st === []) {
                 echo "마이그레이션 파일이 없습니다: " . MIG_DIR . "\n";
             }

@@ -32,7 +32,10 @@ $status       = v_enum($in, 'status', ['active', 'pending', 'suspended', 'dorman
 $role         = v_enum($in, 'role', array_keys(ROLE_RANK), false);
 $accountLevel = v_enum($in, 'account_level', array_keys(ACCOUNT_LEVEL_RANK), false);
 $billingTier  = v_enum($in, 'billing_tier', array_keys(BILLING_TIER_RANK), false);
-$serviceId    = v_string($in, 'service_id', 1, 64, false);
+// v1.8.6 — **이 관리자 API 는 옛 id(별칭)를 받는다.** 설계 104 B-2 는 관리자 API 를 「새 id 만」으로 정했지만,
+// AI 관리(aim)가 운영 중에 이 엔드포인트를 자기 service_id 로 부른다(주관 세션 회신, 2026-11-11).
+// 거절하면 개명 순간 그 시스템의 관리자 확인이 400 으로 멈춘다. 그래서 시스템 진입점과 같이 푼다.
+$serviceId    = v_service_id($in, 'service_id');
 $from         = v_string($in, 'from', 4, 30, false);
 $to           = v_string($in, 'to', 4, 30, false);
 
@@ -90,9 +93,12 @@ $where  = ['1 = 1'];
 $params = [];
 
 if ($q !== null) {
-    // LIKE 와일드카드는 이스케이프한다 (MySQL 기본 이스케이프 문자는 백슬래시)
-    $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
-    $where[]  = '(u.username LIKE ? OR u.email LIKE ? OR u.name LIKE ? OR u.nickname LIKE ?)';
+    // LIKE 와일드카드는 이스케이프한다. v1.8.0 — 이스케이프 문자를 SQL 에 명시한다(ESCAPE).
+    // SQLite 는 ESCAPE 없이는 이스케이프를 모른다(설계 A30). 패턴과 절은 한 쌍이다 — core/request.php
+    $like = like_contains($q);
+    $esc  = sql_like_escape();
+    $where[]  = '(u.username LIKE ?' . $esc . ' OR u.email LIKE ?' . $esc . ' OR u.name LIKE ?' . $esc
+        . ' OR u.nickname LIKE ?' . $esc . ')';
     $params[] = $like;
     $params[] = $like;
     $params[] = $like;
@@ -143,11 +149,14 @@ if ($rows !== []) {
 }
 
 $items = [];
+$viewerRole = ctx_global_role($ctx);   // v1.10.0 (설계 127 §4) — 마스킹 기준은 보는 사람의 전역 role
 foreach ($rows as $r) {
-    $items[] = serialize_user($r, null, true, [
+    $one = mask_user_view(serialize_user($r, null, true, [
         'session_count'     => $sessionCounts[(int) $r['id']] ?? 0,
         'service_overrides' => [],      // 계약 §8-2 — 목록에서는 비운다
-    ]);
+    ]), $viewerRole);
+    $one['is_emergency'] = is_emergency_user($r);   // v1.10.0 §6 — 순수 추가
+    $items[] = $one;
 }
 
 // 실제로 적용된 필터만 담는다. 비면 {} (null 도 [] 도 아니다)
@@ -157,7 +166,7 @@ if ($status !== null)       { $applied['status'] = $status; }
 if ($role !== null)         { $applied['role'] = $role; }
 if ($accountLevel !== null) { $applied['account_level'] = $accountLevel; }
 if ($billingTier !== null)  { $applied['billing_tier'] = $billingTier; }
-if ($serviceId !== null)    { $applied['service_id'] = $serviceId; }
+if ($serviceId !== null)    { $applied['service_id'] = service_id_out($serviceId, null); }   // v1.8.6 — 보낸 값을 되돌린다(C-2)
 if ($from !== null)         { $applied['from'] = $from; }
 if ($to !== null)           { $applied['to'] = $to; }
 // 계약 §8-2 예시는 sort/order 를 filters_applied 에 넣지 않는다(요청에 있어도). 그대로 따른다.

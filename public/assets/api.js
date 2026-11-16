@@ -36,8 +36,18 @@
    *   경로를 조립하는 곳은 `buildUrl()` 하나뿐이므로 다른 파일은 고치지 않아도 된다.
    *
    * 끝에 '/' 를 붙이지 않는다.
+   *
+   * v1.8.1 (D-313) — **`/public` 없는 별칭 주소**(`{설치루트}/login`)에서는 화면의 디렉터리가
+   *   `{설치루트}/public/` 이 아니라 `{설치루트}/` 다. 거기서 '../server' 는 **설치 루트의 부모**로
+   *   풀린다. 도메인 루트 설치(`/login` → `/server`)는 `..` 가 루트에서 멈춰 우연히 맞지만,
+   *   서브디렉터리 설치(`/ulogin/login`)에서는 `/server` 가 되어 **전 화면의 API 가 404** 다.
+   *   그래서 화면이 `public/` 직하에서 열렸을 때만 '../server', 그 밖(별칭)에서는 'server'.
+   *   판정식은 `theme-ui.js` 의 `inPublicDir()` 와 같다 — 함께 고쳐라.
    */
-  var ULOGIN_API_BASE = '../server';
+  var ULOGIN_API_BASE = (function () {
+    var p = (global.location && global.location.pathname) || '';
+    return /\/public\/[^\/]*$/.test(p) ? '../server' : 'server';
+  })();
 
   /**
    * API 파일 확장자. (leader_decisions D-0)
@@ -106,6 +116,14 @@
     REGISTRATION_DISABLED: '현재 회원가입이 중지되어 있습니다.',
     MAINTENANCE_MODE: '점검 중입니다. 잠시 후 다시 이용해 주세요.',
     SERVER_ERROR: '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.',
+    /* v1.8.4 계정 연결 — commit·cancel 이 받은 plan_id 가 만료·취소·확정됐거나 다른 관리자의 것이다(409).
+       화면은 이 코드를 받으면 「다시 미리보기」로 안내한다(assets/admin-links.js).
+       미리보기 항목의 판정 코드(EXT_CHANGED 등)는 봉투 코드가 아니라 이 표에 넣지 않는다 —
+       그 한글 문구는 admin-links.js 의 CODE_LABEL 에 있다. */
+    LINK_PLAN_INVALID: '계획이 만료되었거나 이미 확정되었습니다. 다시 미리보기 하세요.',
+    /* v1.9.0 (설계 116 §11) — 시스템별 접근 제한 · 플랫폼 사용 한도 */
+    SERVICE_ACCESS_DENIED: '이 시스템을 쓸 권한이 없습니다.',
+    QUOTA_EXCEEDED: '사용 한도를 넘었습니다.',
     /* 아래 1개는 서버가 응답하지 않는 **클라이언트 전용 의사 코드**다.
        fetch 자체가 실패(오프라인·CORS·서버 다운)했을 때만 사용한다. */
     NETWORK_ERROR: '서버에 연결할 수 없습니다. 네트워크 상태를 확인해 주세요.'
@@ -263,7 +281,13 @@
   function currentPageName() {
     var p = global.location && global.location.pathname ? global.location.pathname : '';
     var i = p.lastIndexOf('/');
-    return (i >= 0 ? p.slice(i + 1) : p) || 'index.html';
+    var name = (i >= 0 ? p.slice(i + 1) : p) || 'index.html';
+    /* v1.8.1 (D-313) — `/public` 없는 별칭 주소는 확장자가 없다(`/login`).
+       그대로 두면 'login' 이 AUTH_PAGES 에 없어 로그인 화면이 「인증 필요 화면」으로 읽히고,
+       세션 만료 응답 하나에 `login.html` 로 replace 되면서 **SSO 쿼리(service_id·redirect_uri·
+       state·code_challenge)가 사라진다.** 점이 없는 이름에만 `.html` 을 붙인다. */
+    if (name.indexOf('.') === -1) { name += '.html'; }
+    return name;
   }
 
   /** 로그인/가입/찾기/재설정 화면인가? (무한 리다이렉트 루프 방지) */

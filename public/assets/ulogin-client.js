@@ -67,6 +67,8 @@
     SSO_INVALID_REDIRECT: '허용되지 않은 복귀 주소입니다.',
     POINT_INSUFFICIENT: '포인트가 부족합니다.',
     RATE_LIMITED: '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.',
+    SERVICE_ACCESS_DENIED: '이 시스템을 쓸 권한이 없습니다.',   // v1.9.0 (설계 116 §11)
+    QUOTA_EXCEEDED: '사용 한도를 넘었습니다.',
     SERVER_ERROR: '일시적인 오류가 발생했습니다.'
   };
 
@@ -151,14 +153,42 @@
     return !!(global.crypto && global.crypto.subtle && typeof global.crypto.subtle.digest === 'function');
   }
 
+  /**
+   * 암호학적 난수. **폴백이 없다 — 없으면 거절한다.**
+   *
+   * v1.7.0 (보안 L17-2 / 이월 V12-M-7). 종전에는 `crypto.getRandomValues` 가
+   * 없을 때 `Math.random()` 으로 대체하고 `console.warn` 만 남겼다. 그 값이
+   * **`state` 와 PKCE `code_verifier` 의 재료**다:
+   *   · `state` 가 예측 가능하면 CSRF 방어가 성립하지 않는다 — 공격자가 맞는
+   *     `state` 를 끼워 넣을 수 있으면 복귀 단계의 대조가 통과한다
+   *   · `code_verifier` 가 예측 가능하면 PKCE 가 code 탈취를 막지 못한다
+   * `Math.random()` 은 암호학적 난수가 아니고 구현에 따라 시드를 복원할 수 있다.
+   *
+   * **예측 가능한 난수로 로그인하느니 로그인하지 않는 편이 낫다.** 경고는
+   * 콘솔에만 남고 흐름은 그대로 진행돼, 가장 약한 상태가 **조용히** 성립했다.
+   *
+   * 도달 조건: `crypto.getRandomValues` 는 모든 현대 브라우저에 **보안 컨텍스트가
+   * 아니어도** 있다(`crypto.subtle` 과 다르다 — 그쪽은 보안 컨텍스트 전용이고
+   * `makePkce()` 가 따로 다룬다). 즉 이 `throw` 는 매우 오래된 브라우저에서만
+   * 닿는다. 그런 환경에서 **로그인이 실패하는 것이 의도다.**
+   *
+   * @throws {Error} 암호학적 난수를 쓸 수 없을 때
+   */
   function randomBytes(n) {
-    var out = new Uint8Array(n);
-    if (hasWebCrypto()) {
-      global.crypto.getRandomValues(out);
-      return out;
+    if (!hasWebCrypto()) {
+      /* v1.7.0 2차 (QA Q17-15) — 종전에는 그냥 `Error` 를 던져 `login()` 은 `Error`,
+         `consumePoints()` 는 `UloginError('SERVER_ERROR')` 로 **같은 원인이 두 타입**으로
+         거절됐다. 브라우저 환경 문제를 「서버 오류」로 분류한 것도 틀렸다.
+         이 파일이 환경·설정 문제에 이미 쓰는 `CONFIG_ERROR` 로 통일한다.
+         두 메서드 모두 이 `UloginError` 를 **그대로** 거절값으로 넘긴다. */
+      throw new UloginError(
+        'CONFIG_ERROR',
+        '이 브라우저에서는 안전한 난수를 만들 수 없어 로그인을 진행하지 않습니다 ' +
+        '(crypto.getRandomValues 없음). 최신 브라우저에서 다시 시도해 주세요.'
+      );
     }
-    warn('crypto.getRandomValues가 없어 예측 가능한 난수로 대체합니다. 보안 컨텍스트(HTTPS/localhost)에서 실행하세요.');
-    for (var i = 0; i < n; i++) out[i] = Math.floor(Math.random() * 256);
+    var out = new Uint8Array(n);
+    global.crypto.getRandomValues(out);
     return out;
   }
 
@@ -301,6 +331,7 @@
 
     // 메모리 전용 상태 — 저장소에 절대 쓰지 않는다
     this._payload = null;
+    this._features = null;
     this._user = null;
     this._session = null;
 
@@ -404,6 +435,11 @@
     }
     if (data.user) this._user = data.user;
     if (Object.prototype.hasOwnProperty.call(data, 'payload')) this._payload = data.payload || {};
+    /* v1.9.0 (설계 116 §7) — 유효 기능 id 배열. 서버가 그 서비스의 기능 등록부를 둘 때만 키가 온다.
+       키가 없으면 null(통합로그인이 기능을 관리하지 않는 서비스) — 빈 배열([] = 허용된 기능 없음)과 다르다. */
+    if (Object.prototype.hasOwnProperty.call(data, 'features')) {
+      this._features = Array.isArray(data.features) ? data.features.slice() : null;
+    }
 
     this._expiredNotified = false;
     this._scheduleRefresh();
@@ -416,6 +452,7 @@
     this._set(this.keys.expiresAt, null);
     this._set(this.keys.sessionId, null);
     this._payload = null;
+    this._features = null;
     this._user = null;
     this._session = null;
     this._refreshPromise = null;
@@ -522,7 +559,12 @@
   UloginClient.prototype.login = function (opts) {
     var self = this;
     var o = opts || {};
-    return makePkce().then(function (pkce) {
+    /* v1.7.0 — `Promise.resolve().then(...)` 로 감싼 이유: `makePkce()` 의 첫 줄이
+       `randomToken(48)` 이고, 그것이 **동기적으로 throw 할 수 있다**(L17-2 —
+       암호학적 난수가 없으면 거절한다). 감싸지 않으면 이 메서드가 동기 예외를
+       던져 `login().catch(…)` 를 쓰는 앱이 그것을 못 받는다. JSDoc 이 약속한
+       「반환: Promise」를 **실패 경로에서도** 지킨다. */
+    return Promise.resolve().then(makePkce).then(function (pkce) {
       var state = randomToken(32);
       var returnTo = o.returnTo !== undefined
         ? o.returnTo
@@ -675,6 +717,16 @@
     return this._user;
   };
 
+  /** getFeatures() — 유효 기능 id 배열(v1.9.0). 서버가 기능을 관리하지 않는 서비스면 null */
+  UloginClient.prototype.getFeatures = function () {
+    return this._features ? this._features.slice() : null;
+  };
+
+  /** hasFeature(id) — 그 기능이 허용됐는가. 등록부가 없는 서비스(null)는 false — 화면 분기용일 뿐 실제 방어는 그 시스템 서버다 */
+  UloginClient.prototype.hasFeature = function (id) {
+    return !!this._features && this._features.indexOf(String(id)) !== -1;
+  };
+
   /** getSessionInfo() — 메모리에 있는 session 객체. 미수신이면 null */
   UloginClient.prototype.getSessionInfo = function () {
     return this._session;
@@ -693,6 +745,20 @@
     if (!isFinite(amt) || amt <= 0 || Math.floor(amt) !== amt) {
       return Promise.reject(new UloginError('VALIDATION_FAILED', 'amount는 1 이상의 정수여야 합니다.', 400, null, 'amount'));
     }
+    /* v1.7.0 — `uuidv4()` 는 `randomBytes()` 를 쓰므로 **동기적으로 throw 할 수 있다**
+       (L17-2). 본문 객체 안에서 그대로 부르면 이 메서드가 동기 예외를 던져
+       `consumePoints().catch(…)` 가 못 받는다. 먼저 만들어 거절로 바꾼다. */
+    var idemKey;
+    try {
+      idemKey = o.idempotencyKey || uuidv4();
+    } catch (e) {
+      /* `randomBytes()` 가 던지는 `UloginError('CONFIG_ERROR')` 를 그대로 넘긴다.
+         `login()` 과 같은 타입·같은 코드다(QA Q17-15). 다른 예외가 올 일은 없지만
+         오면 환경 문제로 분류한다 — 「서버 오류」가 아니다. */
+      return Promise.reject(e instanceof UloginError
+        ? e
+        : new UloginError('CONFIG_ERROR', e && e.message ? e.message : String(e)));
+    }
     return this._authed('/api/points/consume', {
       method: 'POST',
       body: compact({
@@ -702,7 +768,7 @@
         ref_type: o.refType || undefined,
         ref_id: o.refId || undefined,
         memo: o.memo || undefined,
-        idempotency_key: o.idempotencyKey || uuidv4()
+        idempotency_key: idemKey
       })
     }).then(function (data) {
       if (self._user && data && typeof data.points === 'number') {
@@ -797,12 +863,24 @@
    *   3) 그래서 이 값을 위한 별도의 "대상 서버 버전" 속성은 두지 않는다.
    *      클라이언트가 알 수 없는 값을 공개 API 로 내놓으면 거짓말이 된다.
    *
-   * 현재값 '1.0.0' 의 근거: v1.1.0 라운드는 서버의 PHP 7.2 호환 작업이었고,
-   * 이 파일의 **실행 코드가 v1.0.0_20260825 의 같은 파일과 동일하다 — 다른 것은 주석뿐이다.**
-   * 그래서 규칙 1) 에 따라 올리지 않았다. 파일 크기와 해시는 이 주석 때문에 서로 다르다.
+   * 값의 이력 (규칙 1 — 실행 코드가 바뀐 판에서만 올렸다):
    *
-   *   검증 방법(재실행 가능): 두 파일에서 주석과 공백을 제거하고 남은 실행 라인만 비교하면
-   *   diff 가 0 이다. 2026-08-26 실측 — 양쪽 578 실행 라인, 차이 0 행.
+   *   '1.0.0' — v1.0.0_20260825 에서 v1.6.0_20260903 까지. v1.1.0 이후 판들은
+   *             이 파일의 주석만 고쳤고 실행 코드는 같았다.
+   *             (2026-08-26 실측: 주석·공백 제거 후 실행 라인 diff 0 행)
+   *
+   *   '1.1.0' — v1.7.0_20261110. **실행 코드가 바뀌었다** (보안 L17-2 · QA Q17-12 · Q17-15):
+   *             · 암호학적 난수가 없을 때 `Math.random()` 폴백으로 **진행하던 것을
+   *               거절로 바꿨다.** 그 값이 `state` 와 PKCE `code_verifier` 의 재료다
+   *             · `login()` · `consumePoints()` 가 그 경우 동기 예외 대신
+   *               **`UloginError('CONFIG_ERROR')` 로 거절된 Promise** 를 돌려준다
+   *             마이너를 올린 이유: 공개 메서드의 이름·인자·성공 응답은 같지만
+   *             **실패할 때의 동작이 바뀌었다**(진행 → 거절, 오류 코드가 생겼다).
+   *             연동 앱 운영자가 자기 사본이 폴백판인지 원격 grep 한 줄로 구분할
+   *             수 있어야 한다 — 이 값이 그 수단이다(리더 판정 D-289).
+   *
+   *   검증 방법(재실행 가능): 직전 판(v1.6.0_20260903)의 같은 파일과 주석·공백을 제거한
+   *   실행 라인을 비교한다. '1.1.0' 은 그 diff 가 0 이 **아닌** 판이어야 한다.
    *   ※ 크기·바이트 수·해시로 판단하지 마라. 규칙 1) 이 묻는 것은 "코드가 바뀌었는가" 이고,
    *      주석 한 줄만 고쳐도 크기와 해시는 달라진다.
    *
@@ -823,7 +901,7 @@
    * 아래 대입문은 원격에서 grep 한 줄로 읽히는 계약이다(AI 가이드 확인 명령 1). 한 줄에
    * 홑따옴표 리터럴 하나로 대입하는 형식을 유지하고, 같은 형태를 주석에 중복시키지 마라
    * — 주석이 함께 매칭되면 그 명령의 출력이 두 줄이 된다. */
-  UloginClient.version = '1.0.0';
+  UloginClient.version = '1.1.0';
 
   global.UloginClient = UloginClient;
   global.UloginError = UloginError;

@@ -184,3 +184,88 @@ function serialize_session(array $s, bool $isCurrent = true): array
         'is_current'         => $isCurrent,
     ];
 }
+
+// =====================================================================
+// v1.10.0 — 데이터 독립: 관리자에게 보이는 값 (설계 127 §4 · 판정 D-367 Q-4)
+//   판정은 이 한 곳에 둔다 — 경로마다 따로 가리면 한 곳이 빠진다(T1-6: IP 를 자르는 코드는 이 함수 안에만).
+//   마스킹은 키와 형(string)을 유지한다. 화면 계약은 바뀌지 않는다. 본인에게 보여 주는 경로(me/*)는 쓰지 않는다.
+// =====================================================================
+
+/**
+ * @param string $kind  email | phone | ip | ua | username_input(값=[입력, 계정 있음 bool])
+ * @param mixed  $value
+ * @param string $viewerRole 보는 사람의 **전역** role(ctx_global_role)
+ * @return mixed  가린 값(같은 형). null 은 그대로 null
+ */
+function mask_for_viewer(string $kind, $value, string $viewerRole)
+{
+    if ($kind === 'username_input') {
+        // 없는 아이디로 실패한 입력은 superadmin 에게도 길이만(비밀번호를 아이디 칸에 친 경우)
+        list($input, $hasAccount) = $value;
+        if ($hasAccount) {
+            return (string) $input;
+        }
+        return '(없는 아이디 ' . mb_strlen((string) $input, 'UTF-8') . '자)';
+    }
+    if ($value === null) {
+        return null;
+    }
+    $v = (string) $value;
+    if ($kind === 'email' || $kind === 'phone') {
+        if (role_gte($viewerRole, 'admin')) {
+            return $v;   // 연락·복구에 필요하다
+        }
+        if ($kind === 'email') {
+            $at = strrpos($v, '@');
+            return $at === false ? '***' : mb_substr($v, 0, 1, 'UTF-8') . '***' . substr($v, $at);
+        }
+        $digits = preg_replace('/\D/', '', $v);
+        return $v === '' ? '' : '***' . substr((string) $digits, -4);
+    }
+    if ($kind === 'ip' || $kind === 'ua') {
+        if (role_gte($viewerRole, 'superadmin')) {
+            return $v;
+        }
+        if ($kind === 'ua') {
+            $lbl = $v === '' ? null : device_label_from_ua($v);
+            return $v === '' ? '' : ($lbl === null ? '(가림)' : $lbl);
+        }
+        if (filter_var($v, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+            $p = explode('.', $v);
+            return $p[0] . '.' . $p[1] . '.' . $p[2] . '.x';
+        }
+        if (filter_var($v, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+            $bin = (string) inet_pton($v);
+            $hex = str_split(bin2hex(substr($bin, 0, 6)), 4);
+            return implode(':', array_map(function ($h) { return ltrim($h, '0') === '' ? '0' : ltrim($h, '0'); }, $hex)) . '::/48';
+        }
+        return $v === '' ? '' : '(가림)';
+    }
+    return $v;
+}
+
+/** 관리자 뷰 user 객체(serialize_user(..., true) 결과)를 보는 사람 기준으로 가린다. */
+function mask_user_view(array $out, string $viewerRole): array
+{
+    if (array_key_exists('email', $out)) {
+        $out['email'] = mask_for_viewer('email', $out['email'], $viewerRole);
+    }
+    if (array_key_exists('phone', $out)) {
+        $out['phone'] = mask_for_viewer('phone', $out['phone'], $viewerRole);
+    }
+    if (array_key_exists('last_login_ip', $out)) {
+        $out['last_login_ip'] = mask_for_viewer('ip', $out['last_login_ip'], $viewerRole);
+    }
+    if (array_key_exists('meta', $out) && !role_gte($viewerRole, 'admin')) {
+        $out['meta'] = new stdClass();   // manager 는 meta 를 보지 않는다
+    }
+    return $out;
+}
+
+/** 세션 객체(serialize_session 결과)의 IP·UA 를 가린다. */
+function mask_session_view(array $s, string $viewerRole): array
+{
+    $s['ip'] = (string) mask_for_viewer('ip', $s['ip'] ?? '', $viewerRole);
+    $s['user_agent'] = (string) mask_for_viewer('ua', $s['user_agent'] ?? '', $viewerRole);
+    return $s;
+}

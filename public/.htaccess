@@ -172,6 +172,7 @@ DirectoryIndex index.html
 <FilesMatch "\.html$">
   <IfModule mod_headers.c>
     Header always set Cache-Control "no-store"
+    Header always set CDN-Cache-Control "no-store"
   </IfModule>
 </FilesMatch>
 
@@ -196,5 +197,15 @@ DirectoryIndex index.html
 <FilesMatch "^version\.txt$">
   <IfModule mod_headers.c>
     Header always set Cache-Control "no-store"
+  </IfModule>
+</FilesMatch>
+
+# 4) version.json — G18(공용 새 버전 알림, v1.8.7). `{"version":"1.8.7"}` 한 줄, 로그인 불필요.
+#   브라우저뿐 아니라 Cloudflare 같은 중간 캐시도 저장하면 안 된다(저장되면 알림이 안 뜬다).
+#   값은 version.txt 에서 tools/bump_asset_version.php 가 생성한다 — 손으로 고치지 않는다.
+<FilesMatch "^version\.json$">
+  <IfModule mod_headers.c>
+    Header always set Cache-Control "no-store"
+    Header always set CDN-Cache-Control "no-store"
   </IfModule>
 </FilesMatch>

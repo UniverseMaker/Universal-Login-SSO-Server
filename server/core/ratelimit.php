@@ -5,8 +5,13 @@ declare(strict_types=1);
  * core/ratelimit.php — 고정 윈도우 레이트리밋 + 로그인 락아웃
  * 담당 계약: §2 RATE_LIMITED / AUTH_ACCOUNT_LOCKED, 스펙 §8-2, §8-3
  *
- * Redis 가 없으므로 MySQL 의 INSERT ... ON DUPLICATE KEY UPDATE 로 원자 증가시킨다.
+ * Redis 가 없으므로 DB 의 UPSERT 한 문장으로 원자 증가시킨다.
  * SELECT 후 UPDATE 는 동시 요청에서 카운트를 놓친다.
+ *
+ * v1.8.0 — UPSERT 문법이 저장소마다 다르다(설계 A2·B-4). MySQL 은
+ * `ON DUPLICATE KEY UPDATE`, SQLite 는 `ON CONFLICT(cols) DO UPDATE` 이고 **충돌 컬럼을
+ * 명시해야 한다.** 문장은 `db_upsert_increment()` 한 곳이 만든다 — 여기서 조립하지 않는다.
+ * 실측(설계 부록 6·7): UPSERT 16프로세스 × 50회 = 800/800/800, 읽기-수정-쓰기 변이는 66·62·103.
  */
 
 
@@ -46,11 +51,9 @@ function rate_limit(string $bucket, int $max, int $windowSec): void
     $expires   = gmdate('Y-m-d H:i:s', $winStart + $windowSec * 2);
 
     try {
-        db_exec(
-            'INSERT INTO ' . T_RATE_LIMITS . ' (bucket, window_start, count, expires_at) VALUES (?, ?, 1, ?)'
-            . ' ON DUPLICATE KEY UPDATE count = count + 1',
-            [$bucket, $start, $expires]
-        );
+        // 원자 증가 — (bucket, window_start) 는 uq_rate_limits 다. 이 두 컬럼이 충돌 대상이다.
+        db_upsert_increment(T_RATE_LIMITS, ['bucket' => $bucket, 'window_start' => $start],
+            'count', ['expires_at' => $expires]);
         $c = (int) db_val('SELECT count FROM ' . T_RATE_LIMITS . ' WHERE bucket = ? AND window_start = ?',
             [$bucket, $start]);
     } catch (Throwable $e) {
@@ -62,6 +65,28 @@ function rate_limit(string $bucket, int $max, int $windowSec): void
     if ($c > $max) {
         $retry = $winStart + $windowSec - time();
         throw new AppError('RATE_LIMITED', 429, ['retry_after' => max(1, $retry)]);
+    }
+}
+
+/**
+ * 세지 않고 **본다** — 이 윈도우의 카운트가 이미 $max 이상이면 429. 실패만 세는 버킷의 사전 검사용(v1.9.2).
+ * 저장소 장애는 rate_limit() 과 같이 로그만 남기고 통과시킨다.
+ */
+function rate_limit_peek(string $bucket, int $max, int $windowSec): void
+{
+    if ($windowSec <= 0) {
+        return;
+    }
+    $winStart = intdiv(time(), $windowSec) * $windowSec;
+    try {
+        $c = (int) db_val('SELECT count FROM ' . T_RATE_LIMITS . ' WHERE bucket = ? AND window_start = ?',
+            [substr($bucket, 0, 150), gmdate('Y-m-d H:i:s', $winStart)]);
+    } catch (Throwable $e) {
+        error_log('[ulogin] rate_limit_peek storage failure: ' . $e->getMessage());
+        return;
+    }
+    if ($c >= $max) {
+        throw new AppError('RATE_LIMITED', 429, ['retry_after' => max(1, $winStart + $windowSec - time())]);
     }
 }
 
@@ -138,7 +163,10 @@ function rate_limit_logged(string $bucket, int $max, int $windowSec,
  * 읽기는 증가와 별개 문장이라 동시성에서 값을 지나친다(V14b-M-1).
  *
  * 실패는 두 가지로 갈라 다룬다.
- *   - 중복키(1062) = 이 윈도우에 이미 누군가 기록했다. **정상 경로**다.
+ *   - 중복키 = 이 윈도우에 이미 누군가 기록했다. **정상 경로**다. 판정은 `db_is_duplicate()`
+ *     하나로 한다(MySQL 1062 · SQLite 19 + `UNIQUE constraint failed` 메시지). SQLite 의 19 는
+ *     CHECK·NOT NULL 위반과 공용이라 errno 만 보면 저장소 결함이 「이미 기록됨」으로 읽혀
+ *     **신호가 사라진다**(설계 B-3) — 그래서 직접 errno 를 보지 않는다.
  *   - 그 외의 오류 = 저장소 문제다. 삼키지 않고 서버 로그에 남긴 뒤 **기록하는 쪽으로**
  *     떨어진다 — 신호를 잃는 것이 중복 한 행보다 나쁘다.
  *
@@ -190,7 +218,28 @@ function assert_not_locked(array $user): void
     ]);
 }
 
-/** 로그인 실패 1회 반영. 임계치에 도달하면 잠근다. */
+/**
+ * 로그인 실패 1회 반영. 임계치에 도달하면 잠근다.
+ *
+ * ── 원자 증가 — 리더 판정 D-298 H-5 ──────────────────────────────────
+ * v1.7.0 까지는 호출자가 **요청 시작 때 읽은** `$user['failed_login_count']` 에 1을 더해
+ * 그 값을 써 넣었다(읽기-수정-쓰기). 동시 실패 요청이 겹치면 전부 같은 값을 읽고 같은
+ * 값을 쓰므로 **카운트가 덜 올라가 락아웃이 늦게 걸린다** — 무차별 대입의 창이 넓어진다.
+ * MySQL 에서도 같았다(저장소 문제가 아니다).
+ *
+ * 그래서 ① 증가는 DB 가 한다(`= failed_login_count + 1`, 한 문장이라 원자적)
+ *        ② 잠금 판정은 **증가 뒤 다시 읽은 값**으로 한다.
+ * ②의 읽기는 별개 문장이라 동시 요청들이 같은(더 큰) 값을 읽을 수 있다. 그래도 된다 —
+ * 각 요청이 읽는 값은 **자기 증가분을 이미 포함**하므로, 임계치를 넘긴 증가를 한 요청은
+ * 반드시 임계치 이상을 읽고 잠근다. 등호 판정(`=== threshold`)을 쓰지 않는 이유가 그것이다
+ * (V14b-M-1 이 등호 판정으로 신호를 잃었다).
+ *
+ * 잠금 시각은 **늘리기만 한다**(`locked_until IS NULL OR locked_until < ?`). 동시 요청 중
+ * 1배 잠금을 계산한 쪽이 2배 잠금을 나중에 덮어써 줄이는 일을 막는다. 두 저장소 모두
+ * `Y-m-d H:i:s` UTC 문자열이라 문자열 비교가 시간 순서와 같다(설계 A-3).
+ *
+ * `$user` 에서는 id 만 쓴다. **카운트를 인자에서 읽지 마라** — 그것이 이 결함이었다.
+ */
 function register_login_failure(array $user): void
 {
     $threshold = (int) setting_get('login_fail_threshold', LOCKOUT_THRESHOLD);
@@ -201,15 +250,20 @@ function register_login_failure(array $user): void
     if ($minutes < 1) {
         $minutes = (int) LOCKOUT_MINUTES;
     }
+    $uid = (int) $user['id'];
 
-    $count = (int) ($user['failed_login_count'] ?? 0) + 1;
-    $data  = ['failed_login_count' => $count, 'updated_at' => now_utc()];
+    db_exec('UPDATE ' . T_USERS . ' SET failed_login_count = failed_login_count + 1, updated_at = ? WHERE id = ?',
+        [now_utc(), $uid]);
+    $count = (int) db_val('SELECT failed_login_count FROM ' . T_USERS . ' WHERE id = ?', [$uid]);
+
     if ($count >= $threshold) {
         // 2배 임계치를 넘기면 잠금 시간을 2배로 — 반복 무차별 대입의 비용을 올린다.
-        $mult = ($count >= $threshold * 2) ? 2 : 1;
-        $data['locked_until'] = at_utc($minutes * 60 * $mult);
+        $mult  = ($count >= $threshold * 2) ? 2 : 1;
+        $until = at_utc($minutes * 60 * $mult);
+        db_exec('UPDATE ' . T_USERS . ' SET locked_until = ?'
+            . ' WHERE id = ? AND (locked_until IS NULL OR locked_until < ?)',
+            [$until, $uid, $until]);
     }
-    db_update(T_USERS, $data, 'id = ?', [$user['id']]);
 }
 
 /** 로그인 성공 시 실패 카운터 초기화. */

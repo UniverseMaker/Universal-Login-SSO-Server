@@ -25,7 +25,7 @@ rate_limit_logged('login:ip:' . client_ip(), 10, 300);   // D-153: 한도 도달
 $in          = body_json();
 $loginId     = (string) v_string($in, 'username', 1, 190, true);
 $password    = (string) v_string($in, 'password', 1, 200, true);
-$serviceId   = (string) v_string($in, 'service_id', 1, 64, true);
+$serviceId   = (string) v_service_id($in, 'service_id', true);   // v1.8.6 — 옛 id 는 여기서 새 id 로(설계 104 C-1)
 $redirectUri = (string) v_string($in, 'redirect_uri', 1, 500, true);
 $state       = v_string($in, 'state', 1, 255);
 $challenge   = v_string($in, 'code_challenge', 1, 128);
@@ -35,7 +35,7 @@ rate_limit_logged('login:user:' . mb_strtolower($loginId, 'UTF-8'), 5, 300, null
 
 // PKCE 는 S256 만 지원한다. plain 은 challenge 가 곧 verifier 여서 방어력이 없다.
 if ($challenge !== null && $chalMethod !== null && strtoupper($chalMethod) !== 'S256') {
-    v_fail('code_challenge_method', 'PKCE 는 S256 만 지원합니다.');
+    v_fail('code_challenge_method', 'PKCE는 S256만 지원합니다.');
 }
 
 // 4) 서비스 + redirect_uri 검증 — **code 발급보다 먼저**.
@@ -107,6 +107,8 @@ if (service_membership_blocked((int) $user['id'], (string) $service['service_id'
     log_login('fail_service_blocked', (int) $user['id'], $loginId, $serviceId);
     throw new AppError('FORBIDDEN', 403, ['message' => '이 서비스 이용이 제한되었습니다.']);
 }
+// 9-c) v1.9.0 서비스 접근 규칙(80 §5-3 집행 1번). code 발급 **앞**.
+require_service_access($user, service_access_us_row((int) $user['id'], (string) $service['service_id']), $service, 'authorize');
 
 // 10) 성공 처리
 //     exchange.php 는 last_login_* 을 갱신하지 않는다. SSO 로만 쓰는 계정의
@@ -123,6 +125,8 @@ db_exec(
     . ' WHERE id = ?',
     [$now, client_ip(), $now, $user['id']]
 );
+// v1.9.1 - 비밀번호를 직접 인증한 순간(emergency/1 1-1장)
+em_issue_for_user($user, $password);
 
 // 11) code 발급 — 60초. 원문은 응답으로만 나가고 DB 에는 SHA-256 만 저장한다.
 $ttl  = (int) setting_get('auth_code_ttl', AUTH_CODE_TTL);

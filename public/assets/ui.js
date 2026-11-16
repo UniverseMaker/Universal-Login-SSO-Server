@@ -260,6 +260,10 @@
       expired: expired,
       note: expired ? '만료됨' : null
     }));
+    /* v1.10.0 — 비상 계정 표지(서버의 is_emergency / account_kind 만 믿는다) */
+    if (user.is_emergency === true || user.is_emergency === 1 || user.account_kind === 'emergency') {
+      row.appendChild(el('span', { class: 'badge badge-emergency', title: '비상 계정 — 서비스 로그인과 계정 연결 대상이 아닙니다' }, '비상'));
+    }
     return row;
   }
 
@@ -874,6 +878,35 @@
     return box;
   }
 
+  /**
+   * 지표 줄(v1.9.3). 섹션 하나 = 패널 하나, 칸은 세로 구분선으로만 나눈다.
+   * cells: [{label, value, tip?, bad?}]  — bad 는 「1 이상이면 빨강」 이 필요한 칸에만 true.
+   * 0 은 흐린 회색, 0 이 아닌 값만 진하게. tip 은 라벨 옆 ⓘ 의 title 툴팁(키보드 포커스 가능).
+   */
+  function statStrip(title, hint, cells) {
+    var head = el('div', { class: 'ss-head' }, [
+      el('h3', { class: 'ss-title', text: String(title) }),
+      hint ? el('span', { class: 'ss-hint', text: String(hint) }) : null
+    ]);
+    var row = el('div', { class: 'ss-row' });
+    (cells || []).forEach(function (c) {
+      var n = Number(String(c.value).replace(/,/g, ''));
+      var zero = (n === 0);
+      var cls = 'ss-cell' + (zero ? ' is-zero' : '') + (c.bad && !zero && n > 0 ? ' is-bad' : '');
+      var lab = el('span', { class: 'ss-label' }, text(String(c.label)));
+      if (c.tip) {
+        lab.appendChild(el('span', {
+          class: 'ss-i', tabindex: '0', role: 'img', title: String(c.tip),
+          'aria-label': String(c.label) + ' 설명: ' + String(c.tip), text: 'ⓘ'
+        }));
+      }
+      row.appendChild(el('div', { class: cls }, [
+        lab, el('span', { class: 'ss-value', text: String(c.value) })
+      ]));
+    });
+    return el('section', { class: 'ss-panel' }, [head, el('div', { class: 'ss-clip' }, row)]);
+  }
+
   /** 표 래퍼 + <table class="table"> 생성. thead는 헤더 문자열 배열로 만든다. */
   function tableNode(headers) {
     var table = el('table', { class: 'table' });
@@ -907,7 +940,7 @@
     setBusy: setBusy,
     guardRedirect: guardRedirect, navigate: navigate,
     loadingNode: loadingNode, emptyNode: emptyNode, alertNode: alertNode,
-    statNode: statNode, tableNode: tableNode
+    statNode: statNode, statStrip: statStrip, tableNode: tableNode
   };
 
   global.UI = UI;

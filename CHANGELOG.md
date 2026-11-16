@@ -11,6 +11,27 @@
 
 ---
 
+## v1.10.0_20261116 (접근 단계 · 데이터 독립 · 비상 관리자 계정)
+- 마이그레이션 0010: 서비스별 단계 none·view·use·admin(그룹·계정 덮어쓰기·기간·회수). exchange·session·refresh·login(service_id)에 `access_level`·`access`, userinfo에 `access` 순수 추가. view 는 `level_aware=1` 서비스만 입장, 시크릿 없음.
+- 관리 API `admin/access_groups.php`·`admin/access_matrix.php`·`service_access.php`(set_override·revoke·level_aware), 계정 찾기 `sso/user_search.php`(s2s), `me/access.php`.
+- 데이터 독립: IP·UA 원문은 superadmin만, manager는 이메일·전화 가림, 없는 아이디 입력은 길이만, owner 컬렉션 문서는 관리자에게 data:null.
+- 비상 관리자 `admin`(superadmin·콘솔 전용·1시간): `server/tools/emergency_admin.php`(CLI 전용). push `extra.kind="emergency"` 표지. 공개 클라이언트 복귀 주소에 RFC 8252 사용자 지정 scheme 허용(D-369).
+
+## v1.9.3_20261113 (관리 콘솔 숫자 카드 가독성)
+- 대시보드·로그 통계의 낱개 카드를 섹션별 지표 줄(`UI.statStrip`)로 교체. 큰 숫자·작은 라벨, 0은 흐리게, 색 띠 제거, 실패·침해 의심은 1 이상일 때만 빨강.
+- 로그 요약을 성공 / 실패 / 보안 신호 3묶음으로 나누고 긴 설명문은 라벨 옆 ⓘ 툴팁으로 이동. 스키마·API 변경 없음(마이그레이션 없음).
+
+## v1.9.2_20261111 (Low 정리)
+
+- `server/tools/unify_admin.php --service=<id>`: `--link-username` 대상을 그 서비스(정규 id·별칭)로만 한정. 없으면 전 서비스
+- 마이그레이션 0009: `users.password_epoch`(비밀번호 변경마다 +1). 비상 확인값 발급의 변경 재대조가 시각 대신 이 정수를 쓴다(같은 초 2회 변경 대응)
+- `/api/me/password`: 틀린 현재 비밀번호는 세션별 버킷(10/시간), 성공 변경은 계정별 버킷(10/시간)으로 분리
+- 비상 확인값 보존 sweep: 시각 offset 대신 커서(settings `em.sweep_cursor`)로 이어서 훑는다. 호출당 100건 상한 유지
+- 중첩 17단 이상의 data/값은 400(비밀 키 검사 우회 차단), 전부 중복인 감사 배치의 receipt 는 자기 서비스 행
+
+---
+
+
 ## v1.6.0_20260903 — 2026-09-03 (전체 설정 JSON export / import)
 
 **이 릴리스는 「설정을 JSON 한 파일로 넣고 빼는 기능」이다.**
@@ -1741,7 +1762,7 @@ php tools/bump_asset_version.php <새버전> --version-txt=<새버전>_<YYYYMMDD
 사용법·옵션 전체는 `INSTALL.md` 8-1절에 있다.
 
 > **구현 중 발견한 함정 —** 초안은 `glob()`으로 대상 HTML을 모았는데 **0건을 반환했다.**
-> `glob()`은 패턴의 `[...]`를 문자 클래스로 해석하고 이 프로젝트 경로에는 `[일반]`이 들어 있다.
+> `glob()`은 패턴의 `[...]`를 문자 클래스로 해석하고 이 프로젝트 경로에는 `[예시]`이 들어 있다.
 > **오류 없이 조용히 0건이 되는 종류의 고장이다.** `scandir()` + 확장자 검사로 바꿨다.
 > 버전 폴더를 순회하는 스크립트에서 `glob()`을 쓰지 마라.
 

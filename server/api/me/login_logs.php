@@ -29,10 +29,21 @@ list($page, $perPage, $offset) = page_params($_GET);
 // 봤다(실측). 이제 정상 회수 뒤의 갱신은 이 값으로 온다.
 // **화이트리스트를 한쪽만 고치면 필터에서 사라진다** — 이 목록과
 // api/admin/logs.php 의 $results 배열은 항상 함께 본다.
+//
+// success_silent 는 v1.7.0 신규 — 무재인증(무음) SSO 로 들어간 로그인이다.
+// **본인에게 보이는 것이 맞다**: 「내 계정으로 어느 시스템에 언제 들어갔나」가
+// 동의 화면을 두지 않기로 한 판정(D-235)의 대가로 남긴 유일한 확인 수단이고,
+// 그 확인을 가장 먼저 할 사람이 계정 주인이다. 이름이 `success` 로 시작하는
+// 정상 경로이므로 경고로 칠하면 안 된다.
+// issued_silent 는 v1.7.0 수정 라운드 신규 (감사 M17-3) — 무음 code 가 **발급된** 시점이다.
+// success_silent(교환 성공)와 **다른 사건**이고, 본인에게 보이는 것이 맞다:
+// 「내 세션으로 누군가 무음 인가를 받아 갔는데 그 code 가 쓰이지는 않았다」가
+// 계정 주인이 가장 먼저 알아야 할 모양이다. 이름이 success 로 시작하지 않지만
+// **실패도 아니다** — 경고색이 아니라 중립으로 칠해야 한다(화면 담당 주의).
 $result = v_enum($_GET, 'result',
-    ['success', 'fail_credential', 'fail_locked', 'fail_status', 'fail_ratelimit',
-     'fail_service_blocked', 'fail_client_auth', 'fail_migrate_auth',
-     'fail_refresh_reuse', 'fail_refresh_revoked', 'logout']);
+    ['success', 'success_silent', 'issued_silent', 'fail_credential', 'fail_locked',
+     'fail_status', 'fail_ratelimit', 'fail_service_blocked', 'fail_service_access', 'fail_emergency_unset', 'fail_emergency_scope', 'fail_client_auth',
+     'fail_migrate_auth', 'fail_refresh_reuse', 'fail_refresh_revoked', 'logout']);
 
 /** YYYY-MM-DD 인지 확인하고 실제 존재하는 날짜인지까지 본다. */
 $dateOnly = function (string $key): ?string {

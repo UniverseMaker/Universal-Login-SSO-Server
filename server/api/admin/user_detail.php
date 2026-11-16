@@ -18,6 +18,7 @@ declare(strict_types=1);
  * 이 규칙이 없으면 마지막 최고관리자를 강등·삭제해 시스템이 잠금 상태에 빠진다.
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
+require_once __DIR__ . '/../../core/accountlink.php';
 
 only_method('GET', 'PUT', 'DELETE');
 
@@ -233,7 +234,9 @@ if ($method === 'GET') {
 
     // 상세는 service_overrides 를 채운다(계약 §8-3). serialize_user 가 직접 조회한다 —
     // 단건이므로 N+1 이 아니다.
-    $user = serialize_user($target, null, true);
+    $viewerRole = ctx_global_role($ctx);   // v1.10.0 (설계 127 §4)
+    $user = mask_user_view(serialize_user($target, null, true), $viewerRole);
+    $user['is_emergency'] = is_emergency_user($target);
 
     $recentLogins = [];
     foreach (db_all(
@@ -245,7 +248,7 @@ if ($method === 'GET') {
             'id'         => (int) $r['id'],
             'result'     => (string) $r['result'],
             'service_id' => $r['service_id'] !== null ? (string) $r['service_id'] : null,
-            'ip'         => (string) $r['ip'],
+            'ip'         => (string) mask_for_viewer('ip', (string) $r['ip'], $viewerRole),
             'created_at' => iso($r['created_at']),
         ];
     }
@@ -278,7 +281,7 @@ if ($method === 'GET') {
         . ' WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC LIMIT 50',
         [$uid, now_utc()]
     ) as $s) {
-        $activeSessions[] = serialize_session($s, $curSid !== '' && (string) $s['session_id'] === $curSid);
+        $activeSessions[] = mask_session_view(serialize_session($s, $curSid !== '' && (string) $s['session_id'] === $curSid), $viewerRole);
     }
 
     json_out([
@@ -297,6 +300,7 @@ if ($method === 'PUT') {
     require_csrf();
 
     $target = admin_user_by_uuid(in_raw($_GET, 'uuid'));
+    emergency_target_guard($target);   // v1.10.0 §6-1 — 비상 계정 수정은 CLI 전용(403)
     $uid    = (int) $target['id'];
 
     // D-30: 대상 랭크 방어는 필드 처리 전에 한 번만 판정한다.
@@ -441,7 +445,7 @@ if ($method === 'PUT') {
         }
         foreach ($ovs as $ov) {
             if (!is_array($ov) || !isset($ov['service_id']) || !is_string($ov['service_id'])) {
-                v_fail('service_overrides', '각 항목에 service_id 가 필요합니다.');
+                v_fail('service_overrides', '각 항목에 service_id가 필요합니다.');
             }
             $sid = trim($ov['service_id']);
             $svc = db_val('SELECT service_id FROM ' . T_SERVICES . ' WHERE service_id = ?', [$sid]);
@@ -514,6 +518,17 @@ if ($method === 'PUT') {
     if ($revokeAfter) {
         revoke_user_sessions($uid, 'admin');
     }
+    // v1.9.1 - 역할이 바뀌면 저장된 비상 확인값의 role 이 낡는다 -> 폐기(다음 로그인에 새로 발급). 차단·접근 변화는 재판정.
+    if (in_array('role', $changed, true)) {
+        em_revoke_user($uid, 'role_changed');
+    } else {
+        foreach ($overrideResult as $ovE) {
+            if (in_array('role', $ovE['fields'], true)) {
+                em_revoke_user($uid, 'role_changed', (string) $ovE['service_id']);
+            }
+        }
+    }
+    em_reconcile_user($uid);
 
     $adminLogId = null;
     if ($changed !== []) {
@@ -526,7 +541,7 @@ if ($method === 'PUT') {
 
     $fresh = db_one('SELECT * FROM ' . T_USERS . ' WHERE id = ?', [$uid]);
     json_out([
-        'user'           => serialize_user($fresh === null ? $target : $fresh, null, true),
+        'user'           => mask_user_view(serialize_user($fresh === null ? $target : $fresh, null, true), ctx_global_role($ctx)),
         'changed_fields' => $changed,
         'admin_log_id'   => $adminLogId,
     ]);
@@ -541,6 +556,7 @@ require_csrf();
 // DELETE 는 쿼리·본문 양쪽에서 파라미터를 받는다(쿼리가 우선).
 $in     = array_merge(body_json(), $_GET);
 $target = admin_user_by_uuid(in_raw($in, 'uuid'));
+emergency_target_guard($target);   // v1.10.0 §6-1 — 비상 계정 삭제는 CLI 전용(403)
 $uid    = (int) $target['id'];
 
 // D-30: 진입부 랭크 가드 → 그 뒤에 기존 개별 가드(자기 삭제 금지·마지막 superadmin 보호)를 남긴다.
@@ -560,10 +576,18 @@ $uuid     = (string) $target['uuid'];
 $username = (string) $target['username'];
 
 $result = db_tx(function () use ($uid, $uuid, $username, $reason, $ctx) {
+    // v1.8.4 — 시스템 계정 연결 자동 해제(설계 92 E절, D-172 소비자). **사용자 행을 지우기 전에** 한다 —
+    // 사건 피드가 uuid 를 그 항목의 admin_logs 기록에서 되찾는다(core/accountlink.php 의 al_feed()).
+    $unlinked = al_release_user($uid, 'user_delete');
+
     // 연관 행 정리
     $purged = [
+        'account_links'        => $unlinked,
         'sessions'             => db_exec('DELETE FROM ' . T_SESSIONS . ' WHERE user_id = ?', [$uid]),
         'user_services'        => db_exec('DELETE FROM ' . T_USER_SERVICES . ' WHERE user_id = ?', [$uid]),
+        // v1.10.0 (설계 127 §1) — 그룹 구성원 행. 같은 id 가 재사용되지는 않지만 고아 행을 남기지 않는다
+        'access_group_members' => (defined('T_ACCESS_GROUP_MEMBERS') && db_table_exists(T_ACCESS_GROUP_MEMBERS))
+            ? db_exec('DELETE FROM ' . T_ACCESS_GROUP_MEMBERS . ' WHERE user_id = ?', [$uid]) : 0,
         'user_consents'        => db_exec('DELETE FROM ' . T_CONSENTS . ' WHERE user_id = ?', [$uid]),
         'auth_codes'           => db_exec('DELETE FROM ' . T_AUTH_CODES . ' WHERE user_id = ?', [$uid]),
         'password_resets'      => db_exec('DELETE FROM ' . T_PW_RESETS . ' WHERE user_id = ?', [$uid]),

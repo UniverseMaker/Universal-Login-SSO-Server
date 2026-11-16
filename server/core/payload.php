@@ -159,6 +159,25 @@ function build_payload(?string $serviceId, array $grades, ?array $us = null, arr
         return [];
     }
 
+    // v1.9.0 (80 §5-3 6번째 층) — 서비스 접근 규칙. 집행 5곳만으로는 권한을 뺀 직후의 refresh 가
+    // 새 세션에 시크릿을 싣는다. 규칙은 복제하지 않는다 — service_access_decide() 하나.
+    // 거절은 예외가 아니라 {} (등급 미달·미가입과 같은 규약 — 전용 에러는 오라클이 된다).
+    // 판정 입력은 effective_grades() 의 global_role(전역) · access_grant 다. grades['role'] 이 아니다.
+    //
+    // v1.10.0 (설계 127 §2 · K5 · S1 · S5) — 판정은 access_level_eval() 하나(그룹·기간·단계 포함). 입장 판정을 통과해도
+    // **use 미만(view)에게는 시크릿을 싣지 않는다** — 읽기 전용에 AI 키가 필요한 근거가 없다(D-367 Q-1).
+    // 계정 행은 다시 읽는다(effective_grades() 의 user_id) — 판정에 호출자가 준 등급 사본을 쓰지 않는다.
+    $svcRow = access_service_row($serviceId);
+    $uid    = (int) ($grades['user_id'] ?? 0);
+    $uRow   = $uid > 0 ? db_one('SELECT * FROM ' . T_USERS . ' WHERE id = ?', [$uid]) : null;
+    if ($svcRow === null || $uRow === null) {
+        return [];
+    }
+    $acc = access_level_eval($uRow, $svcRow, $us);
+    if (!access_enter_ok($acc, $svcRow) || access_rank($acc['level']) < ACCESS_RANK['use']) {
+        return [];
+    }
+
     $rows = db_all(
         'SELECT secret_key, secret_value_enc, value_type, min_account_level, min_billing_tier, min_role'
         . ' FROM ' . T_SECRETS . ' WHERE service_id = ? AND status = ? ORDER BY sort_order ASC, id ASC',

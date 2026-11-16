@@ -124,6 +124,26 @@ define('INS_INSTALLED', INS_DIR . '/storage/.installed');
 define('INS_STEP_MIN', 1);
 define('INS_STEP_MAX', 8);
 
+// v1.8.0 — SQLite 기본 저장소 (설계 E-2). 기본 DB 경로는 **설치 루트 기준 상대 경로**이고
+// 설치 루트(버전 폴더 = 상시 서버의 문서 루트)의 **부모** 아래라 URL 공간 밖이다(D-281 · H17-4).
+define('INS_SQLITE_DEFAULT', '../runtime/data/ulogin.sqlite');
+
+// 설치 토큰 (설계 G-5 · D-294) — 수명 60분(파일 mtime 기준) · 틀린 시도 5회/15분.
+define('INS_TOKEN_TTL',      3600);
+define('INS_TOKEN_MAX_FAIL', 5);
+define('INS_TOKEN_WINDOW',   900);
+
+// ---------------------------------------------------------------------
+// 저장소 계층 — v1.8.0. **DSN 을 만드는 3곳(core/db.php · migrate.php · 여기)이 같은 함수를 쓴다**
+// (core/dbdriver.php, 설계 A25). migrations/lib.php 가 dbdriver.php 와 번역기 core/ddl.php 를
+// 함께 올린다. 셋 다 앱 테이블 쿼리가 0줄이라 「bootstrap 을 require 하지 않는다」는 위 제약을
+// 깨지 않는다(config.php 를 읽지 않는다). 종전에는 3단계에서야 lib.php 를 올렸다.
+// ---------------------------------------------------------------------
+if (!defined('ULOGIN_MIGRATE_CTX')) {
+    define('ULOGIN_MIGRATE_CTX', 1);
+}
+require_once INS_DIR . '/migrations/lib.php';
+
 $INS_STEP_NAMES = [
     1 => '환경 점검',
     2 => 'DB 접속',
@@ -384,7 +404,7 @@ function ins_url_list($items, $mode)
         }
         $scheme = strtolower((string) $p['scheme']);
         if ($scheme !== 'http' && $scheme !== 'https') {
-            return [[], 'http 또는 https 만 허용됩니다: ' . $s];
+            return [[], 'http 또는 https만 허용됩니다: ' . $s];
         }
         if ($mode === 'origin') {
             $path = isset($p['path']) ? (string) $p['path'] : '';
@@ -511,17 +531,46 @@ function ins_pdo_reason(PDOException $e)
          . ' / errno ' . $errno . ') 상세 사유는 서버 오류 로그에 기록했습니다.';
 }
 
-/** 설치용 PDO. 자격증명은 예외 메시지로 밖에 내보내지 않는다. */
+/** SQLite 오류를 경로 없이 한국어로 바꾼다 (M-12-10). */
+function ins_sqlite_reason(Throwable $e)
+{
+    if ($e instanceof UloginDbUnavailable) {
+        return 'DB 파일이 손상됐거나 비어 있습니다(무결성 검사 실패). 다른 경로를 쓰거나 백업에서 복구하세요.';
+    }
+    $m = (string) $e->getMessage();
+    if (stripos($m, 'unable to open') !== false || strpos($m, '[14]') !== false) {
+        return 'DB 파일을 열거나 만들 수 없습니다. 폴더가 있고 웹 서버 계정이 쓸 수 있는지 확인하세요.';
+    }
+    if (stripos($m, 'readonly') !== false || stripos($m, 'read-only') !== false) {
+        return 'DB 파일이 읽기 전용입니다. 파일과 폴더의 쓰기 권한을 확인하세요.';
+    }
+    if (stripos($m, 'locked') !== false || stripos($m, 'busy') !== false) {
+        return 'DB 파일을 다른 프로세스가 쓰고 있습니다. 잠시 뒤 다시 시도하세요.';
+    }
+    return 'SQLite 오류가 발생했습니다. 상세 사유는 서버 오류 로그에 기록했습니다.';
+}
+
+/**
+ * 설치용 PDO. 자격증명은 예외 메시지로 밖에 내보내지 않는다.
+ * **DSN·PRAGMA 는 core/dbdriver.php 가 만든다** — core/db.php · migrate.php 와 같은 함수(A25).
+ */
 function ins_pdo($db)
 {
-    $dsn = 'mysql:host=' . $db['host'] . ';dbname=' . $db['name'] . ';charset=utf8mb4';
-    $pdo = new PDO($dsn, $db['user'], $db['pass'], [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ]);
-    $pdo->exec("SET time_zone = '+00:00'");
-    return $pdo;
+    if (isset($db['driver']) && $db['driver'] === 'sqlite') {
+        // 🔴 create=true 는 **설치기만** 쓴다 — DB 파일을 만들 수 있는 것은 설치기뿐이다(D-5-6).
+        //    요청 경로(core/db.php)와 러너(migrate.php)는 create=false 로, 없는 파일을 만들지 않는다.
+        //    경로는 2단계에서 검증해 세션에 둔 절대 경로다. quick_check 는 기존 파일을 고른 경우를 덮는다.
+        return ulogin_pdo_open_sqlite((string) $db['sqlite_abs'], array('create' => true, 'quick_check' => true));
+    }
+    // 포트 — v1.7.0. **설치기는 화면에서 받은 값을 쓴다**(환경변수나 상수를 보지 않는다).
+    //   운영자가 2단계에서 입력한 포트로 실제 접속이 되는지 확인하는 것이 이 화면의 일이고,
+    //   그 값이 그대로 config.php 의 DB_PORT 가 된다. 여기서 다른 출처를 섞으면
+    //   「테스트는 통과했는데 설치 후에는 다른 포트로 붙는」 상태가 만들어진다.
+    //   비어 있으면 포트 요소를 넣지 않는다 = v1.6.0 과 같은 동작(드라이버 기본값 3306).
+    //   DSN 문자열은 v1.7.0 과 글자 단위로 같다: mysql:host=H[;port=N];dbname=D;charset=utf8mb4
+    $port = isset($db['port']) ? trim((string) $db['port']) : '';
+    return ulogin_pdo_open_mysql($db['host'], ($port === '' ? '' : ';port=' . (int) $port),
+        $db['name'], 'utf8mb4', $db['user'], $db['pass']);
 }
 
 // =====================================================================
@@ -539,8 +588,41 @@ function ins_config_spec($v)
     $q = function ($s) { return "'" . str_replace(["\\", "'"], ["\\\\", "\\'"], (string) $s) . "'"; };
     $b = function ($x) { return $x ? 'true' : 'false'; };
 
-    return [
-        ['DB_HOST',    $q($v['db']['host']),   'DB', null],
+    // DB_PORT 는 **입력했을 때만** 넣는다 (v1.7.0 / D-241).
+    //   비워 두면 상수 자체가 생기지 않고, core/dbport.php 의 defined() 가드가
+    //   DSN 에 포트 요소를 넣지 않는다 = v1.0.0~v1.6.0 과 글자 단위로 같은 동작이다.
+    //   값을 지어내 채우면 공용 호스팅 배포의 DSN 이 조용히 바뀐다 — 넣지 않는다.
+    $port = isset($v['db']['port']) ? trim((string) $v['db']['port']) : '';
+    $portRow = $port === ''
+        ? []
+        : [['DB_PORT', (string) (int) $port, null,
+            "DB_PORT — DB 서버의 TCP 포트. 설치 2단계에서 입력한 값이다.\n"
+          . "이 줄을 지우면 DSN 에 포트 요소가 사라져 **드라이버 기본값 3306** 으로 간다.\n"
+          . "한 서버에 다른 MySQL 인스턴스가 함께 돌고 있다면 그 3306 이 **남의 DB** 일 수 있다.\n"
+          . "값이 1~65535 정수가 아니면 요청이 500 이 된다 — 조용히 다른 포트로 넘어가지 않는다.\n"
+          . "환경변수 ULOGIN_DB_PORT 가 설정돼 있으면 그쪽이 이긴다(서버 지킴이가 넣는 값).\n"
+          . "판정식은 server/core/dbport.php 한 곳에만 있다.\n"
+          . ">> 확인: GET /api/health (admin) 의 checks.db_port_pinned"]];
+
+    // v1.8.0 (설계 E-1·E-2) — 저장소 2상수. **새 설치는 언제나 명시적으로 쓴다.**
+    //   (미정의 = 'mysql' 은 v1.7.0 이하 config.php 를 위한 하위호환이지 새 설치의 기본이 아니다)
+    //   config.sample.php · core/dbdriver.php 의 판정과 한 벌이다.
+    $drv = (isset($v['db']['driver']) && $v['db']['driver'] === 'sqlite') ? 'sqlite' : 'mysql';
+    $sqlitePath = ($drv === 'sqlite' && isset($v['db']['sqlite_path'])) ? (string) $v['db']['sqlite_path'] : '';
+
+    return array_merge([
+        ['DB_DRIVER',  $q($drv), 'DB',
+            "DB_DRIVER — 저장소. 'sqlite' 또는 'mysql' 두 값뿐이다(그 밖은 500 — 조용히 넘어가지 않는다).\n"
+          . "이 줄을 지우면 'mysql' 로 동작한다(v1.7.0 이하 config.php 와 같은 해석).\n"
+          . "'sqlite' 이면 DB_HOST·DB_PORT·DB_NAME·DB_USER·DB_PASS·DB_CHARSET 는 읽지 않는다.\n"
+          . "판정은 server/core/dbdriver.php 한 곳에만 있다."],
+        ['DB_SQLITE_PATH', $q($sqlitePath), null,
+            "DB_SQLITE_PATH — SQLite DB 파일. 상대 경로는 설치 루트(server/ 의 부모) 기준이다.\n"
+          . "파일이 없거나 0바이트거나 무결성 검사에 실패하면 503 으로 멈춘다 — **빈 DB 를 만들지 않는다.**\n"
+          . "서버가 켜진 채로 이 파일만 복사하지 마라(-wal 에 반영 안 된 기록이 있다).\n"
+          . "SECRET_ENC_KEY(아래) 없이 DB 만 옮기면 서비스 시크릿을 복호화할 수 없다."],
+        ['DB_HOST',    $q($v['db']['host']),   null, null],
+    ], $portRow, [
         ['DB_NAME',    $q($v['db']['name']),   null, null],
         ['DB_USER',    $q($v['db']['user']),   null, null],
         ['DB_PASS',    $q($v['db']['pass']),   null, null],
@@ -596,11 +678,23 @@ function ins_config_spec($v)
           . "  · TRUST_PROXY=false                  → 이 목록은 쓰이지 않는다. 빈 배열로 둔다\n"
           . "  · TRUST_PROXY=true  + 목록이 비어 있음 → **설정 오류. 요청이 500 이 된다** (위 설명)\n"
           . "  · TRUST_PROXY=true  + 목록에 IP 있음  → REMOTE_ADDR 가 그 목록에 있는 요청에서만\n"
-          . "    X-Forwarded-Proto / X-Forwarded-For 를 신뢰한다. core/bootstrap.php 의\n"
+          . "    X-Forwarded-Proto / X-Forwarded-For 를 신뢰한다. core/transport.php 의\n"
           . "    trust_proxy_headers() 와 core/request.php 의 client_ip() 가 같은 기준을 쓴다\n"
           . "비어 있는 채로 TRUST_PROXY=false 이면 REMOTE_ADDR 만 신뢰한다(기본값·안전).\n"
           . "X-Forwarded-For 를 무조건 믿으면 헤더 위조로 레이트리밋이 통째로 우회된다.\n"
           . "프록시·CDN 의 실제 IP 는 호스팅·CDN 사업자에게 확인해 넣는다."],
+        // v1.7.0 2차 (QA Q17-14 / D-272): 종전에는 config.sample.php 에만 있고 여기에는 없었다.
+        // 기본값 1 이라 동작은 같지만, 웹 설치기를 쓴 운영자는 D-272 가 기대는 손잡이를 볼 수 없었다.
+        // 주석은 config.sample.php 의 같은 블록과 핵심 주장이 일치해야 한다.
+        ['TRUSTED_PROXY_HOPS', '1', null,
+            "TRUSTED_PROXY_HOPS — 실제 클라이언트 IP 가 X-Forwarded-For 의 **오른쪽에서 몇 번째**인가.\n"
+          . "기본 1 (= 맨 오른쪽). 리더 판정 D-272. TRUST_PROXY=true 이고 REMOTE_ADDR 가\n"
+          . "TRUSTED_PROXIES 에 있을 때만 쓰인다.\n"
+          . "Cloudflare / cloudflared 는 접속 IP 를 XFF **맨 끝에 덧붙이므로 1** 이다.\n"
+          . "!! 정하기 전에 실제 체인 모양을 재라. 추측하지 마라 !!\n"
+          . "**2 로 잘못 두면 1 보다 위험하다** — 그 자리를 클라이언트가 쓸 수 있다(QA 실측).\n"
+          . "그 자리에 유효 IP 가 없으면 REMOTE_ADDR 로 떨어지고 서버 로그에 남는다.\n"
+          . ">> 오류 로그 검색어: has no usable entry at position"],
 
         // D-76: 아래 4개 상수(COOKIE_SECURE / COOKIE_SAMESITE / COOKIE_PATH / COOKIE_DOMAIN)의
         // 주석은 **config.sample.php 의 같은 블록과 핵심 주장이 일치해야 한다.**
@@ -775,7 +869,25 @@ function ins_config_spec($v)
         // 새 테이블 상수를 추가할 때는 여기와 그 가드 블록을 **함께** 고쳐라.
         ['T_MIGRATIONS',    "DB_PREFIX . 'schema_migrations'",   null, null],
         ['T_SECRET_ACCESS', "DB_PREFIX . 'secret_access_logs'",  null, null],
-    ];
+        // v1.8.4 추가(시스템 계정 연결, 마이그레이션 0005). 가드 블록과 함께 고쳤다.
+        ['T_EXT_ACCOUNTS',  "DB_PREFIX . 'ext_accounts'",        null, null],
+        ['T_LINK_JOBS',     "DB_PREFIX . 'link_jobs'",           null, null],
+        ['T_LINK_ITEMS',    "DB_PREFIX . 'link_job_items'",      null, null],
+        // v1.9.1 추가(비상 확인값, 마이그레이션 0008). 가드 블록과 함께 고쳤다.
+        ['T_EMERGENCY',     "DB_PREFIX . 'emergency'",          null, null],
+        // v1.10.0 추가(접근 단계 그룹, 마이그레이션 0010). 가드 블록과 함께 고쳤다.
+        ['T_ACCESS_GROUPS',         "DB_PREFIX . 'access_groups'",         null, null],
+        ['T_ACCESS_GROUP_MEMBERS',  "DB_PREFIX . 'access_group_members'",  null, null],
+        ['T_ACCESS_GROUP_SERVICES', "DB_PREFIX . 'access_group_services'", null, null],
+        // v1.9.0 추가(플랫폼, 마이그레이션 0007). 가드 블록과 함께 고쳤다.
+        ['T_RC_DRAFTS',     "DB_PREFIX . 'rc_drafts'",           null, null],
+        ['T_RC_VERSIONS',   "DB_PREFIX . 'rc_versions'",         null, null],
+        ['T_PLAT_LOGS',     "DB_PREFIX . 'plat_logs'",           null, null],
+        ['T_PLAT_AUDIT',    "DB_PREFIX . 'plat_audit'",          null, null],
+        ['T_PLAT_COLLS',    "DB_PREFIX . 'plat_collections'",    null, null],
+        ['T_PLAT_DOCS',     "DB_PREFIX . 'plat_docs'",           null, null],
+        ['T_PLAT_USAGE',    "DB_PREFIX . 'plat_usage'",          null, null],
+    ]);
 }
 
 function ins_render_config($v)
@@ -896,7 +1008,7 @@ function ins_page_start($title, $step)
     echo '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">';
     echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
     echo '<meta name="referrer" content="no-referrer">';
-    echo '<title>ulogin 설치 — ' . ins_h($title) . '</title>';
+    echo '<title>ulogin 설치 · ' . ins_h($title) . '</title>';
     echo '<style>
 :root{--bg:#f4f6f9;--card:#fff;--line:#dde3ea;--tx:#1f2733;--mut:#6b7787;--pri:#2f6feb;--ok:#1a8f4c;--warn:#b26a00;--bad:#c62828;}
 *{box-sizing:border-box}
@@ -942,7 +1054,7 @@ pre{background:#1e2530;color:#e7edf5;padding:14px 16px;border-radius:8px;overflo
 .foot{color:var(--mut);font-size:12px;text-align:center;margin-top:26px}
 </style></head><body><div class="wrap">';
     $pkgVer = ins_package_version();
-    echo '<h1>ulogin 설치</h1><p class="sub">범용 로그인 서비스'
+    echo '<h1>ulogin 설치</h1><p class="sub">통합로그인서비스'
        . ($pkgVer === '' ? '' : ' v' . ins_h($pkgVer))
        . ' — ' . ins_h($title) . '</p>';
     echo '<div class="steps">';
@@ -974,6 +1086,293 @@ function ins_fatal($msg, $logDetail = null)
     echo '</div>';
     ins_page_end();
     exit;
+}
+
+// =====================================================================
+// 설치 토큰 — v1.8.0 설계 G-5 · 리더 판정 D-294 (Critical: 설치 선점)
+//
+// 터널이 이 PC 에서 돌아 **외부 요청의 REMOTE_ADDR 도 127.0.0.1** 이다. 그래서 「루프백만
+// 허용」으로 막을 수 없고(D-234·D-272 와 같은 논증), Host 헤더도 클라이언트가 정한다(D-233).
+// 설치 전 서버가 뜨는 순간 인터넷의 누구든 먼저 관리자가 될 수 있다.
+// → **「이 PC 의 파일을 읽을 수 있다」는 증명을 요구한다**(Jupyter·GitLab 초기 비밀번호 방식).
+//
+//  · 토큰: random_bytes(32) → hex 64자. 설치 전에만, 파일이 없을 때 첫 요청이 만든다(배타 생성 'x')
+//  · 🔴 위치(Windows): %ProgramData%/ulogin/web/.install-token — **프로젝트 트리에 두지 않는다.**
+//    프로젝트 트리는 사용자 수용으로 CodexSandboxUsers 가 읽는다(D-282). 그 계정이 토큰을 읽으면
+//    먼저 설치한다. ProgramData 쪽은 D-275 에서 BUILTIN\Users·CodexSandbox* 0건으로 좁혀 둔 트리다.
+//    그 폴더가 없으면 **설치를 진행하지 않는다**(프로젝트 트리로 폴백하지 않는다 — fail-closed).
+//    Windows 가 아니면(공용 호스팅) server/storage/.install-token (.htaccess 차단 + 라우터 denyTrees).
+//  · 🔴 새 파일은 부모의 상속 ACL 을 받는다(D-264). 만든 직후 **사람이** `icacls` 로 확인한다 —
+//    `/T` 를 붙이지 마라(D-274: <설치루트> 접합을 따라 들어간다).
+//  · 수명: 60분(mtime). 지나면 거부 — 파일을 지우고 새로고침하면 새 토큰이 생긴다. 설치 완료 즉시 삭제
+//  · 제출: 1단계 폼의 입력 칸 한 번. 맞으면 **세션 ID 를 갈고**(고정 공격 방지) 세션에 토큰의
+//    SHA-256 을 둔다. 이후 매 POST 는 그 해시가 **지금 파일의 토큰**과 같은지 다시 본다 —
+//    파일이 지워지거나 만료되면 진행 중인 설치도 멈춘다.
+//    (설계는 「매 POST 에 hidden 으로 동봉」이었다. 그러면 토큰 값이 **매 응답 HTML 에 실린다.**
+//     리더 지시 「토큰 값을 응답 본문에 싣지 마라」와 충돌해 세션 해시로 바꿨다. 설치기는
+//     원래 PHP 세션으로 단계 상태를 들고 다닌다 — 설계 G-5 의 「세션을 쓰지 않는다」는 사실과 달랐다)
+//  · 실패: 403 + 시도 제한 5회/15분 — migrate.php mig_throttle_consume() 규약(파일 하나를
+//    flock(LOCK_EX) 로 잡은 채 읽고·판정하고·쓴다, **셀 수 없으면 거부**).
+//    🔴 감사 M18-1: **맞는 토큰을 먼저 대조하고 틀린 것만 센다.** 토큰은 256비트라 무차별 대입이
+//    성립하지 않고, 먼저 세면 공개 도메인의 5요청/15분이 운영자를 무기한 429 로 막는다.
+//    빈 입력은 소모하지 않는다(V14-L-3 — 익명 5요청으로 운영자를 잠그는 범위를 넓히지 않는다).
+//  · **토큰 값은 어떤 응답에도 싣지 않는다.** 경로는 비밀이 아니라 화면에 적는다.
+// =====================================================================
+
+/** 토큰 파일을 둘 디렉터리. null 이면 둘 곳이 없다(→ 설치 거부). */
+function ins_token_dir()
+{
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $pd = getenv('ProgramData');
+        if ($pd === false || trim((string) $pd) === '') {
+            $pd = getenv('ALLUSERSPROFILE');
+        }
+        if ($pd === false || trim((string) $pd) === '') {
+            return null;
+        }
+        $dir = rtrim(str_replace('\\', '/', (string) $pd), '/') . '/ulogin/web';
+        return is_dir($dir) ? $dir : null;
+    }
+    if (!is_dir(INS_STORAGE)) {
+        ins_write_guarded_dir(INS_STORAGE);
+    }
+    return is_dir(INS_STORAGE) ? INS_STORAGE : null;
+}
+
+function ins_token_file()
+{
+    $d = ins_token_dir();
+    return $d === null ? null : $d . '/.install-token';
+}
+
+/** 화면에 적을 토큰 파일 위치(비밀이 아니다). */
+function ins_token_where()
+{
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $f = ins_token_file();
+        return $f !== null ? $f : '%ProgramData%/ulogin/web/.install-token';
+    }
+    return 'server/storage/.install-token';
+}
+
+/**
+ * 토큰 파일이 없으면 만든다.
+ * @return string 'ok' | 'expired' | 'nodir' | 'fail'
+ */
+function ins_token_ensure()
+{
+    $f = ins_token_file();
+    if ($f === null) {
+        return 'nodir';
+    }
+    clearstatcache(true, $f);
+    if (is_file($f)) {
+        $mt = @filemtime($f);
+        if ($mt === false) {
+            return 'fail';
+        }
+        return (time() - (int) $mt > INS_TOKEN_TTL) ? 'expired' : 'ok';
+    }
+    // 배타 생성 — 동시에 도착한 첫 요청 둘이 서로의 토큰을 덮어쓰지 않는다.
+    $fh = @fopen($f, 'x');
+    if ($fh === false) {
+        clearstatcache(true, $f);
+        return is_file($f) ? 'ok' : 'fail';
+    }
+    $ok = fwrite($fh, bin2hex(random_bytes(32)) . "\n") !== false;
+    fflush($fh);
+    fclose($fh);
+    @chmod($f, 0600);
+    if (!$ok) {
+        @unlink($f);
+        return 'fail';
+    }
+    // 값은 남기지 않는다. 위치만 — 운영자가 ACL 을 확인할 수 있게.
+    error_log('[ulogin-install] install token file created: ' . $f
+        . ' (valid 60 min). check its ACL with icacls (never with /T).');
+    return 'ok';
+}
+
+/** 지금 유효한 토큰. 파일 없음·만료·형식 오류면 null. */
+function ins_token_current()
+{
+    $f = ins_token_file();
+    if ($f === null) {
+        return null;
+    }
+    clearstatcache(true, $f);
+    if (!is_file($f)) {
+        return null;
+    }
+    $mt = @filemtime($f);
+    if ($mt === false || time() - (int) $mt > INS_TOKEN_TTL) {
+        return null;
+    }
+    $raw = @file_get_contents($f, false, null, 0, 256);
+    $t   = strtolower(trim((string) $raw));
+    return preg_match('/^[0-9a-f]{64}$/', $t) === 1 ? $t : null;
+}
+
+/** 이 세션이 지금의 토큰으로 인증돼 있는가. 파일이 바뀌거나 사라지면 false. */
+function ins_token_session_ok()
+{
+    if (empty($_SESSION['ins_tok']) || !is_string($_SESSION['ins_tok'])) {
+        return false;
+    }
+    $t = ins_token_current();
+    return $t !== null && hash_equals((string) $_SESSION['ins_tok'], hash('sha256', $t));
+}
+
+function ins_token_throttle_file()
+{
+    $d = ins_token_dir();
+    return $d === null ? null : $d . '/.install-token.throttle';
+}
+
+/**
+ * 틀린 토큰 시도 제한 — **migrate.php mig_throttle_consume() 와 같은 규약**(V14-H-2 · V14b-M-2).
+ * 핸들 하나를 flock(LOCK_EX) 로 잡은 채 읽고·판정하고·쓴다. 검증 **전에** 소모한다.
+ * 한도를 넘으면 429 로 응답하고 끝낸다.
+ * @return bool 셀 수 있었는가. **false 면 호출자가 거부한다** — 반환값을 버리지 마라.
+ */
+function ins_token_throttle_consume()
+{
+    $path = ins_token_throttle_file();
+    if ($path === null) {
+        return false;
+    }
+    $now = time();
+    $fh  = @fopen($path, 'c+');
+    if ($fh === false) {
+        error_log('[ulogin-install] install token throttle file not writable: ' . $path);
+        return false;
+    }
+    if (!flock($fh, LOCK_EX)) {
+        fclose($fh);
+        error_log('[ulogin-install] install token throttle lock failed: ' . $path);
+        return false;
+    }
+    $raw = stream_get_contents($fh);
+    $st  = ($raw === false) ? null : json_decode((string) $raw, true);
+    if (!is_array($st) || !isset($st['first']) || ($now - (int) $st['first']) > INS_TOKEN_WINDOW) {
+        $st = array('count' => 0, 'first' => $now);
+    }
+    if ((int) $st['count'] >= INS_TOKEN_MAX_FAIL) {
+        $retry = INS_TOKEN_WINDOW - ($now - (int) $st['first']);
+        flock($fh, LOCK_UN);
+        fclose($fh);
+        error_log('[ulogin-install] install token attempts exhausted. from '
+            . (string) (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '?'));
+        ins_token_page('설치 토큰 시도 횟수를 초과했습니다. ' . max(1, $retry) . '초 뒤에 다시 시도하세요.', 429);
+    }
+    $st['count'] = (int) $st['count'] + 1;
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, (string) json_encode($st));
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    @chmod($path, 0600);
+    return true;
+}
+
+function ins_token_throttle_clear()
+{
+    $p = ins_token_throttle_file();
+    if ($p !== null && is_file($p)) {
+        @unlink($p);
+    }
+}
+
+/** 토큰 입력 칸(HTML). 값은 절대 채우지 않는다. */
+function ins_token_field()
+{
+    return '<label>설치 토큰'
+         . '<input type="password" name="install_token" value="" required autocomplete="off" spellcheck="false" maxlength="128">'
+         . '<span class="hint">이 서버를 운영하는 PC에서 <code>' . ins_h(ins_token_where()) . '</code> 파일을 열어 '
+         . '내용(64자)을 붙여 넣으세요. 파일이 없으면 이 페이지를 한 번 새로고침하면 생깁니다. '
+         . '<b>만든 지 60분이 지나면 무효</b>입니다. 그때는 파일을 지우고 새로고침하세요.</span></label>';
+}
+
+/** 토큰 요구 화면을 내고 끝낸다. */
+function ins_token_page($msg, $status)
+{
+    if (!headers_sent()) {
+        http_response_code((int) $status);
+    }
+    ins_page_start('설치 토큰 확인', 1);
+    echo '<div class="card">';
+    if ($msg !== null) {
+        echo '<div class="msg err">' . ins_h($msg) . '</div>';
+    }
+    echo '<p>이 설치기는 <b>서버 PC의 파일을 읽을 수 있는 사람</b>만 진행할 수 있습니다. '
+       . '공개 주소로 먼저 들어온 제3자가 관리자 계정을 정하는 것을 막기 위해서입니다.</p>';
+    echo '<form method="post">' . ins_csrf_field() . '<input type="hidden" name="step" value="1">'
+       . ins_token_field() . '<button type="submit">확인 후 다음</button></form></div>';
+    ins_page_end();
+    exit;
+}
+
+/** 토큰을 둘 곳이 없거나 만들 수 없다 — 설치를 진행하지 않는다(fail-closed). */
+function ins_token_unavailable($state)
+{
+    error_log('[ulogin-install] install token unavailable (' . $state . '). installation refused.');
+    if (!headers_sent()) {
+        http_response_code(503);
+    }
+    ins_page_start('설치 토큰을 만들 수 없음', 0);
+    echo '<div class="card"><div class="msg err"><b>설치 토큰 파일을 만들 수 없어 설치를 진행하지 않습니다.</b></div>';
+    if (DIRECTORY_SEPARATOR === '\\') {
+        echo '<p>서버 PC에 <code>%ProgramData%\\ulogin\\web</code> 폴더가 있어야 하고 웹 서버 계정이 그 폴더에 쓸 수 있어야 합니다. '
+           . '토큰을 프로젝트 폴더에 두지 않는 이유는 다른 로컬 계정이 그 폴더를 읽을 수 있기 때문입니다.</p>';
+    } else {
+        echo '<p><code>server/storage/</code> 폴더를 웹 서버가 쓸 수 있게 해 주세요.</p>';
+    }
+    echo '</div>';
+    ins_page_end();
+    exit;
+}
+
+/**
+ * 🔴 **설치 POST 의 관문.** 라우터가 CSRF 검사 직후, 단계 분기 **전에** 부른다.
+ * 통과하지 못하면 응답하고 끝낸다. 이 한 줄을 지우면 토큰 없이 2단계로 넘어간다(변이 검증 항목).
+ */
+function ins_token_gate($submitted)
+{
+    if (ins_token_session_ok()) {
+        return;
+    }
+    $state = ins_token_ensure();
+    if ($state === 'nodir' || $state === 'fail') {
+        ins_token_unavailable($state);
+    }
+    if ($state === 'expired') {
+        ins_token_page('설치 토큰이 만료되었습니다(만든 지 60분 초과). 토큰 파일을 지운 뒤 이 페이지를 새로 여세요. 새 토큰이 만들어집니다.', 403);
+    }
+    $given = strtolower(trim((string) ins_post('install_token')));
+    if ($submitted !== '1' || $given === '') {
+        error_log('[ulogin-install] POST without a verified install token refused. from '
+            . (string) (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '?'));
+        ins_token_page('설치 토큰이 필요합니다.', 403);
+    }
+    $t = ins_token_current();
+    if ($t !== null && preg_match('/^[0-9a-f]{64}$/', $given) === 1 && hash_equals($t, $given)) {
+        // 256비트 토큰 — 무차별 대입이 성립하지 않으므로 **맞는 토큰은 제한에 걸리지 않는다**(감사 M18-1).
+        // 먼저 세면 원격 5요청/15분으로 루프백 운영자까지 429 를 받는다(카운터가 하나다 — 실측).
+        ins_token_throttle_clear();
+        // 세션 고정 방지 — 토큰을 아는 사람이 공격자가 미리 심어 둔 세션 ID 를 인증해 주지 않게 한다.
+        @session_regenerate_id(true);
+        $_SESSION['ins_tok'] = hash('sha256', $t);
+        return;
+    }
+    // 틀린 것만 센다. 한도 초과면 429(로그 범람·자원 소모 상한으로만 남긴다).
+    // 셀 수 없으면 거부한다 — 반환값을 버리지 마라(V14b-M-2).
+    if (!ins_token_throttle_consume()) {
+        ins_token_unavailable('throttle');
+    }
+    error_log('[ulogin-install] wrong install token. from '
+        . (string) (isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '?'));
+    ins_token_page('설치 토큰이 맞지 않습니다.', 403);
 }
 
 // =====================================================================
@@ -1027,6 +1426,25 @@ if ($insLockedBy !== []) {
 //   세션 파일은 웹 루트 밖(PHP 세션 디렉토리)에 있고 설치 완료 시 폐기한다.
 // =====================================================================
 if (session_status() !== PHP_SESSION_ACTIVE) {
+    // 감사 H18-1 — 설치 세션 파일을 **토큰과 같은 신뢰 경계**에 둔다.
+    // 검증된 세션은 토큰과 같은 권한이다. 세션 파일이 다른 계정이 읽고 쓰는 폴더
+    // (session.save_path 미설정 → %TEMP%, 이 PC 에서 CodexSandboxUsers:(M))에 있으면,
+    // 그 계정은 파일 이름(=세션 ID)과 평문 CSRF 를 읽어 **토큰 없이** 설치를 이어 간다(보안 실측).
+    // 그래서 토큰 폴더(D-275 로 좁힌 ProgramData 트리) 아래에만 둔다. 못 두면 설치하지 않는다.
+    // 새 폴더는 부모의 상속 ACL 을 받는다(D-264) — 처음 만든 뒤 icacls 로 확인한다(/T 금지, D-274).
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $insTokDir = ins_token_dir();
+        if ($insTokDir === null) {
+            ins_token_unavailable('nodir');
+        }
+        $insSessDir = $insTokDir . '/install-sessions';
+        if (!is_dir($insSessDir) && !@mkdir($insSessDir, 0700)) {
+            ins_token_unavailable('sessdir');
+        }
+        if (@session_save_path($insSessDir) === false || !is_writable($insSessDir)) {
+            ins_token_unavailable('sessdir');
+        }
+    }
     @session_name('ULOGIN_INSTALL');
     @session_set_cookie_params(0, '/', '', ins_is_https(), true);
     if (!@session_start()) {
@@ -1076,43 +1494,54 @@ function ins_env_checks()
     // 경고는 아래 정보성(권고) 항목에만 넣는다 — 필수 항목에 두면 다시 막힌 것처럼 보인다.
     $phpOk = version_compare(PHP_VERSION, '7.2.0', '>=');
     $req[] = ['PHP 버전 7.2 이상', $phpOk, PHP_VERSION];
-    $req[] = ['PDO MySQL 확장 (pdo_mysql)', extension_loaded('pdo_mysql'), extension_loaded('pdo_mysql') ? '사용 가능' : '없음'];
+    // v1.8.0 (설계 E-2): 필수는 「pdo_sqlite **또는** pdo_mysql」. 종전처럼 pdo_mysql 만 필수로 두면
+    // SQLite 로 쓰려는 호스팅에서 설치가 막힌다. 두 확장의 유무는 아래 정보성 항목에 각각 보인다.
+    $hasSqlite = extension_loaded('pdo_sqlite');
+    $hasMysql  = extension_loaded('pdo_mysql');
+    $req[] = ['PDO 저장소 드라이버 (pdo_sqlite 또는 pdo_mysql)', $hasSqlite || $hasMysql,
+        ($hasSqlite || $hasMysql) ? '사용 가능' : '둘 다 없음: 호스팅에 pdo_sqlite 또는 pdo_mysql 활성화를 요청하세요'];
     $req[] = ['OpenSSL 확장 (openssl)', extension_loaded('openssl') && function_exists('openssl_encrypt'),
         extension_loaded('openssl') ? '사용 가능' : '없음'];
     $req[] = ['mbstring 확장', extension_loaded('mbstring'), extension_loaded('mbstring') ? '사용 가능' : '없음'];
     $req[] = ['JSON 확장', function_exists('json_encode'), function_exists('json_encode') ? '사용 가능' : '없음'];
-    $req[] = ['schema.sql 읽기', is_readable(INS_SCHEMA), is_readable(INS_SCHEMA) ? '읽을 수 있음' : 'server/schema.sql 을 찾을 수 없음'];
+    $req[] = ['schema.sql 읽기', is_readable(INS_SCHEMA), is_readable(INS_SCHEMA) ? '읽을 수 있음' : 'server/schema.sql을 찾을 수 없음'];
     $req[] = ['random_bytes() 사용 가능', function_exists('random_bytes'), function_exists('random_bytes') ? '사용 가능' : '없음'];
 
     // D-57 / D-60 — PHP 보안 지원 상태. **권고 항목이다. 설치를 막지 않는다.**
     // 정보성 표의 첫 줄에 둔다(가장 먼저 눈에 들어오는 자리).
     if (version_compare(PHP_VERSION, '7.3.0', '<')) {
         $info[] = ['PHP 보안 지원 상태', false,
-            'PHP 7.2 는 2019년 11월에 보안 지원이 종료된 버전입니다. 호스팅에 PHP 7.4 이상 옵션이 있으면 '
+            'PHP 7.2는 2019년 11월에 보안 지원이 종료된 버전입니다. 호스팅에 PHP 7.4 이상 옵션이 있으면 '
           . '올리는 것을 권합니다. 이 시스템은 AI API 키를 다룹니다. '
           . '— 설치는 이대로 진행됩니다(이 항목은 설치를 막지 않습니다).'];
     } elseif (version_compare(PHP_VERSION, '7.4.0', '<')) {
         $info[] = ['PHP 보안 지원 상태', false,
-            'PHP 7.3 은 2021년 12월에 보안 지원이 종료된 버전입니다. 호스팅에 PHP 7.4 이상 옵션이 있으면 '
+            'PHP 7.3은 2021년 12월에 보안 지원이 종료된 버전입니다. 호스팅에 PHP 7.4 이상 옵션이 있으면 '
           . '올리는 것을 권합니다. 이 시스템은 AI API 키를 다룹니다. '
           . '— 설치는 이대로 진행됩니다(이 항목은 설치를 막지 않습니다).'];
     } else {
         $info[] = ['PHP 보안 지원 상태', true,
-            PHP_VERSION . ' — 7.4 이상입니다. (이 시스템은 7.2 부터 동작하지만 높은 쪽이 낫습니다)'];
+            PHP_VERSION . ' — 7.4 이상입니다. (이 시스템은 7.2부터 동작하지만 높은 쪽이 낫습니다)'];
     }
+
+    $info[] = ['PDO SQLite (pdo_sqlite)', $hasSqlite,
+        $hasSqlite ? '사용 가능: SQLite 저장소(권장)를 고를 수 있습니다'
+                   : '없음: SQLite를 고를 수 없습니다. MySQL 저장소로 설치하세요'];
+    $info[] = ['PDO MySQL (pdo_mysql)', $hasMysql,
+        $hasMysql ? '사용 가능: MySQL 저장소를 고를 수 있습니다' : '없음: MySQL 저장소를 고를 수 없습니다'];
 
     $rw = ins_has_mod_rewrite();
     $info[] = ['mod_rewrite', $rw === null ? null : $rw,
         $rw === null ? '확인 불가 (없어도 /api/auth/login.php 경로로 동작합니다)'
-                     : ($rw ? '사용 가능 — 확장자 없는 경로도 동작합니다'
-                            : '없음 — API 는 .php 확장자 경로로 호출해야 합니다')];
+                     : ($rw ? '사용 가능: 확장자 없는 경로도 동작합니다'
+                            : '없음: API는 .php 확장자 경로로 호출해야 합니다')];
     $info[] = ['mail() 함수', function_exists('mail'),
         function_exists('mail') ? '존재 (실제 발송 가능 여부는 호스팅에 따라 다릅니다)'
-                                : '없음 — 메일 드라이버를 log 로만 쓸 수 있습니다'];
-    $info[] = ['현재 접속 방식', ins_is_https(), ins_is_https() ? 'HTTPS' : 'HTTP (평문) — 4단계에서 경고를 확인하세요'];
+                                : '없음: 메일 드라이버를 log로만 쓸 수 있습니다'];
+    $info[] = ['현재 접속 방식', ins_is_https(), ins_is_https() ? 'HTTPS' : 'HTTP (평문): 4단계에서 경고를 확인하세요'];
     $info[] = ['server/ 쓰기 권한', is_writable(INS_DIR),
-        is_writable(INS_DIR) ? 'config.php 를 자동 생성할 수 있습니다'
-                             : '쓰기 불가 — config.php 내용을 화면에 출력하니 손으로 만들면 됩니다'];
+        is_writable(INS_DIR) ? 'config.php를 자동 생성할 수 있습니다'
+                             : '쓰기 불가: config.php 내용을 화면에 출력하니 손으로 만들면 됩니다'];
     $info[] = ['server/storage/ 쓰기 권한',
         is_dir(INS_STORAGE) ? is_writable(INS_STORAGE) : is_writable(INS_DIR),
         'log 메일 드라이버가 메일 본문을 여기에 저장합니다'];
@@ -1145,7 +1574,7 @@ function ins_step1()
        . '</div></div>';
 
     echo '<div class="card">';
-    echo '<p>이 서버가 ulogin 을 돌릴 수 있는지 먼저 확인합니다. '
+    echo '<p>이 서버가 ulogin을 돌릴 수 있는지 먼저 확인합니다. '
        . '<b>필수 항목</b>이 하나라도 없으면 설치를 진행할 수 없습니다.</p>';
 
     echo '<h2>필수 항목</h2><table><tr><th>항목</th><th>결과</th><th>비고</th></tr>';
@@ -1155,7 +1584,7 @@ function ins_step1()
     }
     echo '</table>';
 
-    echo '<h2>정보성 항목 <span class="hint">(없어도 설치는 진행됩니다 — 리더 판정 D-8)</span></h2>';
+    echo '<h2>정보성 항목 <span class="hint">(없어도 설치는 진행됩니다. 리더 판정 D-8)</span></h2>';
     echo '<table><tr><th>항목</th><th>결과</th><th>비고</th></tr>';
     foreach ($info as $r) {
         if ($r[1] === null) {
@@ -1173,8 +1602,11 @@ function ins_step1()
         echo '<div class="msg err">필수 항목을 충족하지 못했습니다. 호스팅 관리자에게 위 확장 모듈 활성화를 요청한 뒤 이 페이지를 새로고침하세요.</div>';
         echo '<button disabled>다음 단계로</button>';
     } else {
+        // 설치 토큰(설계 G-5) — 이 세션이 아직 토큰을 내지 않았으면 입력 칸을 붙인다. 값은 채우지 않는다.
         echo '<form method="post">' . ins_csrf_field()
-           . '<input type="hidden" name="step" value="1"><button type="submit">다음 — DB 접속 정보 입력</button></form>';
+           . '<input type="hidden" name="step" value="1">'
+           . (ins_token_session_ok() ? '' : ins_token_field())
+           . '<button type="submit">다음: DB 접속 정보 입력</button></form>';
     }
     echo '</div>';
     ins_page_end();
@@ -1187,50 +1619,267 @@ function ins_step1()
 function ins_step2($err = null, $vals = null)
 {
     if ($vals === null) {
-        $vals = ['host' => 'localhost', 'name' => '', 'user' => '', 'prefix' => 'app_ulogin_'];
+        // 포트 칸의 초기값은 환경변수 ULOGIN_DB_PORT 가 있으면 그 값으로 채운다 (v1.7.0).
+        //   서버 지킴이가 기동 시 넣어 주는 값이고, 운영자가 그 번호를 따로 알아내야 하는
+        //   상황을 만들지 않기 위해서다. **제안일 뿐이고 접속에 쓰이는 값은 입력된 값이다**
+        //   — 운영자가 지우거나 고치면 그쪽이 쓰인다(ins_pdo 주석 참고).
+        //   환경변수가 없으면 비워 둔다. 비워 두면 v1.6.0 과 같은 동작이다.
+        $envPort = getenv('ULOGIN_DB_PORT');
+        $envPort = ($envPort === false) ? '' : trim((string) $envPort);
+        if (preg_match('/^[0-9]{1,5}$/', $envPort) !== 1) {
+            $envPort = '';
+        }
+        $vals = ['host' => 'localhost', 'port' => $envPort, 'name' => '', 'user' => '', 'prefix' => 'app_ulogin_'];
+    }
+    if (!isset($vals['port'])) {
+        $vals['port'] = '';
+    }
+    $hasSqlite = extension_loaded('pdo_sqlite');
+    $hasMysql  = extension_loaded('pdo_mysql');
+    if (!isset($vals['driver'])) {
+        $vals['driver'] = $hasSqlite ? 'sqlite' : 'mysql';
+    }
+    if (!isset($vals['sqlite_path'])) {
+        $vals['sqlite_path'] = INS_SQLITE_DEFAULT;
     }
     ins_page_start('DB 접속 정보', 2);
     echo '<div class="card">';
     if ($err !== null) {
         echo '<div class="msg err">' . ins_h($err) . '</div>';
     }
-    echo '<p>호스팅에서 발급받은 MySQL 접속 정보를 입력하세요. <b>DB 는 미리 생성되어 있어야 합니다</b> — 설치기는 DB 자체를 만들지 않습니다.</p>';
     echo '<form method="post">' . ins_csrf_field() . '<input type="hidden" name="step" value="2">';
 
+    // v1.8.0 (설계 E-2) — 저장소 선택을 맨 위에. SQLite 를 고르면 경로 한 칸만 보이고
+    // 호스트·계정·포트 칸은 숨긴다(CSS 형제 선택자 — 이 화면은 JS 를 쓰지 않는다).
+    // 숨겨진 칸에는 required 를 걸지 않는다(브라우저가 제출을 막는다). 서버가 검증한다.
+    echo '<style>.drv>input[type=radio]{margin:0 6px 0 0}.drv>label.opt{display:inline-block;font-weight:600;margin:6px 18px 6px 0}'
+       . '#drv-sqlite:checked~.f-mysql{display:none}#drv-mysql:checked~.f-sqlite{display:none}</style>';
+    echo '<h2>저장소</h2><div class="drv">';
+    echo '<input type="radio" id="drv-sqlite" name="db_driver" value="sqlite"'
+       . ($vals['driver'] === 'sqlite' ? ' checked' : '') . ($hasSqlite ? '' : ' disabled') . '>'
+       . '<label class="opt" for="drv-sqlite">SQLite (권장)' . ($hasSqlite ? '' : ' — pdo_sqlite 없음') . '</label>';
+    echo '<input type="radio" id="drv-mysql" name="db_driver" value="mysql"'
+       . ($vals['driver'] === 'mysql' ? ' checked' : '') . ($hasMysql ? '' : ' disabled') . '>'
+       . '<label class="opt" for="drv-mysql">MySQL / MariaDB' . ($hasMysql ? '' : ' — pdo_mysql 없음') . '</label>';
+
+    echo '<div class="f-sqlite">';
+    echo '<p class="hint">별도 DB 서버 없이 <b>파일 하나</b>에 저장합니다. 폴더째 복사하면 데이터가 함께 옮겨집니다. '
+       . '단, 서버가 켜진 채로 파일만 복사하면 안 됩니다(아직 반영되지 않은 기록이 <code>-wal</code> 파일에 있습니다).</p>';
+    echo '<label>DB 파일 경로<input type="text" name="db_sqlite_path" value="' . ins_h($vals['sqlite_path'])
+       . '" autocomplete="off" spellcheck="false">'
+       . '<span class="hint">상대 경로는 <b>설치 루트</b>(<code>server/</code> 의 상위 폴더) 기준입니다. '
+       . '기본값 <code>' . ins_h(INS_SQLITE_DEFAULT) . '</code> 은 설치 루트 <b>바깥</b> — 웹에서 주소로 가리킬 수 없는 자리입니다. '
+       . '<b>그대로 두세요.</b> 웹 문서 루트 안의 경로를 적으면 설치기가 그 파일이 웹으로 내려오지 않는지 직접 확인하고, '
+       . '확인할 수 없거나 내려오면 진행하지 않습니다. 폴더가 없으면 만듭니다.</span></label>';
+    echo '</div>';
+
+    echo '<div class="f-mysql">';
+    echo '<p>호스팅에서 발급받은 MySQL 접속 정보를 입력하세요. <b>DB는 미리 생성되어 있어야 합니다</b> — 설치기는 DB 자체를 만들지 않습니다.</p>';
     echo '<label>DB 호스트<input type="text" name="db_host" value="' . ins_h($vals['host'])
-       . '" required autocomplete="off"><span class="hint">대부분 <code>localhost</code>. 별도 DB 서버를 쓰면 호스팅이 안내한 주소.</span></label>';
+       . '" autocomplete="off"><span class="hint">대부분 <code>localhost</code>. 별도 DB 서버를 쓰면 호스팅이 안내한 주소.</span></label>';
+    echo '<label>DB 포트<input type="text" name="db_port" value="' . ins_h($vals['port'])
+       . '" autocomplete="off" inputmode="numeric" pattern="[0-9]{1,5}">'
+       . '<span class="hint">비워 두면 기본값 <code>3306</code> 으로 접속합니다. '
+       . '<b>같은 서버에 다른 MySQL 인스턴스가 함께 돌고 있다면 반드시 적으세요</b> — '
+       . '비워 두면 그 3306이 다른 서비스의 DB 일 수 있고, 조용히 그쪽에 붙습니다. '
+       . '호스팅이 포트를 따로 안내하지 않았다면 비워 두세요.</span></label>';
     echo '<label>DB 이름<input type="text" name="db_name" value="' . ins_h($vals['name'])
-       . '" required autocomplete="off"><span class="hint">예: <code>ulogin_db</code>. 호스팅이 발급한 이름을 그대로 쓰세요.</span></label>';
+       . '" autocomplete="off"><span class="hint">예: <code>ulogin_db</code>. 호스팅이 발급한 이름을 그대로 쓰세요.</span></label>';
     echo '<label>DB 사용자<input type="text" name="db_user" value="' . ins_h($vals['user'])
-       . '" required autocomplete="off"><span class="hint">예: <code>ulogin_user</code>. 호스팅에 따라 DB 이름과 같은 값일 수 있습니다.</span></label>';
+       . '" autocomplete="off"><span class="hint">예: <code>ulogin_user</code>. 호스팅에 따라 DB 이름과 같은 값일 수 있습니다.</span></label>';
     echo '<label>DB 비밀번호<input type="password" name="db_pass" value="" autocomplete="new-password">'
        . '<span class="hint">화면·로그에 다시 표시하지 않습니다. 비밀번호가 없는 계정이면 비워 두세요.</span></label>';
+    echo '</div></div>';   // .f-mysql · .drv
     echo '<label>테이블 prefix<input type="text" name="db_prefix" value="' . ins_h($vals['prefix'])
        . '" required autocomplete="off" pattern="[a-z0-9_]{1,32}">'
        . '<span class="hint">영문 소문자·숫자·밑줄 1~32자. 기본값 <code>app_ulogin_</code>. '
-       . '한 DB 를 여러 서비스가 공유하므로 prefix 로 테이블을 구분합니다. '
+       . '한 DB를 여러 서비스가 공유하므로 prefix로 테이블을 구분합니다. '
        . '<b>설치 후에는 바꿀 수 없습니다.</b></span></label>';
 
     echo '<button type="submit">접속 테스트 후 다음</button></form></div>';
     ins_page_end();
 }
 
+/**
+ * 경로가 웹 문서 루트(또는 설치 루트) 안인가. 안이면 그 디렉터리의 URL 경로 목록을 돌려준다.
+ * 판정은 **realpath 접두 비교**(대소문자 무시) — 문자열 이름 비교로 새 판정을 만들지 않는다(D-3-1).
+ * 이것은 경고·프로브 대상 고르기일 뿐이다. 실제 방어는 아래 HTTP 프로브다(설계 D-2 ④).
+ * @return array URL 경로 목록(예: ['/server/storage/db']). 비어 있으면 둘 다 밖이다
+ */
+function ins_dir_url_paths($dir)
+{
+    $real = @realpath($dir);
+    if ($real === false) {
+        return array();
+    }
+    $real = rtrim(str_replace('\\', '/', $real), '/');
+    $cands = array();
+    $doc = isset($_SERVER['DOCUMENT_ROOT']) ? (string) $_SERVER['DOCUMENT_ROOT'] : '';
+    if ($doc !== '') {
+        $cands[] = array($doc, '');
+    }
+    // 설치 루트의 URL 경로 = install.php 의 URL 에서 두 단계(/server/install.php)를 벗긴 것
+    $self = isset($_SERVER['SCRIPT_NAME']) ? (string) $_SERVER['SCRIPT_NAME'] : '/server/install.php';
+    $root = rtrim(str_replace('\\', '/', dirname(dirname($self))), '/');
+    if ($root === '.' || $root === '/') {
+        $root = '';
+    }
+    $cands[] = array(dirname(INS_DIR), $root);
+    $out = array();
+    foreach ($cands as $c) {
+        $base = @realpath($c[0]);
+        if ($base === false) {
+            continue;
+        }
+        $base = rtrim(str_replace('\\', '/', $base), '/');
+        $lr = strtolower($real);
+        $lb = strtolower($base);
+        if ($lr === $lb || strpos($lr, $lb . '/') === 0) {
+            $rel = substr($real, strlen($base));
+            $url = $c[1] . $rel;
+            if (!in_array($url, $out, true)) {
+                $out[] = $url;
+            }
+        }
+    }
+    return $out;
+}
+
+/** 2단계 — SQLite 를 고른 경우. */
+function ins_handle_step2_sqlite(&$S, $vals)
+{
+    $raw    = trim(ins_post('db_sqlite_path'));
+    $prefix = $vals['prefix'];
+    if (!extension_loaded('pdo_sqlite')) {
+        ins_step2('이 서버에는 pdo_sqlite 확장이 없어 SQLite를 쓸 수 없습니다. MySQL 저장소를 고르세요.', $vals);
+        return;
+    }
+    if ($raw === '') {
+        ins_step2('DB 파일 경로를 입력하세요. 모르면 기본값(' . INS_SQLITE_DEFAULT . ')을 그대로 쓰세요.', $vals);
+        return;
+    }
+    if (preg_match('/^[a-z0-9_]{1,32}$/', $prefix) !== 1) {
+        ins_step2('테이블 prefix는 영문 소문자·숫자·밑줄 1~32자여야 합니다. (입력값은 규칙에 맞지 않습니다)', $vals);
+        return;
+    }
+    try {
+        $abs = ulogin_sqlite_path_resolve($raw, dirname(INS_DIR));
+    } catch (Throwable $e) {
+        ins_step2('DB 파일 경로 형식을 받을 수 없습니다. 일반 파일 경로를 적으세요(:memory: · file: · ? 불가).', $vals);
+        return;
+    }
+    if (substr($abs, -1) === '/' || basename($abs) === '' || is_dir($abs)) {
+        ins_step2('DB 파일 경로가 폴더를 가리킵니다. 파일 이름까지 적으세요(예: …/ulogin.sqlite).', $vals);
+        return;
+    }
+    $dir = dirname($abs);
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true)) {
+        ins_step2('DB 파일을 둘 폴더를 만들 수 없습니다. 상위 폴더의 쓰기 권한을 확인하거나 다른 경로를 적으세요.', $vals);
+        return;
+    }
+    // WAL 은 같은 폴더에 -wal · -shm 을 만든다 — 파일만이 아니라 **폴더**가 쓰기 가능해야 한다.
+    if (!is_writable($dir)) {
+        ins_step2('DB 폴더에 쓸 수 없습니다. 웹 서버 계정에게 그 폴더의 쓰기 권한을 주세요.', $vals);
+        return;
+    }
+    clearstatcache(true, $abs);
+    $existed = is_file($abs) && (int) @filesize($abs) > 0;
+
+    $db = ['driver' => 'sqlite', 'sqlite_path' => $raw, 'sqlite_abs' => $abs,
+           'host' => 'localhost', 'port' => '', 'name' => '', 'user' => '', 'pass' => '', 'prefix' => $prefix];
+    try {
+        $pdo = ins_pdo($db);
+        $ver = (string) $pdo->query('SELECT sqlite_version()')->fetchColumn();
+    } catch (Throwable $e) {
+        error_log('[ulogin-install] sqlite open failed: ' . $e->getMessage());
+        ins_step2('DB 파일을 열 수 없습니다. ' . ins_sqlite_reason($e), $vals);
+        return;
+    }
+
+    // 설계 D-2 ④ — 문서 루트 안이면 **HTTP 로 실제로 긁어 본다.** 401/403/404 가 아니면 진행하지 않는다.
+    // 확인할 수 없어도(null — curl 없음, php -S 자기 호출 대기 등) 진행하지 않는다(fail-closed).
+    // 「.htaccess 가 있으니 안전하다」로 끝내지 않는다 — nginx·AllowOverride None 환경이 실재한다.
+    $urls = ins_dir_url_paths($dir);
+    if ($urls !== array()) {
+        $host = isset($_SERVER['HTTP_HOST']) ? preg_replace('/[^A-Za-z0-9\.\-:\[\]]/', '', (string) $_SERVER['HTTP_HOST']) : '';
+        $bad  = null;
+        foreach ($urls as $u) {
+            $url = ($host === '') ? null
+                 : (ins_is_https() ? 'https' : 'http') . '://' . $host . $u . '/' . rawurlencode(basename($abs));
+            $res = ($url === null) ? null : ins_http_probe($url);
+            if ($res === null || !in_array((int) $res['status'], [401, 403, 404], true)) {
+                $bad = ($res === null) ? '확인할 수 없음' : ('HTTP ' . (int) $res['status']);
+                break;
+            }
+        }
+        if ($bad !== null) {
+            $pdo = null;
+            if (!$existed) {
+                // 이번에 만든 빈 파일만 치운다. 원래 있던 파일은 건드리지 않는다.
+                @unlink($abs);
+                @unlink($abs . '-wal');
+                @unlink($abs . '-shm');
+            }
+            error_log('[ulogin-install] sqlite path is inside the web root and the download probe was not blocked ('
+                . $bad . '). refused.');
+            ins_step2('이 경로는 웹 문서 루트 안에 있고, 그 파일이 웹으로 내려오지 않는다는 것을 확인하지 못했습니다(' . $bad . '). '
+                . '기본값(' . INS_SQLITE_DEFAULT . ')처럼 설치 루트 바깥 경로를 쓰세요.', $vals);
+            return;
+        }
+    }
+
+    $S['db']         = $db;
+    $S['db_version'] = $ver;
+    $S['schema']     = null;
+    ins_step3(null);
+}
+
 function ins_handle_step2(&$S)
 {
+    // v1.8.0 — 저장소 선택. 값은 정확히 두 개. 그 밖은 거부(조용히 MySQL 로 떨어지지 않는다).
+    $driver = ins_post('db_driver', 'mysql');
+    if ($driver === 'sqlite') {
+        ins_handle_step2_sqlite($S, [
+            'driver' => 'sqlite', 'sqlite_path' => trim(ins_post('db_sqlite_path')),
+            'host' => trim(ins_post('db_host')), 'port' => trim(ins_post('db_port')),
+            'name' => trim(ins_post('db_name')), 'user' => trim(ins_post('db_user')),
+            'prefix' => trim(ins_post('db_prefix')),
+        ]);
+        return;
+    }
+    if ($driver !== 'mysql') {
+        ins_step2('저장소는 SQLite 또는 MySQL 중 하나를 고르세요.', null);
+        return;
+    }
+    if (!extension_loaded('pdo_mysql')) {
+        ins_step2('이 서버에는 pdo_mysql 확장이 없어 MySQL을 쓸 수 없습니다. SQLite 저장소를 고르세요.', null);
+        return;
+    }
     $host   = trim(ins_post('db_host'));
+    $port   = trim(ins_post('db_port'));
     $name   = trim(ins_post('db_name'));
     $user   = trim(ins_post('db_user'));
     $pass   = ins_post('db_pass');
     $prefix = trim(ins_post('db_prefix'));
-    $vals   = ['host' => $host, 'name' => $name, 'user' => $user, 'prefix' => $prefix];
+    $vals   = ['driver' => 'mysql', 'host' => $host, 'port' => $port, 'name' => $name, 'user' => $user, 'prefix' => $prefix,
+               'sqlite_path' => trim(ins_post('db_sqlite_path'))];
 
     if ($host === '' || $name === '' || $user === '') {
         ins_step2('호스트 · DB 이름 · 사용자는 필수입니다.', $vals);
         return;
     }
+    // 포트는 **선택**이다(비우면 드라이버 기본값). 적었다면 1~65535 정수여야 한다.
+    //   `(int)` 로 뭉개지 않는다 — `(int)'3307abc'` 는 3307 이라 쓰레기 입력이
+    //   그럴듯한 포트로 둔갑한다. 틀린 포트로 조용히 접속하는 경로를 만들지 않는다.
+    if ($port !== '') {
+        if (preg_match('/^[0-9]{1,5}$/', $port) !== 1 || (int) $port < 1 || (int) $port > 65535) {
+            ins_step2('DB 포트는 1~65535 사이의 숫자여야 합니다. (모르면 비워 두세요)', $vals);
+            return;
+        }
+    }
     // M-12-11: prefix 는 SQL 치환 문자열로 쓰인다. 정규식 통과 값만 받는다.
     if (preg_match('/^[a-z0-9_]{1,32}$/', $prefix) !== 1) {
-        ins_step2('테이블 prefix 는 영문 소문자·숫자·밑줄 1~32자여야 합니다. (입력값은 규칙에 맞지 않습니다)', $vals);
+        ins_step2('테이블 prefix는 영문 소문자·숫자·밑줄 1~32자여야 합니다. (입력값은 규칙에 맞지 않습니다)', $vals);
         return;
     }
     if (strlen($name) > 64 || preg_match('/[`\'"\\\\;]/', $name) === 1) {
@@ -1238,13 +1887,14 @@ function ins_handle_step2(&$S)
         return;
     }
 
-    $db = ['host' => $host, 'name' => $name, 'user' => $user, 'pass' => $pass, 'prefix' => $prefix];
+    $db = ['driver' => 'mysql', 'host' => $host, 'port' => $port, 'name' => $name, 'user' => $user, 'pass' => $pass, 'prefix' => $prefix,
+           'sqlite_path' => '', 'sqlite_abs' => ''];
     try {
         $pdo = ins_pdo($db);
         $ver = (string) $pdo->query('SELECT VERSION()')->fetchColumn();
     } catch (PDOException $e) {
         error_log('[ulogin-install] db connect failed: ' . $e->getMessage());
-        ins_step2('DB 에 접속할 수 없습니다. ' . ins_pdo_reason($e), $vals);
+        ins_step2('DB에 접속할 수 없습니다. ' . ins_pdo_reason($e), $vals);
         return;
     } catch (Throwable $e) {
         error_log('[ulogin-install] db connect error: ' . $e->getMessage());
@@ -1280,6 +1930,53 @@ function ins_apply_schema($db)
     $pdo    = ins_pdo($db);
     $rows   = [];
     $failed = 0;
+    $isSqlite = isset($db['driver']) && $db['driver'] === 'sqlite';
+
+    if ($isSqlite) {
+        // v1.8.0 (설계 C-3) — schema.sql(MySQL) 을 **번역기 core/ddl.php 로** SQLite DDL 로 바꿔 실행한다.
+        // 정본은 schema.sql 하나다. ins_split_sql() 은 주석을 지워 `-- @sqlite-collate` 태그를 잃으므로
+        // SQLite 는 주석째 자른 덩어리(ddl_extract_creates)를 쓴다. **두 방식의 문장 수가 다르면 멈춘다** —
+        // CREATE TABLE 이 아닌 문장이나 들여쓴 정의가 생기면 그것이 조용히 빠지는 것을 막는다.
+        $blocks = ddl_extract_creates($sql);
+        if ($blocks === [] || count($blocks) !== count($stmts)) {
+            error_log('[ulogin-install] sqlite schema split mismatch: blocks=' . count($blocks) . ' stmts=' . count($stmts));
+            $rows[] = ['table' => 'schema.sql', 'ok' => false,
+                       'note' => 'schema.sql의 구조를 SQLite로 번역할 수 없습니다(문장 ' . count($stmts)
+                               . '개 중 CREATE TABLE ' . count($blocks) . '개). 서버 로그를 확인하세요.'];
+            return [$rows, 1];
+        }
+        foreach ($blocks as $block) {
+            $table = ins_stmt_table($block);
+            $label = $table !== null ? $table : '(이름 없음)';
+            try {
+                $tr = ddl_sqlite_create($block);
+                $pdo->exec($tr['table']);
+                foreach ($tr['indexes'] as $ix) {
+                    $pdo->exec($ix);
+                }
+                $st = $pdo->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?");
+                $st->execute([$label]);
+                $exists = ((int) $st->fetchColumn()) > 0;
+                $rows[] = ['table' => $label, 'ok' => $exists,
+                           'note' => $exists ? '적용 완료 (인덱스 ' . count($tr['indexes']) . '개)' : '실행은 됐지만 테이블을 찾을 수 없습니다'];
+                if (!$exists) {
+                    $failed++;
+                }
+            } catch (PDOException $e) {
+                error_log('[ulogin-install] sqlite DDL failed (' . $label . '): ' . $e->getMessage());
+                $rows[] = ['table' => $label, 'ok' => false, 'note' => ins_sqlite_reason($e)];
+                $failed++;
+            } catch (RuntimeException $e) {
+                // 번역기가 모르는 구문 — fail-closed. 사유는 로그에만(스키마 구조를 화면에 풀지 않는다).
+                error_log('[ulogin-install] sqlite translation refused (' . $label . '): ' . $e->getMessage());
+                $rows[] = ['table' => $label, 'ok' => false,
+                           'note' => 'SQLite로 번역할 수 없는 정의가 있습니다. 상세 사유는 서버 오류 로그에 기록했습니다.'];
+                $failed++;
+            }
+        }
+        $stmts = [];   // 아래 MySQL 루프를 건너뛴다
+    }
+
     foreach ($stmts as $stmt) {
         $table = ins_stmt_table($stmt);
         $label = $table !== null ? $table : (substr(preg_replace('/\s+/', ' ', $stmt), 0, 60) . '…');
@@ -1320,19 +2017,39 @@ function ins_apply_schema($db)
     // -----------------------------------------------------------------
     if ($failed === 0) {
         try {
-            if (!defined('ULOGIN_MIGRATE_CTX')) {
-                define('ULOGIN_MIGRATE_CTX', 1);
-            }
-            require_once INS_DIR . '/migrations/lib.php';
+            // migrations/lib.php 는 파일 머리에서 이미 올렸다(v1.8.0 — 저장소 계층을 같이 쓴다).
             $mtable = mig_ensure_table($pdo, INS_SCHEMA, $db['prefix']);
             $mfiles = mig_list(INS_DIR . '/migrations');
             $n      = mig_stamp_baseline($pdo, $mfiles, $mtable, 'install');
             $rows[] = ['table' => '(스키마 리비전)', 'ok' => true,
-                       'note' => 'migrations/ ' . $n . '건을 baseline 으로 기록했습니다 — 신규 설치라 적용하지 않습니다'];
+                       'note' => 'migrations/ ' . $n . '건을 baseline으로 기록했습니다. 신규 설치라 적용하지 않습니다'];
         } catch (Throwable $e) {
             error_log('[ulogin-install] migration baseline stamp failed: ' . $e->getMessage());
             $rows[] = ['table' => '(스키마 리비전)', 'ok' => false,
-                       'note' => '기록에 실패했습니다. 설치 후 server/migrate.php 를 열어 상태를 확인하세요.'];
+                       'note' => '기록에 실패했습니다. 설치 후 server/migrate.php를 열어 상태를 확인하세요.'];
+            $failed++;
+        }
+    }
+
+    // v1.8.0 (설계 C-4 겹 2 · G-8 6단계) — SQLite 는 **만든 직후 schema.sql 과 대조한다.**
+    // `migrate.php verify` 와 같은 함수다. 번역기가 조용히 틀렸으면 여기서 설치가 멈춘다.
+    // (MySQL 경로는 v1.7.0 그대로 둔다 — 그 경로를 이 PC 에서 실측할 수 없다. H-2)
+    if ($failed === 0 && $isSqlite) {
+        try {
+            $diff = mig_schema_diff(mig_expected_schema(INS_SCHEMA, $db['prefix']), mig_live_schema($pdo, $db['prefix']));
+            if ($diff === []) {
+                $rows[] = ['table' => '(schema.sql 대조)', 'ok' => true, 'note' => '동일: 번역된 스키마가 schema.sql과 같은 형태입니다'];
+            } else {
+                foreach ($diff as $d) {
+                    error_log('[ulogin-install] sqlite schema verify: ' . $d);
+                }
+                $rows[] = ['table' => '(schema.sql 대조)', 'ok' => false,
+                           'note' => count($diff) . '건 불일치. 상세는 서버 오류 로그에 기록했습니다.'];
+                $failed++;
+            }
+        } catch (Throwable $e) {
+            error_log('[ulogin-install] sqlite schema verify failed: ' . $e->getMessage());
+            $rows[] = ['table' => '(schema.sql 대조)', 'ok' => false, 'note' => '대조에 실패했습니다. 서버 로그를 확인하세요.'];
             $failed++;
         }
     }
@@ -1344,13 +2061,20 @@ function ins_step3($result)
     global $S;
     ins_page_start('스키마 적용', 3);
     echo '<div class="card">';
-    echo '<p>접속한 DB: <b>' . ins_h($S['db']['name']) . '</b> &nbsp;|&nbsp; MySQL '
-       . ins_h(isset($S['db_version']) ? $S['db_version'] : '?')
-       . ' &nbsp;|&nbsp; prefix <code>' . ins_h($S['db']['prefix']) . '</code></p>';
+    if (isset($S['db']['driver']) && $S['db']['driver'] === 'sqlite') {
+        // 절대 경로는 화면에 내지 않는다(M-12-10). 운영자가 적은 값(기본은 상대 경로)만 보인다.
+        echo '<p>저장소: <b>SQLite</b> ' . ins_h(isset($S['db_version']) ? $S['db_version'] : '?')
+           . ' &nbsp;|&nbsp; 파일 <code>' . ins_h($S['db']['sqlite_path']) . '</code>'
+           . ' &nbsp;|&nbsp; prefix <code>' . ins_h($S['db']['prefix']) . '</code></p>';
+    } else {
+        echo '<p>접속한 DB: <b>' . ins_h($S['db']['name']) . '</b> &nbsp;|&nbsp; MySQL '
+           . ins_h(isset($S['db_version']) ? $S['db_version'] : '?')
+           . ' &nbsp;|&nbsp; prefix <code>' . ins_h($S['db']['prefix']) . '</code></p>';
+    }
 
     if ($result === null) {
-        echo '<p><code>schema.sql</code> 의 테이블 17개를 만듭니다. 모든 문장이 '
-           . '<code>CREATE TABLE IF NOT EXISTS</code> 이므로 이미 있는 테이블은 건드리지 않습니다 — 여러 번 실행해도 안전합니다.</p>';
+        echo '<p><code>schema.sql</code> 의 테이블 20개를 만듭니다. 모든 문장이 '
+           . '<code>CREATE TABLE IF NOT EXISTS</code> 이므로 이미 있는 테이블은 건드리지 않습니다. 여러 번 실행해도 안전합니다.</p>';
         echo '<div class="msg"><b>이미 v1.3.0 이하로 설치해 쓰고 있다면 이 설치기가 아니라 '
            . '<code>server/migrate.php</code> 를 쓰세요.</b> '
            . '<code>CREATE TABLE IF NOT EXISTS</code> 는 <b>이미 있는 테이블에 새 컬럼·인덱스를 넣지 않습니다</b> — '
@@ -1373,7 +2097,7 @@ function ins_step3($result)
         } else {
             echo '<div class="msg good">테이블 ' . count($rows) . '개가 모두 준비되었습니다.</div>';
             echo '<form method="post">' . ins_csrf_field()
-               . '<input type="hidden" name="step" value="3x"><button type="submit">다음 — 사이트·전송 보안 설정</button></form>';
+               . '<input type="hidden" name="step" value="3x"><button type="submit">다음: 사이트·전송 보안 설정</button></form>';
         }
     }
     echo '</div>';
@@ -1413,7 +2137,7 @@ function ins_step4($err = null, $vals = null)
        . '재설정·인증 링크는 이 주소로 만들어집니다. 서버는 이 값이 비어 있을 때 '
        . '요청의 <code>Host</code> 헤더로 <b>폴백하지 않고 발송 자체를 중단합니다</b>(fail-closed). '
        . 'Host 는 <b>요청을 보낸 사람이 정하는 값</b>이라, 그것으로 링크를 만들면 공격자가 '
-       . '자기 도메인을 Host 로 넣어 재설정을 요청해 토큰을 그대로 받아갈 수 있기 때문입니다. '
+       . '자기 도메인을 Host로 넣어 재설정을 요청해 토큰을 그대로 받아갈 수 있기 때문입니다. '
        . '즉 이 값을 잘못 넣으면 계정 복구가 조용히 불가능해집니다. (보안 감사 H-4 / 리더 판정 D-33)</div>';
     if ($guess !== '') {
         echo '<p class="hint">현재 접속 정보로 추론한 값은 <code>' . ins_h($guess) . '</code> 입니다. '
@@ -1427,7 +2151,7 @@ function ins_step4($err = null, $vals = null)
 
     echo '<h2>전송 보안 (HTTPS)</h2>';
     if (!ins_is_https()) {
-        echo '<div class="msg big"><b>지금 이 설치 화면은 평문 HTTP 로 열려 있습니다.</b><br>'
+        echo '<div class="msg big"><b>지금 이 설치 화면은 평문 HTTP로 열려 있습니다.</b><br>'
            . 'HTTPS 없이 운영하면 <b>토큰과 AI API 키가 평문으로 전송됩니다.</b> '
            . '같은 네트워크의 누구든 로그인 세션과 AI API 키를 그대로 볼 수 있고, '
            . '이 시스템의 존재 이유(키를 클라이언트에 노출하지 않는 것)가 성립하지 않습니다. '
@@ -1438,11 +2162,11 @@ function ins_step4($err = null, $vals = null)
     $on  = $vals['force_https'] === '1' ? ' checked' : '';
     $off = $vals['force_https'] === '1' ? '' : ' checked';
     echo '<label class="radio"><input type="radio" name="force_https" value="1"' . $on . '>'
-       . '<b>HTTPS 강제 (권장)</b><br><span class="hint">평문 HTTP 요청을 https 로 301 리다이렉트하고, '
-       . '세션 쿠키에 <code>Secure</code> 를 붙입니다. → <code>FORCE_HTTPS=true</code>, <code>COOKIE_SECURE=true</code></span></label>';
+       . '<b>HTTPS 강제 (권장)</b><br><span class="hint">평문 HTTP 요청을 https로 301 리다이렉트하고, '
+       . '세션 쿠키에 <code>Secure</code> 를 붙입니다. > <code>FORCE_HTTPS=true</code>, <code>COOKIE_SECURE=true</code></span></label>';
     echo '<label class="radio"><input type="radio" name="force_https" value="0"' . $off . '>'
-       . '<b>HTTP 허용 (비권장)</b><br><span class="hint">HTTPS 를 지원하지 않는 호스팅에서만 선택하세요. '
-       . '토큰과 AI API 키가 평문으로 흐릅니다. → <code>FORCE_HTTPS=false</code>, <code>COOKIE_SECURE=false</code></span></label>';
+       . '<b>HTTP 허용 (비권장)</b><br><span class="hint">HTTPS를 지원하지 않는 호스팅에서만 선택하세요. '
+       . '토큰과 AI API 키가 평문으로 흐릅니다. > <code>FORCE_HTTPS=false</code>, <code>COOKIE_SECURE=false</code></span></label>';
 
     echo '<h2>사이트 · 메일</h2>';
     echo '<label>사이트 표시명<input type="text" name="site_name" value="' . ins_h($vals['site_name'])
@@ -1454,11 +2178,11 @@ function ins_step4($err = null, $vals = null)
     $logSel  = $vals['mail_driver'] === 'mail' ? '' : ' selected';
     $mailSel = $vals['mail_driver'] === 'mail' ? ' selected' : '';
     echo '<label>메일 발송 방식<select name="mail_driver">'
-       . '<option value="log"' . $logSel . '>log — 발송하지 않고 server/storage/mail/ 에 파일로 저장 (기본값)</option>'
-       . '<option value="mail"' . $mailSel . '>mail — PHP mail() 로 실제 발송</option>'
+       . '<option value="log"' . $logSel . '>log: 발송하지 않고 server/storage/mail/ 에 파일로 저장 (기본값)</option>'
+       . '<option value="mail"' . $mailSel . '>mail: PHP mail()로 실제 발송</option>'
        . '</select><span class="hint">v1.0.0 기본값은 <code>log</code> 입니다(리더 판정 D-1). '
        . '호스팅의 <code>mail()</code> 동작을 확인한 뒤 관리자 콘솔에서 <code>mail</code> 로 바꾸는 것을 권합니다. '
-       . '<b>log 를 쓰면 재설정 링크와 임시 비밀번호가 서버 파일에 평문으로 쌓입니다</b> — 마지막 단계의 경고를 읽어 주세요.</span></label>';
+       . '<b>log를 쓰면 재설정 링크와 임시 비밀번호가 서버 파일에 평문으로 쌓입니다</b> — 마지막 단계의 경고를 읽어 주세요.</span></label>';
 
     echo '<h2>가입 정책</h2>';
     $arOn  = $vals['allow_register'] === '1' ? ' checked' : '';
@@ -1472,7 +2196,7 @@ function ins_step4($err = null, $vals = null)
     echo '<label>가입 보너스 포인트<input type="text" name="signup_bonus" value="' . ins_h($vals['signup_bonus'])
        . '" required><span class="hint">0 ~ 1000000 사이의 정수.</span></label>';
 
-    echo '<button type="submit">다음 — 관리자 계정 만들기</button></form></div>';
+    echo '<button type="submit">다음: 관리자 계정 만들기</button></form></div>';
     ins_page_end();
 }
 
@@ -1493,13 +2217,13 @@ function ins_handle_step4(&$S)
     // BASE_URL 필수 (M-12-5 / H-4)
     $base = rtrim($vals['base_url'], '/');
     if ($base === '') {
-        ins_step4('BASE_URL 은 필수입니다. 비워 둘 수 없습니다.', $vals);
+        ins_step4('BASE_URL은 필수입니다. 비워 둘 수 없습니다.', $vals);
         return;
     }
     $p = parse_url($base);
     if ($p === false || empty($p['scheme']) || empty($p['host'])
         || !in_array(strtolower((string) $p['scheme']), ['http', 'https'], true)) {
-        ins_step4('BASE_URL 은 http:// 또는 https:// 로 시작하는 절대 주소여야 합니다. (예: https://example.com/ulogin)', $vals);
+        ins_step4('BASE_URL은 http:// 또는 https:// 로 시작하는 절대 주소여야 합니다. (예: https://example.com/ulogin)', $vals);
         return;
     }
     if (isset($p['query']) || isset($p['fragment'])) {
@@ -1507,14 +2231,14 @@ function ins_handle_step4(&$S)
         return;
     }
     if (mb_strlen($base, 'UTF-8') > 255) {
-        ins_step4('BASE_URL 이 너무 깁니다. (255자 이내)', $vals);
+        ins_step4('BASE_URL이 너무 깁니다. (255자 이내)', $vals);
         return;
     }
     $vals['base_url'] = $base;
 
     if ($vals['force_https'] === '1' && strtolower((string) $p['scheme']) !== 'https') {
-        ins_step4('HTTPS 강제를 선택했으므로 BASE_URL 도 https:// 로 시작해야 합니다. '
-                . '(HTTP 로 운영해야 한다면 아래에서 "HTTP 허용"을 선택하세요)', $vals);
+        ins_step4('HTTPS 강제를 선택했으므로 BASE_URL도 https:// 로 시작해야 합니다. '
+                . '(HTTP로 운영해야 한다면 아래에서 "HTTP 허용"을 선택하세요)', $vals);
         return;
     }
     if ($vals['site_name'] === '' || mb_strlen($vals['site_name'], 'UTF-8') > 60) {
@@ -1571,7 +2295,7 @@ function ins_step5($err = null, $vals = null)
     echo '<label>비밀번호<input type="password" name="admin_pw" required autocomplete="new-password">'
        . '<span class="hint">8자 이상 + 영문·숫자·특수문자 중 2종 이상. 아이디와 같은 문자열은 쓸 수 없습니다.</span></label>';
     echo '<label>비밀번호 확인<input type="password" name="admin_pw2" required autocomplete="new-password"></label>';
-    echo '<button type="submit">다음 — 첫 서비스 등록</button></form></div>';
+    echo '<button type="submit">다음: 첫 서비스 등록</button></form></div>';
     ins_page_end();
 }
 
@@ -1619,7 +2343,7 @@ function ins_handle_step5(&$S)
         $dup = $st->fetch();
         if ($dup !== false) {
             $which = ((string) $dup['username'] === $username) ? '아이디' : '이메일';
-            ins_step5('이미 같은 ' . $which . '의 회원이 DB 에 있습니다. 다른 값을 쓰거나, '
+            ins_step5('이미 같은 ' . $which . '의 회원이 DB에 있습니다. 다른 값을 쓰거나, '
                     . '기존 계정을 직접 최고관리자로 승격하세요.', $vals);
             return;
         }
@@ -1671,20 +2395,20 @@ function ins_step6($err = null, $vals = null)
     echo '<label>서비스 이름<input type="text" name="service_name" value="' . ins_h($vals['service_name'])
        . '" required maxlength="100"><span class="hint">관리자 콘솔과 로그인 화면에 표시됩니다.</span></label>';
 
-    echo '<label>복귀 주소 화이트리스트 (redirect_whitelist) — 한 줄에 하나<textarea name="redirects" required>'
+    echo '<label>복귀 주소 화이트리스트 (redirect_whitelist): 한 줄에 하나<textarea name="redirects" required>'
        . ins_h($vals['redirects']) . '</textarea>'
        . '<span class="hint">SSO 로그인 후 돌아갈 주소입니다. <b>완전 일치</b>로만 비교하므로 '
        . '실제 콜백 파일 경로까지 정확히 적어야 합니다. 쿼리스트링(<code>?</code>)은 넣을 수 없습니다.</span></label>';
 
-    echo '<label>허용 출처 (allowed_origins) — 한 줄에 하나<textarea name="origins" required>'
+    echo '<label>허용 출처 (allowed_origins): 한 줄에 하나<textarea name="origins" required>'
        . ins_h($vals['origins']) . '</textarea>'
-       . '<span class="hint"><b>반드시 입력하세요.</b> 여기 없는 출처에서 온 브라우저 요청은 CORS 로 전부 막혀 '
-       . '로컬 앱이 아무 API 도 호출하지 못합니다. 형식은 <code>scheme://host[:port]</code> — '
+       . '<span class="hint"><b>반드시 입력하세요.</b> 여기 없는 출처에서 온 브라우저 요청은 CORS로 전부 막혀 '
+       . '로컬 앱이 아무 API도 호출하지 못합니다. 형식은 <code>scheme://host[:port]</code> — '
        . '경로를 붙이면 안 됩니다. <code>file://</code> 로 열린 페이지는 출처가 <code>null</code> 이므로 '
        . '한 줄에 <code>null</code> 만 적어 허용할 수 있지만, 로컬 웹서버'
        . '(<code>python -m http.server 5173</code>)를 쓰는 편이 안전합니다.</span></label>';
 
-    echo '<button type="submit">다음 — 시크릿 등록</button></form></div>';
+    echo '<button type="submit">다음: 시크릿 등록</button></form></div>';
     ins_page_end();
 }
 
@@ -1698,7 +2422,7 @@ function ins_handle_step6(&$S)
     ];
 
     if (preg_match('/^[a-z0-9][a-z0-9\-_]{2,63}$/', $vals['service_id']) !== 1) {
-        ins_step6('service_id 는 영문 소문자·숫자로 시작하고 소문자·숫자·-·_ 3~64자여야 합니다.', $vals);
+        ins_step6('service_id는 영문 소문자·숫자로 시작하고 소문자·숫자·-·_ 3~64자여야 합니다.', $vals);
         return;
     }
     if ($vals['service_name'] === '' || mb_strlen($vals['service_name'], 'UTF-8') > 100) {
@@ -1721,7 +2445,7 @@ function ins_handle_step6(&$S)
         return;
     }
     if ($origins === []) {
-        ins_step6('허용 출처를 최소 1개 입력하세요. 비어 있으면 로컬 앱의 모든 요청이 CORS 로 차단됩니다.', $vals);
+        ins_step6('허용 출처를 최소 1개 입력하세요. 비어 있으면 로컬 앱의 모든 요청이 CORS로 차단됩니다.', $vals);
         return;
     }
 
@@ -1730,7 +2454,7 @@ function ins_handle_step6(&$S)
         $st  = $pdo->prepare('SELECT id FROM `' . $S['db']['prefix'] . 'services` WHERE service_id = ? LIMIT 1');
         $st->execute([$vals['service_id']]);
         if ($st->fetchColumn() !== false) {
-            ins_step6('같은 service_id 의 서비스가 이미 있습니다. 다른 값을 쓰세요.', $vals);
+            ins_step6('같은 service_id의 서비스가 이미 있습니다. 다른 값을 쓰세요.', $vals);
             return;
         }
     } catch (PDOException $e) {
@@ -1896,7 +2620,7 @@ function ins_gate_label($g)
         return '제한 없음 (가입한 전원)';
     }
     $s = implode(' / ', $out);
-    return ins_gate_effective($g) ? $s : $s . ' — 전 회원의 기본값 이하라 전원 통과';
+    return ins_gate_effective($g) ? $s : $s . ' (전 회원의 기본값 이하여서 전원 통과)';
 }
 
 /** 7단계에서 등록할 시크릿의 고정 명세. 폼과 저장 로직이 이 하나를 함께 본다. */
@@ -1950,18 +2674,18 @@ function ins_secret_default_gate($key)
 function ins_gate_select($name, $axis, $cur)
 {
     $labels = [
-        'guest'      => '비로그인/게스트 — 전원 통과(게이트 효과 없음)',
+        'guest'      => '비로그인/게스트(전원 통과, 게이트 효과 없음)',
         // basic 은 랭크 10 이지만 users.account_level 의 기본값이자 register.php 가
         // 신규 가입자에게 박는 값이다 — 걸어도 전원이 통과한다(H-1 / D-201).
-        'basic'      => '가입 직후 기본 등급 — 전원 통과(게이트 효과 없음)',
-        'verified'   => '이메일 인증 완료 회원 — 기본 설치본에서는 아무도 해당되지 않습니다',
+        'basic'      => '가입 직후 기본 등급(전원 통과, 게이트 효과 없음)',
+        'verified'   => '이메일 인증 완료 회원(기본 설치본에서는 아무도 해당되지 않습니다)',
         'vip'        => 'VIP 회원',
         'staff'      => '운영자 등급',
-        'free'       => '무료 — 전원 통과(게이트 효과 없음)',
+        'free'       => '무료(전원 통과, 게이트 효과 없음)',
         'lite'       => '유료 최저 등급 (권장)',
         'pro'        => '유료 상위 등급',
         'enterprise' => '최상위 결제 등급',
-        'user'       => '일반 회원 — 전원 통과(게이트 효과 없음)',
+        'user'       => '일반 회원(전원 통과, 게이트 효과 없음)',
         'manager'    => '매니저 이상',
         'admin'      => '관리자 이상',
         'superadmin' => '최고관리자만',
@@ -1971,7 +2695,7 @@ function ins_gate_select($name, $axis, $cur)
     foreach (ins_gate_options($axis) as $o) {
         $lb = isset($labels[$o]) ? $labels[$o] : $o;
         $h .= '<option value="' . ins_h($o) . '"' . ($cur === $o ? ' selected' : '') . '>'
-            . ins_h($o . ' 이상 — ' . $lb) . '</option>';
+            . ins_h($o . ' 이상: ' . $lb) . '</option>';
     }
     return $h . '</select>';
 }
@@ -2002,7 +2726,7 @@ function ins_step7($err = null, $vals = null)
         echo '<div class="msg err">' . ins_h($err) . '</div>';
     }
     echo '<p>서비스 <code>' . ins_h($S['service']['service_id']) . '</code> 가 로그인한 사용자에게 내려줄 값입니다. '
-       . 'AES-256-CBC 로 암호화해 저장하고, 인증된 사용자에게만 <code>payload</code> 로 전달합니다.</p>';
+       . 'AES-256-CBC로 암호화해 저장하고, 인증된 사용자에게만 <code>payload</code> 로 전달합니다.</p>';
 
     echo '<div class="msg big"><b>값마다 "받을 수 있는 최소 등급"을 반드시 정하세요.</b><br>'
        . '<b>게이트를 비우면 가입한 누구나 이 값을 받습니다.</b> 이 서버는 '
@@ -2011,7 +2735,7 @@ function ins_step7($err = null, $vals = null)
        . '아래 <code>ai_api_key</code> 의 기본값은 <code>billing_tier ≥ lite</code>(유료 회원 이상)입니다. '
        . '(보안 감사 C-3 / 리더 판정 D-47)</div>';
 
-    echo '<p class="hint">지금 건너뛰고 나중에 관리자 콘솔(<code>public/admin.html</code> → 서비스 → 시크릿)에서 등록해도 됩니다. '
+    echo '<p class="hint">지금 건너뛰고 나중에 관리자 콘솔(<code>public/admin.html</code> > 서비스 > 시크릿)에서 등록해도 됩니다. '
        . '입력한 값은 <b>화면에 다시 표시하지 않습니다.</b> '
        . '값을 비워 두면 그 항목은 등록하지 않습니다.</p>';
 
@@ -2049,7 +2773,7 @@ function ins_step7($err = null, $vals = null)
                . '<span class="hint">위 세 개를 전부 "제한 없음"으로 두려면 이 항목을 체크해야 진행됩니다. '
                . '게이트를 설정했다면 체크하지 않아도 됩니다.</span></label>';
         } else {
-            echo '<p class="hint">비밀이 아닌 설정값이므로 게이트를 비워 두어도 됩니다 — 데모가 동작해야 하기 때문입니다.</p>';
+            echo '<p class="hint">비밀이 아닌 설정값이므로 게이트를 비워 두어도 됩니다. 데모가 동작해야 하기 때문입니다.</p>';
         }
     }
 
@@ -2321,8 +3045,8 @@ function ins_finalize(&$S)
         }
         $steps[] = ['label' => '시크릿 등록', 'ok' => true,
                     'note' => $secretCount > 0
-                        ? $secretCount . '건 (AES-256-CBC 암호화 저장) — ' . implode(' / ', $gateNote)
-                        : '건너뜀 — 관리자 콘솔에서 등록하세요'];
+                        ? $secretCount . '건 (AES-256-CBC 암호화 저장): ' . implode(' / ', $gateNote)
+                        : '건너뜀: 관리자 콘솔에서 등록하세요'];
 
         // 2-4) 관리자의 서비스 가입 행 (콘솔에서 바로 보이게)
         $st = $pdo->prepare('INSERT INTO `' . $prefix . 'user_services`'
@@ -2348,9 +3072,12 @@ function ins_finalize(&$S)
             // 여기 순서는 $DEFS 와 같게 **맨 뒤**로 둔다.
             ['secret_access_log',    '1',                                      'bool',   '시크릿 전달 감사 기록'],
         ];
+        // UPSERT 꼬리절은 core/dbdriver.php 한 함수가 만든다(A2) — MySQL 은 v1.7.0 과 같은 의미,
+        // SQLite 는 ON CONFLICT(skey) DO UPDATE.
         $st = $pdo->prepare('INSERT INTO `' . $prefix . 'settings` (skey, svalue, vtype, label, updated_at)'
-            . ' VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE svalue = VALUES(svalue),'
-            . ' vtype = VALUES(vtype), label = VALUES(label), updated_at = VALUES(updated_at)');
+            . ' VALUES (?,?,?,?,?)'
+            . ulogin_sql_upsert_tail(ulogin_pdo_driver($pdo), ['skey'],
+                ['svalue' => 'new', 'vtype' => 'new', 'label' => 'new', 'updated_at' => 'new']));
         foreach ($seed as $row) {
             $st->execute([$row[0], $row[1], $row[2], $row[3], $now]);
         }
@@ -2366,7 +3093,7 @@ function ins_finalize(&$S)
         ins_page_start('설치 실패', 8);
         echo '<div class="card"><div class="msg err"><b>DB 작업이 실패해 아무것도 저장하지 않았습니다.</b><br>'
            . ins_h($reason) . '</div>';
-        echo '<p class="hint">트랜잭션을 되돌렸으므로 DB 는 실행 전 상태입니다. '
+        echo '<p class="hint">트랜잭션을 되돌렸으므로 DB는 실행 전 상태입니다. '
            . '<code>config.php</code> 도 만들지 않았으니 이 페이지를 새로고침해 다시 시도할 수 있습니다.</p>';
         echo '<form method="post">' . ins_csrf_field()
            . '<input type="hidden" name="step" value="7x"><button type="submit">다시 시도</button></form></div>';
@@ -2380,7 +3107,7 @@ function ins_finalize(&$S)
     $steps[] = ['label' => '<code>server/storage/</code>, <code>server/storage/mail/</code> 생성 + 접근 차단 파일',
                 'ok' => ($stOk && $mlOk),
                 'note' => ($stOk && $mlOk) ? 'chmod 0700 + .htaccess + index.html'
-                                           : '만들 수 없었습니다. FTP 로 직접 만들고 쓰기 권한을 주세요.'];
+                                           : '만들 수 없었습니다. FTP로 직접 만들고 쓰기 권한을 주세요.'];
 
     // 4) config.php 작성 — 마지막 직전. 실패하면 화면에 내용을 출력한다.
     $configText   = ins_render_config($cfg);
@@ -2390,7 +3117,7 @@ function ins_finalize(&$S)
         $configWrote = true;
         if (!@chmod(INS_CONFIG, 0600)) {
             $steps[] = ['label' => '<code>config.php</code> 권한 0600', 'ok' => null,
-                        'note' => 'chmod 실패. 호스팅 파일 관리자에서 권한을 600 으로 바꿔 주세요.'];
+                        'note' => 'chmod 실패. 호스팅 파일 관리자에서 권한을 600으로 바꿔 주세요.'];
         }
         $steps[] = ['label' => '<code>server/config.php</code> 생성', 'ok' => true,
                     'note' => count(ins_config_spec($cfg)) . '개 상수'];
@@ -2422,6 +3149,21 @@ function ins_finalize(&$S)
                 'note' => ($lockOk ? 'server/.install.lock 생성' : '.install.lock 생성 실패')
                         . ' / ' . ($instOk ? 'storage/.installed 생성' : 'storage/.installed 생성 실패')];
 
+    // 5-1) 설치 토큰 삭제 — 설계 G-5 「설치 완료 즉시 삭제」. 잠금 뒤에 지운다
+    //      (잠금 전에 지우면 그 사이에 새 토큰이 만들어질 수 있다).
+    $tokFile = ins_token_file();
+    $tokGone = true;
+    if ($tokFile !== null) {
+        clearstatcache(true, $tokFile);
+        if (is_file($tokFile)) {
+            $tokGone = @unlink($tokFile);
+        }
+    }
+    ins_token_throttle_clear();
+    unset($_SESSION['ins_tok']);
+    $steps[] = ['label' => '설치 토큰 파일 삭제', 'ok' => $tokGone,
+                'note' => $tokGone ? '삭제했습니다' : '지우지 못했습니다. ' . ins_token_where() . ' 를 손으로 지우세요'];
+
     // 6) 자체 진단 — .htaccess 가 실제로 먹는지 HTTP 로 확인 (M-12-9)
     $serverUrl = ins_server_url($cfg['base_url']);
     $probes    = [
@@ -2434,7 +3176,7 @@ function ins_finalize(&$S)
     foreach ($probes as $pr) {
         $res = ins_http_probe($pr[1]);
         if ($res === null) {
-            $probeRows[] = [$pr[0], $pr[1], null, '자동 확인 불가 (curl·allow_url_fopen 없음) — 브라우저로 직접 열어 보세요'];
+            $probeRows[] = [$pr[0], $pr[1], null, '자동 확인 불가 (curl·allow_url_fopen 없음): 브라우저로 직접 열어 보세요'];
             continue;
         }
         $blocked = in_array($res['status'], [401, 403, 404], true);
@@ -2462,7 +3204,7 @@ function ins_finalize(&$S)
     ins_page_start('설치 완료', 8);
     echo '<div class="card">';
     echo '<div class="msg good"><b>설치가 끝났습니다.</b> 아래 ' . ($configWrote ? '3' : '4')
-       . '가지를 지금 처리하세요 — 이 화면을 닫으면 다시 볼 수 없습니다. '
+       . '가지를 지금 처리하세요. 이 화면을 닫으면 다시 볼 수 없습니다. '
        . '<b>1번(<code>install.php</code> 삭제)이 가장 급합니다.</b></div>';
 
     echo '<h2>설치 결과</h2><table><tr><th>항목</th><th>결과</th><th>비고</th></tr>';
@@ -2480,10 +3222,10 @@ function ins_finalize(&$S)
     echo '<p class="hint"><code>SECRET_ENC_KEY</code> 와 <code>APP_KEY</code> 는 '
        . '<code>random_bytes(32)</code> 로 새로 만들어 <code>config.php</code> 에만 기록했습니다. '
        . '브라우저 히스토리·스크린샷으로 새는 것을 막기 위해 <b>화면에는 표시하지 않습니다.</b> '
-       . '<code>config.php</code> 를 백업해 두세요 — 이 키를 잃으면 저장된 AI API 키를 복호화할 수 없습니다.</p>';
+       . '<code>config.php</code> 를 백업해 두세요. 이 키를 잃으면 저장된 AI API 키를 복호화할 수 없습니다.</p>';
 
     // D-52: install.php 삭제를 1번 항목으로 올린다.
-    echo '<h2>1. install.php 를 삭제하세요 (필수)</h2>';
+    echo '<h2>1. install.php를 삭제하세요 (필수)</h2>';
     echo '<div class="msg big"><b>서버에서 <code>server/install.php</code> 파일을 지금 삭제하세요.</b><br>'
        . '설치기는 <b>인증 없이 도는 코드</b>입니다. 삭제 전까지는 잠금 파일(<code>.install.lock</code>)이 '
        . '재실행을 막지만, 파일 자체가 없는 것이 유일하게 확실한 방어입니다.'
@@ -2492,19 +3234,19 @@ function ins_finalize(&$S)
        . '</div>';
 
     if (!$configWrote) {
-        echo '<h2>2. config.php 를 손으로 만들어 주세요 (필수)</h2>';
+        echo '<h2>2. config.php를 손으로 만들어 주세요 (필수)</h2>';
         if ($configFallbk !== null) {
             // 리더 판정 D-110. 쓰기 실패 시의 화면 덤프는 **설치 실패의 복구 수단**이므로
             // 없애지 않는다. 다만 파일로 남길 수 있었다면 화면에까지 평문을 뿌릴 이유가 없다 —
             // 그 화면은 캡처·공유되고, 평문 HTTP 로 열려 있을 수도 있다.
             // 그래서 **파일이 남은 경우에만** 시크릿 3개를 자리표시자로 바꾼다.
             echo '<div class="msg big"><b>같은 내용을 <code>' . ins_h($configFallbk) . '</code> 에 저장해 두었습니다.</b><br>'
-               . 'FTP 로 내려받아 <code>server/config.php</code> 로 이름을 바꾸고 권한을 <code>600</code> 으로 주세요. '
-               . '이 파일이 없으면 모든 API 가 500 을 반환합니다.<br>'
+               . 'FTP로 내려받아 <code>server/config.php</code> 로 이름을 바꾸고 권한을 <code>600</code> 으로 주세요. '
+               . '이 파일이 없으면 모든 API가 500을 반환합니다.<br>'
                . '<b>옮긴 뒤에는 <code>' . ins_h($configFallbk) . '</code> 를 반드시 지우세요</b> — '
                . '암호화 키가 들어 있는 파일이 두 개가 됩니다.</div>';
             echo '<div class="msg">아래는 <b>같은 내용에서 비밀값 3개를 가린 것</b>입니다. '
-               . '구조 확인용이며 이대로 복사하면 동작하지 않습니다 — '
+               . '구조 확인용이며 이대로 복사하면 동작하지 않습니다. '
                . '<code>__PASTE_FROM_GENERATED_FILE__</code> 자리는 위 파일에서 가져와야 합니다.</div>';
             echo '<pre>' . ins_h(ins_redact_config($configText)) . '</pre>';
         } else {
@@ -2512,7 +3254,7 @@ function ins_finalize(&$S)
                . '<code>server/storage/</code> 에도 쓸 수 없어 파일로 남기지 못했습니다. '
                . '아래가 <b>유일한 사본</b>이므로 비밀값을 그대로 표시합니다. '
                . '지금 복사해 <code>server/config.php</code> 로 저장하고 권한을 <code>600</code> 으로 바꾸세요.<br>'
-               . '<b>이 화면을 캡처해 공유하지 마세요.</b> DB 비밀번호와 시크릿 암호화 키가 들어 있습니다.</div>';
+               . '<b>이 화면을 캡처해 공유하면 안 됩니다.</b> DB 비밀번호와 시크릿 암호화 키가 들어 있습니다.</div>';
             echo '<pre>' . ins_h($configText) . '</pre>';
         }
     }
@@ -2527,7 +3269,7 @@ function ins_finalize(&$S)
     //   PHP_VERSION_ID 는 PHP 5.2.7+ 상수다. 7.2 에서 정상 동작한다.
     if (PHP_VERSION_ID < 70400) {
         echo '<p><b class="warn">주의</b> 현재 PHP 버전(<code>' . ins_h(PHP_VERSION) . '</code>)은 '
-           . '보안 지원이 종료된 버전입니다. 호스팅에 PHP 7.4 이상 옵션이 있으면 올리는 것을 권합니다 — '
+           . '보안 지원이 종료된 버전입니다. 호스팅에 PHP 7.4 이상 옵션이 있으면 올리는 것을 권합니다. '
            . '이 시스템은 AI API 키를 다룹니다. '
            . '<span class="hint">이 설치기는 곧 삭제되므로 이 안내를 다시 볼 수 없습니다. '
            . '같은 내용이 <code>README.md</code> 의 PHP 버전 항목에 있습니다.</span></p>';
@@ -2555,19 +3297,19 @@ function ins_finalize(&$S)
 
     echo '<h2>' . ($configWrote ? '2' : '3') . '. 시크릿 등급 게이트 확인</h2>';
     if ($ungatedSensitive !== []) {
-        echo '<div class="msg big"><b>민감한 값에 등급 게이트가 없습니다 — '
+        echo '<div class="msg big"><b>민감한 값에 등급 게이트가 없습니다. '
            . '이 서비스에 로그인한 모든 사용자가 그 값을 평문으로 받습니다.</b><br>'
            . '게이트 없는 민감 시크릿: ' . $codeList($ungatedSensitive) . '<br>';
         if ($cfg['allow_register']) {
             echo '<b>게다가 신규 회원가입(<code>ALLOW_REGISTER</code>)이 열려 있고 이 서비스는 '
                . '로그인 시 자동 가입(<code>auto_join=1</code>)입니다.</b> 두 조건이 겹치면 '
                . '<b>누구나 가입 폼을 채우는 것만으로 위 값을 받습니다.</b> '
-               . '가입 자체는 정상 기능이므로 끄지 않았습니다 — 대신 게이트를 거는 것이 맞습니다.<br>';
+               . '가입 자체는 정상 기능이므로 끄지 않았습니다. 대신 게이트를 거는 것이 맞습니다.<br>';
         } else {
             echo '신규 가입은 닫혀 있으므로(<code>ALLOW_REGISTER=false</code>) 노출 범위는 '
                . '관리자가 만든 계정으로 제한됩니다. 그래도 게이트를 걸어 두는 것이 안전합니다.<br>';
         }
-        echo '<b>조치:</b> 관리자 콘솔 → 서비스 → <code>' . ins_h($serviceIdOut) . '</code> → 시크릿에서 '
+        echo '<b>조치:</b> 관리자 콘솔 > 서비스 > <code>' . ins_h($serviceIdOut) . '</code> > 시크릿에서 '
            . '<code>min_billing_tier</code>(권장 <code>lite</code>) 또는 '
            . '<code>min_account_level</code> / <code>min_role</code> 을 설정하세요.</div>';
     } else {
@@ -2594,9 +3336,9 @@ function ins_finalize(&$S)
         echo '</table>';
     }
 
-    echo '<h2>' . ($configWrote ? '3' : '4') . '. 보안 확인 4항목 — 브라우저로 직접 열어 보세요</h2>';
+    echo '<h2>' . ($configWrote ? '3' : '4') . '. 보안 확인 4항목: 브라우저로 직접 열어 보세요</h2>';
     echo '<p>아래 주소를 브라우저 새 탭에 붙여 열었을 때 <b>403 / 404 / 빈 화면</b>이 나와야 정상입니다. '
-       . '내용이 보이면 <code>.htaccess</code> 가 무시되는 환경입니다 — 그때는 '
+       . '내용이 보이면 <code>.htaccess</code> 가 무시되는 환경입니다. 그때는 '
        . '<code>server/</code> 디렉토리를 웹 루트 밖으로 옮기거나 호스팅 관리자에게 문의하세요. '
        . 'nginx 라면 <code>location ~ ^/server/(core|storage)/ { deny all; }</code> 를 추가해야 합니다.</p>';
     echo '<table><tr><th>확인 대상</th><th>설치기 자동 진단</th><th>결과</th></tr>';
@@ -2618,25 +3360,25 @@ function ins_finalize(&$S)
     echo '<h2>바로 가기</h2>';
     $base = rtrim($cfg['base_url'], '/');
     echo '<ul>'
-       . '<li>로그인 화면 — <a href="' . ins_h($base . '/public/login.html') . '">' . ins_h($base . '/public/login.html') . '</a></li>'
-       . '<li>관리자 콘솔 — <a href="' . ins_h($base . '/public/admin.html') . '">' . ins_h($base . '/public/admin.html') . '</a>'
+       . '<li>로그인 화면: <a href="' . ins_h($base . '/public/login.html') . '">' . ins_h($base . '/public/login.html') . '</a></li>'
+       . '<li>관리자 콘솔: <a href="' . ins_h($base . '/public/admin.html') . '">' . ins_h($base . '/public/admin.html') . '</a>'
        . ' <span class="hint">아이디 <code>' . ins_h($adminUsername) . '</code> 로 로그인하세요 (소문자)</span></li>'
-       . '<li>마이페이지 — <a href="' . ins_h($base . '/public/mypage.html') . '">' . ins_h($base . '/public/mypage.html') . '</a></li>'
-       . '<li>연동 데모 — <code>examples/local-ai-app.html</code> (로컬 웹서버로 열어야 합니다: <code>python -m http.server 5173</code>)</li>'
+       . '<li>마이페이지: <a href="' . ins_h($base . '/public/mypage.html') . '">' . ins_h($base . '/public/mypage.html') . '</a></li>'
+       . '<li>연동 데모: <code>examples/local-ai-app.html</code> (로컬 웹서버로 열어야 합니다: <code>python -m http.server 5173</code>)</li>'
        . '</ul>';
 
     if ($cfg['mail_driver'] === 'log') {
-        echo '<h2>메일 <code>log</code> 드라이버 경고 — 반드시 읽어 주세요</h2>';
+        echo '<h2>메일 <code>log</code> 드라이버 경고: 반드시 읽어 주세요</h2>';
         echo '<div class="msg big">현재 메일 발송 방식은 <code>log</code> 입니다. 메일을 보내지 않고 '
-           . '<code>server/storage/mail/</code> 에 <b>파일로 쌓습니다.</b> 파일 확장자는 <code>.php</code> 이고 첫 줄이 <code>&lt;?php exit; ?&gt;</code> 라서 <b>브라우저로 열면 빈 화면</b>이 나옵니다 — FTP·파일관리자로 내려받아 열어야 내용이 보입니다. 그 파일 안에는<br>'
-           . '· 비밀번호 재설정 링크(<code>reset.html?token=…</code>) — 그 자체로 계정을 탈취할 수 있는 토큰<br>'
+           . '<code>server/storage/mail/</code> 에 <b>파일로 쌓습니다.</b> 파일 확장자는 <code>.php</code> 이고 첫 줄이 <code>&lt;?php exit; ?&gt;</code> 라서 <b>브라우저로 열면 빈 화면</b>이 나옵니다. FTP·파일관리자로 내려받아 열어야 내용이 보입니다. 그 파일 안에는<br>'
+           . '· 비밀번호 재설정 링크(<code>reset.html?token=…</code>): 그 자체로 계정을 탈취할 수 있는 토큰<br>'
            . '· 관리자가 발급한 <b>임시 비밀번호 평문</b><br>'
            . '· 이메일 인증 링크<br>'
            . '가 <b>평문으로</b> 들어 있습니다.</div>';
         echo '<p><b>정리 방법</b></p><ol>'
            . '<li>비밀번호 재설정을 처리한 뒤에는 <code>server/storage/mail/*.php</code> 를 즉시 삭제하세요. '
            . '토큰 수명(30분)이 지나도 임시 비밀번호는 계속 유효합니다.</li>'
-           . '<li>호스팅의 <code>mail()</code> 이 동작한다면 관리자 콘솔 → 설정 → '
+           . '<li>호스팅의 <code>mail()</code> 이 동작한다면 관리자 콘솔 > 설정 > '
            . '<code>메일 발송 방식</code> 을 <code>mail</code> 로 바꾸세요. 그 뒤에는 파일이 쌓이지 않습니다.</li>'
            . '<li>위 보안 확인에서 <code>storage/mail/</code> 가 "차단 확인"으로 나왔는지 다시 보세요. '
            . '노출되어 있으면 <b>지금 즉시</b> 디렉토리를 웹 루트 밖으로 옮기세요.</li>'
@@ -2644,24 +3386,24 @@ function ins_finalize(&$S)
     }
 
     echo '<h2>다음 단계</h2><ol>'
-       . '<li>관리자 콘솔에 로그인해 서비스 → 시크릿에서 AI API 키와 <b>최소 등급</b>을 등록·확인합니다. '
+       . '<li>관리자 콘솔에 로그인해 서비스 > 시크릿에서 AI API 키와 <b>최소 등급</b>을 등록·확인합니다. '
        . '게이트를 비운 시크릿은 그 서비스에 로그인한 전원에게 내려갑니다.</li>'
        // D-67(4): TRUST_PROXY 단독 안내는 위험하다. 그것만 켜면 요청이 500 이 된다.
        // 두 상수를 반드시 한 문장 안에서 함께 안내한다 (config.sample.php 의 두 블록과 같은 내용).
        . '<li><b>리버스 프록시·CDN(Cloudflare 등) 뒤에 있다면</b> <code>server/config.php</code> 의 '
        . '<code>TRUST_PROXY</code> 를 <code>true</code> 로 바꾸고 <b><code>TRUSTED_PROXIES</code> 에 '
-       . '프록시 IP 를 함께 채우세요.</b> 두 상수는 짝입니다 — '
+       . '프록시 IP를 함께 채우세요.</b> 두 상수는 짝입니다. '
        . '<code>TRUST_PROXY=true</code> 인데 <code>TRUSTED_PROXIES</code> 가 비어 있으면 '
-       . '<b>설정 오류로 취급해 요청이 500 이 됩니다</b>(리다이렉트 무한 루프로 원인을 숨기지 않기 '
+       . '<b>설정 오류로 취급해 요청이 500이 됩니다</b>(리다이렉트 무한 루프로 원인을 숨기지 않기 '
        . '위한 동작입니다. 서버 오류 로그에 사유가 남습니다). 기본값은 '
-       . '<code>false</code> + 빈 배열입니다 — 그 상태에서는 <code>X-Forwarded-Proto</code> 헤더를 '
+       . '<code>false</code> + 빈 배열입니다. 그 상태에서는 <code>X-Forwarded-Proto</code> 헤더를 '
        . '무시하고 서버가 직접 본 프로토콜만 봅니다. 켤 때는 <b>프록시가 그 헤더를 반드시 덮어쓰도록</b> '
        . '설정되어 있어야 합니다. 그렇지 않으면 클라이언트가 헤더 한 줄로 <code>FORCE_HTTPS</code> 를 '
        . '우회합니다. (보안 감사 L-8 · V11-L-6)</li>'
        . '<li>로컬 앱에 서버 주소 <code>' . ins_h($cfg['base_url']) . '</code> 와 '
        . '<code>service_id = "' . ins_h($serviceIdOut) . '"</code> 를 넣습니다.</li>'
-       . '<li>복귀 주소를 추가해야 하면 관리자 콘솔 → 서비스 → 복귀 주소 화이트리스트에서 등록합니다. '
-       . '등록되지 않은 주소로는 SSO 가 실패합니다.</li>'
+       . '<li>복귀 주소를 추가해야 하면 관리자 콘솔 > 서비스 > 복귀 주소 화이트리스트에서 등록합니다. '
+       . '등록되지 않은 주소로는 SSO가 실패합니다.</li>'
        . '<li>운영 중 <code>DEBUG</code> 를 <code>true</code> 로 켜지 마세요. 예외 메시지가 응답에 실립니다. '
        . '문제 조사 후에는 반드시 <code>false</code> 로 되돌립니다.</li>'
        . '</ol>';
@@ -2684,6 +3426,12 @@ $method = strtoupper((string) (isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQ
 
 if ($method !== 'POST') {
     // GET 은 항상 1단계부터. DB 정보를 GET 쿼리로 받지 않는다 (M-12-8)
+    // 설치 토큰 파일이 없으면 여기서 만든다(설계 G-5 — 서버에 기동 훅이 없어 첫 요청이 유일한 자리다).
+    // 토큰을 둘 곳이 없으면 설치 화면 자체를 내지 않는다.
+    $tokState = ins_token_ensure();
+    if ($tokState === 'nodir' || $tokState === 'fail') {
+        ins_token_unavailable($tokState);
+    }
     $S = [];
     ins_step1();
     exit;
@@ -2691,6 +3439,10 @@ if ($method !== 'POST') {
 
 ins_csrf_check();
 $submitted = ins_post('step');
+
+// 🔴 설치 토큰 관문 (설계 G-5 · 배포 조건 9). **이 줄이 설치 선점을 막는 유일한 자리다.**
+//    단계 분기보다 반드시 먼저 — 어느 단계 번호로 들어와도 토큰 없이 진행하지 못한다.
+ins_token_gate($submitted);
 
 if ($submitted === '1') {
     ins_step2(null, null);
@@ -2708,7 +3460,7 @@ if ($submitted === '1') {
         exit;
     } catch (Throwable $e) {
         error_log('[ulogin-install] schema read failed: ' . $e->getMessage());
-        ins_step3([[['table' => 'schema.sql', 'ok' => false, 'note' => 'schema.sql 을 읽을 수 없습니다. 파일이 함께 업로드되었는지 확인하세요.']], 1]);
+        ins_step3([[['table' => 'schema.sql', 'ok' => false, 'note' => 'schema.sql을 읽을 수 없습니다. 파일이 함께 업로드되었는지 확인하세요.']], 1]);
         exit;
     }
     ins_step3($res);

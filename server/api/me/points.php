@@ -23,7 +23,7 @@ $userId = (int) $ctx['user']['id'];
 list($page, $perPage, $offset) = page_params($_GET);
 
 $reason    = v_string($_GET, 'reason', 1, 100);
-$serviceId = v_string($_GET, 'service_id', 1, 64);
+$serviceId = v_service_id($_GET, 'service_id');   // v1.8.6 — 옛 id 필터도 새 id 행을 찾는다(설계 104 C-1)
 
 $where  = ' WHERE user_id = ?';
 $params = [$userId];

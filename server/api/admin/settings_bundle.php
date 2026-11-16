@@ -48,6 +48,8 @@ declare(strict_types=1);
  *  · **H-2(경쟁 조건)**: `expect_plan_hash` 낙관적 동시성 **+ 트랜잭션 안의 `FOR UPDATE`**.
  *    해시만으로는 두 apply 가 둘 다 커밋 전에 상태를 읽는 창이 남는다 — 그것이 H-2 와
  *    정확히 같은 읽기-수정-쓰기 형태다. 그래서 계획을 **잠근 읽기 위에서** 다시 세운다.
+ *    v1.8.0 — 「잠근 읽기」는 저장소마다 다르다: MySQL 은 `sql_for_update()` 의 `FOR UPDATE`,
+ *    SQLite 는 `db_tx()` 의 `BEGIN IMMEDIATE`(DB 전체 직렬화 — 행 잠금보다 강하다. 설계 E-4).
  *  · **H-3(FORCE_HTTPS 우회)**: 이 파일은 `core/bootstrap.php` 를 로드한다. H-3 은
  *    `migrate.php` 가 부트스트랩을 우회한 것이 원인이었고, 그 우회 이유(스키마가 코드보다
  *    낡은 상태에서 돌아야 한다)가 여기에는 없다. **부트스트랩을 우회하지 마라.**
@@ -341,7 +343,7 @@ function sb_enum_expected(array $vals, bool $nullable): string
 function sb_check_bool(array &$errs, string $path, $val): ?bool
 {
     if (!is_bool($val)) {
-        sb_add($errs, $path, 'wrong_type', '참/거짓(boolean)이어야 합니다. 문자열 "true" 가 아니라 JSON 의 true 를 쓰십시오.',
+        sb_add($errs, $path, 'wrong_type', '참/거짓(boolean)이어야 합니다. 문자열 "true" 가 아니라 JSON의 true를 쓰십시오.',
             'boolean', sb_got($val));
         return null;
     }
@@ -436,7 +438,7 @@ function sb_check_pattern(array &$errs, string $path, $val, string $regex, strin
  * URL 배열. 항목 규칙은 core/urlrules.php 의 url_rule_check() 하나뿐이다.
  * @param mixed $val
  */
-function sb_check_url_list(array &$errs, array $seg, $val, string $mode, string $label): array
+function sb_check_url_list(array &$errs, array $seg, $val, string $mode, string $label, bool $publicClient = false): array
 {
     $path = sb_ptr($seg);
     if (!is_array($val)) {
@@ -453,7 +455,7 @@ function sb_check_url_list(array &$errs, array $seg, $val, string $mode, string 
             continue;
         }
         $reason = null;
-        $norm   = url_rule_check($item, $mode, $reason);
+        $norm   = url_rule_check($item, $mode, $reason, $publicClient);   // v1.10.0 D-369
         if ($norm === null) {
             sb_add($errs, $ip, 'pattern_mismatch', (string) $reason,
                 $mode === 'origin' ? 'absolute http(s) origin: scheme://host[:port]'
@@ -557,6 +559,11 @@ function sb_validate($bundle, array &$errs, array &$warnings, bool $gateFromBund
     }
 
     // --- environment (읽고 무시한다. 다만 대조 재료로만 꺼내 둔다) ----
+    // v1.8.0 — 이 블록에 `DB_PORT`·`DB_DRIVER`·`DB_SQLITE_PATH` 가 들어와도 **아무 데도 쓰이지 않는다.**
+    // 쓰이는 곳은 sb_environment_check() 의 대조(BASE_URL · DB_PREFIX · SITE_NAME) 하나뿐이다.
+    // 저장소 종류와 DB 파일 경로는 설치기와 config.php 손편집으로만 바뀐다(리더 판정, A→B 9번):
+    // 번들이 경로를 바꿀 수 있으면 없는 파일 = 빈 DB 로 운영되는 상태(설계 측정 12)를
+    // 외부 입력 하나로 만들 수 있다. 이 블록을 「적용」하는 코드를 더하지 마라.
     if (array_key_exists('environment', $bundle) && is_array($bundle['environment'])
         && isset($bundle['environment']['constants']) && is_array($bundle['environment']['constants'])) {
         $norm['environment'] = $bundle['environment']['constants'];
@@ -567,9 +574,9 @@ function sb_validate($bundle, array &$errs, array &$warnings, bool $gateFromBund
     if (array_key_exists('settings', $bundle)) {
         $s = $bundle['settings'];
         if (!is_array($s)) {
-            sb_add($errs, '/settings', 'not_an_object', 'settings 는 객체여야 합니다.', 'object', sb_got($s));
+            sb_add($errs, '/settings', 'not_an_object', 'settings는 객체여야 합니다.', 'object', sb_got($s));
         } elseif ($s !== [] && sb_is_list($s)) {
-            sb_add($errs, '/settings', 'not_an_object', 'settings 는 키/값 객체여야 합니다. 배열이 아닙니다.',
+            sb_add($errs, '/settings', 'not_an_object', 'settings는 키/값 객체여야 합니다. 배열이 아닙니다.',
                 'object', sb_got($s));
         } else {
             $keys = array_keys($defs);
@@ -631,7 +638,7 @@ function sb_validate($bundle, array &$errs, array &$warnings, bool $gateFromBund
     if (array_key_exists('services', $bundle)) {
         $svcs = $bundle['services'];
         if (!is_array($svcs) || ($svcs !== [] && !sb_is_list($svcs))) {
-            sb_add($errs, '/services', 'not_an_array', 'services 는 객체 배열이어야 합니다.', 'array', sb_got($svcs));
+            sb_add($errs, '/services', 'not_an_array', 'services는 객체 배열이어야 합니다.', 'array', sb_got($svcs));
         } else {
             if (count($svcs) > SB_MAX_SERVICES) {
                 sb_add($errs, '/services', 'too_many',
@@ -662,7 +669,7 @@ function sb_validate($bundle, array &$errs, array &$warnings, bool $gateFromBund
             foreach ($norm['ack'] as $ackItem) {
                 if (!in_array($ackItem, $ackTouched, true)) {
                     sb_warn($warnings, '/acknowledge_public_secrets', 'acknowledge_unused',
-                        $ackItem . ' 는 승인 목록에 있으나 대응하는 allow_public: true 가 없습니다. '
+                        $ackItem . ' 는 승인 목록에 있으나 대응하는 allow_public: true가 없습니다. '
                         . '게이트를 채운 뒤 목록에서 지우지 않았을 수 있습니다.');
                 }
             }
@@ -713,19 +720,19 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
     $usable = true;
     if (!array_key_exists('service_id', $svc)) {
         sb_add($errs, sb_ptr(array_merge($seg, ['service_id'])), 'missing_required',
-            'service_id 는 필수입니다. 기존 행을 찾는 멱등 키입니다.', 'string (required)', sb_got_missing());
+            'service_id는 필수입니다. 기존 행을 찾는 멱등 키입니다.', 'string (required)', sb_got_missing());
         $usable = false;
     } else {
         $sid = sb_check_pattern($errs, sb_ptr(array_merge($seg, ['service_id'])), $svc['service_id'],
             '/^[a-z0-9][a-z0-9\-_]{2,63}$/',
-            '서비스 ID 는 영문 소문자·숫자로 시작하고 소문자·숫자·-·_ 3~64자여야 합니다. 대문자는 쓸 수 없습니다.',
+            '서비스 ID는 영문 소문자·숫자로 시작하고 소문자·숫자·-·_ 3~64자여야 합니다. 대문자는 쓸 수 없습니다.',
             'service_id');
         if ($sid === null) {
             $usable = false;
         } elseif (in_array($sid, $seenSid, true)) {
             // 조용히 마지막 것을 쓰지 않는다 — 어느 쪽이 이겨야 하는지 알 수 없다.
             sb_add($errs, $path, 'duplicate_in_bundle',
-                '같은 service_id 가 번들 안에 두 번 나옵니다: ' . $sid, 'unique service_id',
+                '같은 service_id가 번들 안에 두 번 나옵니다: ' . $sid, 'unique service_id',
                 ['got' => $sid, 'got_type' => 'string']);
             $usable = false;
         } else {
@@ -745,7 +752,7 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
     // --- 나머지 필드 ------------------------------------------------
     if (!array_key_exists('service_name', $svc)) {
         sb_add($errs, sb_ptr(array_merge($seg, ['service_name'])), 'missing_required',
-            'service_name 은 필수입니다.', 'string (required)', sb_got_missing());
+            'service_name은 필수입니다.', 'string (required)', sb_got_missing());
     } else {
         $v = sb_check_string($errs, sb_ptr(array_merge($seg, ['service_name'])), $svc['service_name'], 1, 100, 'service_name');
         if ($v !== null) {
@@ -779,15 +786,18 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
         }
     }
     if (array_key_exists('redirect_whitelist', $svc)) {
+        // v1.10.0 D-369 — 사용자 지정 scheme 은 번들이 is_confidential:false 를 **명시한** 서비스에서만 받는다.
+        // 명시가 없으면 DB 값을 봐야 하는데 validate 단계는 DB 를 보지 않는다 → 좁은 쪽(http/https)으로 판정한다.
         $list = sb_check_url_list($errs, array_merge($seg, ['redirect_whitelist']),
-            $svc['redirect_whitelist'], 'redirect', 'redirect_whitelist');
+            $svc['redirect_whitelist'], 'redirect', 'redirect_whitelist',
+            array_key_exists('is_confidential', $out['fields']) && (int) $out['fields']['is_confidential'] === 0);
         $out['fields']['redirect_whitelist'] = json_encode($list, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $statusHere = array_key_exists('status', $svc) && is_string($svc['status']) ? $svc['status'] : 'active';
         if ($list === [] && $statusHere === 'active') {
             // 오류가 아니다 — 서버-투-서버 전용 서비스는 유효한 구성이다.
             sb_warn($warnings, $path, 'empty_redirect_whitelist',
-                $sidLabel . ' 의 redirect_whitelist 가 비어 있고 status 가 active 입니다. '
-                . 'redirect_uri 는 완전 일치 비교라 이 서비스로는 SSO 가 완료될 수 없습니다.');
+                $sidLabel . ' 의 redirect_whitelist가 비어 있고 status가 active 입니다. '
+                . 'redirect_uri는 완전 일치 비교라 이 서비스로는 SSO가 완료될 수 없습니다.');
         }
     }
     if (array_key_exists('allowed_origins', $svc)) {
@@ -829,7 +839,7 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
             $out['fields']['payload_fields'] = null;          // NULL = 기본셋
         } elseif (!is_array($svc['payload_fields']) || ($svc['payload_fields'] !== [] && !sb_is_list($svc['payload_fields']))) {
             sb_add($errs, sb_ptr(array_merge($seg, ['payload_fields'])), 'not_an_array',
-                'payload_fields 는 문자열 배열 또는 null 이어야 합니다.', 'array', sb_got($svc['payload_fields']));
+                'payload_fields는 문자열 배열 또는 null 이어야 합니다.', 'array', sb_got($svc['payload_fields']));
         } else {
             $pf = [];
             $i  = 0;
@@ -851,7 +861,7 @@ function sb_validate_service(array &$errs, array &$warnings, $svc, int $idx, arr
         $secs = $svc['secrets'];
         if (!is_array($secs) || ($secs !== [] && !sb_is_list($secs))) {
             sb_add($errs, sb_ptr(array_merge($seg, ['secrets'])), 'not_an_array',
-                'secrets 는 객체 배열이어야 합니다.', 'array', sb_got($secs));
+                'secrets는 객체 배열이어야 합니다.', 'array', sb_got($secs));
         } else {
             if (count($secs) > SB_MAX_SECRETS_PER_SERVICE) {
                 sb_add($errs, sb_ptr(array_merge($seg, ['secrets'])), 'too_many',
@@ -920,7 +930,7 @@ function sb_validate_secret(array &$errs, array &$warnings, $sec, array $svcSeg,
     $usable = true;
     if (!array_key_exists('secret_key', $sec)) {
         sb_add($errs, sb_ptr(array_merge($seg, ['secret_key'])), 'missing_required',
-            'secret_key 는 필수입니다. 서비스 안에서 기존 행을 찾는 멱등 키입니다.',
+            'secret_key는 필수입니다. 서비스 안에서 기존 행을 찾는 멱등 키입니다.',
             'string (required)', sb_got_missing());
         $usable = false;
     } else {
@@ -931,7 +941,7 @@ function sb_validate_secret(array &$errs, array &$warnings, $sec, array $svcSeg,
             $usable = false;
         } elseif (in_array($key, $seenKey, true)) {
             sb_add($errs, $path, 'duplicate_in_bundle',
-                '같은 secret_key 가 이 서비스 안에 두 번 나옵니다: ' . $key, 'unique (service_id, secret_key)',
+                '같은 secret_key가 이 서비스 안에 두 번 나옵니다: ' . $key, 'unique (service_id, secret_key)',
                 ['got' => $key, 'got_type' => 'string']);
             $usable = false;
         } else {
@@ -961,7 +971,7 @@ function sb_validate_secret(array &$errs, array &$warnings, $sec, array $svcSeg,
         if (!is_string($sec['secret_value'])) {
             // **평문 자리이므로 got 을 마스킹한다.** 타입만 참값이다.
             sb_add($errs, sb_ptr(array_merge($seg, ['secret_value'])), 'wrong_type',
-                'secret_value 는 문자열 또는 null 이어야 합니다.', 'string', sb_got_masked($sec['secret_value']));
+                'secret_value는 문자열 또는 null 이어야 합니다.', 'string', sb_got_masked($sec['secret_value']));
         } else {
             $reason = null;
             if (!secret_value_rule_check($sec['secret_value'], $valueType, $reason)) {
@@ -1118,7 +1128,7 @@ function sb_gate_judge(array &$errs, array &$warnings, string $path, string $sid
     // `basic` 은 랭크 10 이지만 전 회원의 기본값이라 게이트가 아니다.
     $expected = $defeated
         ? 'min_billing_tier > free 또는 min_role > user'
-            . ' (이 서비스의 default_account_level 이 min_account_level 게이트를 자동으로 통과시킨다)'
+            . ' (이 서비스의 default_account_level이 min_account_level 게이트를 자동으로 통과시킨다)'
         : 'min_account_level > basic, min_billing_tier > free, min_role > user 중 하나 이상';
     $got      = [
         'got' => [
@@ -1133,19 +1143,19 @@ function sb_gate_judge(array &$errs, array &$warnings, string $path, string $sid
     $why = $defeated
         ? '민감한 시크릿(' . $key . ')의 min_account_level(' . (string) $minLevel . ') 게이트가 '
             . '이 서비스에서는 아무도 막지 않습니다. 이 서비스는 default_account_level('
-            . (string) $autoLevel . ') 을 가입하는 회원에게 자동으로 보장하므로, 가입한 전원이 '
+            . (string) $autoLevel . ')을 가입하는 회원에게 자동으로 보장하므로, 가입한 전원이 '
             . '그 등급을 갖고 게이트를 통과합니다.'
         : '민감한 시크릿(' . $key . ')에는 최소 등급 게이트가 필요합니다. '
             . '게이트를 비우면 가입한 모든 사용자가 이 값을 받습니다.';
     $how = $defeated
         // 이 축은 서비스 필드로 자동 부여될 수 없다 — 권유가 같은 함정으로 돌아오지 않는다.
-        ? 'min_billing_tier 를 lite 이상으로 설정하십시오. 결제등급과 역할은 서비스가 '
+        ? 'min_billing_tier를 lite 이상으로 설정하십시오. 결제등급과 역할은 서비스가 '
             . '자동으로 부여하지 않습니다.'
         : 'min_billing_tier 를 lite 이상으로 설정하십시오. '
             . '(guest / basic 계정등급, free 결제등급, user 역할은 전 회원의 기본값이라 '
-            . '게이트로 인정되지 않습니다 — 걸어도 전원이 통과합니다. '
-            . 'min_account_level 로 걸려면 verified 이상이어야 하는데, 기본 설치본에서는 '
-            . '아무도 verified 가 아니므로 그 서비스의 전 회원이 차단됩니다.)';
+            . '게이트로 인정되지 않습니다. 걸어도 전원이 통과합니다. '
+            . 'min_account_level로 걸려면 verified 이상이어야 하는데, 기본 설치본에서는 '
+            . '아무도 verified가 아니므로 그 서비스의 전 회원이 차단됩니다.)';
     if (!$allowPublic) {
         sb_add($errs, $path, 'gate_required', $why . ' ' . $how, $expected, $got);
         return;
@@ -1158,8 +1168,8 @@ function sb_gate_judge(array &$errs, array &$warnings, string $path, string $sid
             . ($defeated
                 ? 'min_account_level(' . (string) $minLevel . ') 은 이 서비스의 '
                     . 'default_account_level(' . (string) $autoLevel . ') 때문에 게이트로 세지 않습니다. '
-                    . '게이트를 거는 편이 옳다면 min_billing_tier 를 lite 이상으로 설정하십시오.'
-                : '게이트를 거는 편이 옳다면 min_billing_tier 를 lite 이상으로 설정하십시오.'),
+                    . '게이트를 거는 편이 옳다면 min_billing_tier를 lite 이상으로 설정하십시오.'
+                : '게이트를 거는 편이 옳다면 min_billing_tier를 lite 이상으로 설정하십시오.'),
             $expected, $got);
         return;
     }
@@ -1168,7 +1178,7 @@ function sb_gate_judge(array &$errs, array &$warnings, string $path, string $sid
         . '가입한 모든 사용자가 이 값을 받습니다. 의도한 것인지 확인하십시오.'
         . ($defeated
             ? ' (min_account_level(' . (string) $minLevel . ') 은 이 서비스의 '
-                . 'default_account_level(' . (string) $autoLevel . ') 이 자동으로 통과시킵니다.)'
+                . 'default_account_level(' . (string) $autoLevel . ')이 자동으로 통과시킵니다.)'
             : ''));
 }
 
@@ -1359,16 +1369,17 @@ function sb_environment_check(?array $bundleConstants): array
         'matches'    => $mismatches === [],
         'mismatches' => $mismatches,
         'note'       => $mismatches === []
-            ? '번들의 environment 가 이 설치본과 일치합니다.'
+            ? '번들의 environment가 이 설치본과 일치합니다.'
             : '이 번들은 다른 설치본에서 나왔을 수 있습니다. 의도한 이식이면 그대로 적용해도 됩니다. '
-                . '거절하지 않습니다 — 확인만 하십시오.',
+                . '거절하지 않습니다. 확인만 하십시오.',
     ];
 }
 
 /**
  * 계획을 만든다. **쓰기를 하지 않는다.**
  *
- * @param bool $forUpdate true 면 대상 행을 `FOR UPDATE` 로 **잠그고** 읽는다(apply 전용).
+ * @param bool $forUpdate true 면 대상 행을 **잠그고** 읽는다(apply 전용). MySQL 은 `FOR UPDATE`,
+ *                        SQLite 는 문장에 붙는 것이 없고 `db_tx()` 의 `BEGIN IMMEDIATE` 가 잠근다(v1.8.0).
  *                        낙관적 해시만으로는 두 apply 가 둘 다 커밋 전에 읽는 창이 남고,
  *                        그것이 V14-H-2 와 같은 읽기-수정-쓰기 형태다.
  * @param array $errs     (out) 계획 단계에서만 알 수 있는 오류(mutual_dependency · 실효 게이트)
@@ -1402,7 +1413,7 @@ function sb_build_plan(array $norm, bool $forUpdate, bool $tenseDone, array &$er
         // 상호 의존 경고 3건 — 값이 실제로 그 방향으로 **바뀔 때만** 낸다.
         if ($k === 'maintenance_mode' && $to === true) {
             sb_warn($warnings, $entry['path'], 'maintenance_mode_on',
-                '점검 모드를 켭니다. 적용 직후 manager 미만 전원이 503 을 받습니다.');
+                '점검 모드를 켭니다. 적용 직후 manager 미만 전원이 503을 받습니다.');
         }
         if ($k === 'allow_register' && $to === false) {
             sb_warn($warnings, $entry['path'], 'registration_disabled',
@@ -1430,7 +1441,7 @@ function sb_build_plan(array $norm, bool $forUpdate, bool $tenseDone, array &$er
     foreach ($norm['services'] as $svc) {
         $sid = $svc['service_id'];
         $cur = $forUpdate
-            ? db_one('SELECT * FROM ' . T_SERVICES . ' WHERE service_id = ? FOR UPDATE', [$sid])
+            ? db_one('SELECT * FROM ' . T_SERVICES . ' WHERE service_id = ?' . sql_for_update(), [$sid])
             : db_one('SELECT * FROM ' . T_SERVICES . ' WHERE service_id = ?', [$sid]);
         $state['services'][$sid] = sb_service_state($cur);
 
@@ -1438,6 +1449,12 @@ function sb_build_plan(array $norm, bool $forUpdate, bool $tenseDone, array &$er
         if ($exists && $onConflict === 'fail') {
             $conflicts[] = ['path' => $svc['path'], 'kind' => 'service', 'service_id' => $sid,
                 'message' => '이미 존재하는 service_id 입니다.'];
+        }
+        // v1.8.6 — 개명 전 id 는 새 서비스로 만들 수 없다. on_conflict 와 무관하게 충돌이다(설계 104 C-4).
+        //          만들면 아직 옛 설정인 시스템의 요청이 그 새 서비스로 간다.
+        if (!$exists && service_id_taken($sid) !== null) {
+            $conflicts[] = ['path' => $svc['path'], 'kind' => 'service', 'service_id' => $sid,
+                'message' => '개명 전에 쓰던 service_id라 새 서비스에 다시 쓸 수 없습니다.'];
         }
 
         $svcOp   = $exists ? ($onConflict === 'skip' ? 'skip' : 'update') : 'create';
@@ -1479,10 +1496,27 @@ function sb_build_plan(array $norm, bool $forUpdate, bool $tenseDone, array &$er
                 || ($exists && $cur['service_secret_hash'] !== null && $cur['service_secret_hash'] !== '');
             if ($confEff && !$hasSecret) {
                 sb_add($errs, $svc['path'], 'mutual_dependency',
-                    'is_confidential 이 true 인데 service_secret 이 번들에도 DB 에도 없습니다. '
-                    . 'confidential 클라이언트는 exchange 에서 service_secret 을 검증받으므로 로그인이 완료될 수 없습니다.',
+                    'is_confidential이 true 인데 service_secret이 번들에도 DB 에도 없습니다. '
+                    . 'confidential 클라이언트는 exchange에서 service_secret을 검증받으므로 로그인이 완료될 수 없습니다.',
                     'is_confidential=true requires service_secret (8..255 chars) in the bundle or an existing one in the database',
                     ['got' => ['is_confidential' => true, 'service_secret' => null], 'got_type' => 'object']);
+            }
+            // v1.10.0 D-369 — confidential 서비스에는 사용자 지정 scheme 복귀 주소가 남을 수 없다(번들 값이든 기존 값이든).
+            if ($confEff) {
+                $rwEff = array_key_exists('redirect_whitelist', $svc['fields'])
+                    ? json_col((string) $svc['fields']['redirect_whitelist'])
+                    : ($exists ? json_col((string) ($cur['redirect_whitelist'] ?? '')) : []);
+                foreach ($rwEff as $rw) {
+                    $rwReason = null;
+                    if (is_string($rw) && url_rule_check($rw, 'redirect', $rwReason, false) === null) {
+                        sb_add($errs, $svc['path'], 'mutual_dependency',
+                            'is_confidential이 true 인 서비스의 redirect_whitelist에는 http/https 주소만 둘 수 있습니다. '
+                            . '사용자 지정 scheme(예: myapp://auth)은 공개 클라이언트(is_confidential=false)에서만 허용됩니다.',
+                            'is_confidential=true requires http(s) redirect_whitelist entries only',
+                            ['got' => $rw, 'got_type' => 'string']);
+                        break;
+                    }
+                }
             }
             if ($svcOp === 'create') {
                 $counts['services_create']++;
@@ -1596,7 +1630,7 @@ function sb_plan_secret(string $sid, array $sec, string $onConflict, bool $forUp
     $key  = $sec['secret_key'];
     $ref  = $sid . '/' . $key;
     $cur  = $forUpdate
-        ? db_one('SELECT * FROM ' . T_SECRETS . ' WHERE service_id = ? AND secret_key = ? FOR UPDATE', [$sid, $key])
+        ? db_one('SELECT * FROM ' . T_SECRETS . ' WHERE service_id = ? AND secret_key = ?' . sql_for_update(), [$sid, $key])
         : db_one('SELECT * FROM ' . T_SECRETS . ' WHERE service_id = ? AND secret_key = ?', [$sid, $key]);
     $state['secrets'][$ref] = sb_secret_state($cur);
     $exists = $cur !== null;
@@ -1729,12 +1763,12 @@ function sb_plan_secret(string $sid, array $sec, string $onConflict, bool $forUp
             }
         }
         sb_warn($warnings, $sec['path'], 'secret_forced_disabled',
-            ($exists ? '저장된 secret_value 가 비어 있어 ' : 'secret_value 가 없어 ')
+            ($exists ? '저장된 secret_value가 비어 있어 ' : 'secret_value가 없어 ')
             . 'status 를 disabled 로 '
             . ($curStatus === 'disabled'
                 ? ($tenseDone ? '유지했습니다.' : '유지합니다.')
                 : ($tenseDone ? '만들었습니다.' : '만듭니다.'))
-            . ($tenseDone ? '' : ' 값이 빈 active 시크릿은 payload 에서 조용히 빠져 원인을 찾기 어렵습니다.'
+            . ($tenseDone ? '' : ' 값이 빈 active 시크릿은 payload에서 조용히 빠져 원인을 찾기 어렵습니다.'
                 . ' 번들의 status 값보다 이 강제가 우선합니다.'));
     }
 
@@ -1795,7 +1829,7 @@ function sb_pending_entry(string $sid, string $key): array
     return [
         'service_id' => $sid,
         'secret_key' => $key,
-        'how'        => '관리자 콘솔 > 서비스 > ' . $sid . ' > 시크릿 에서 값을 넣고 status 를 active 로 바꾸십시오.',
+        'how'        => '관리자 콘솔 > 서비스 > ' . $sid . ' > 시크릿 에서 값을 넣고 status를 active로 바꾸십시오.',
     ];
 }
 
@@ -1929,10 +1963,15 @@ if ($method === 'GET') {
             'constants' => $constants,
             'value_omitted_constants' => [
                 'DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS',
+                // v1.7.0 의 DB_PORT 는 그 라운드에 이 목록에 왔어야 했다(규약 6). 번들이 포트를
+                // 바꿀 수 있으면 접속이 3306 — 사용자의 살아 있는 DB 로 갈 수 있다(최우선 지시 1-(b)).
+                // v1.8.0 — 저장소 선택과 DB 파일 경로. 값은 내보내지 않는다(경로는 설치본의
+                // 파일시스템 배치를 드러낸다). import 는 이 셋을 받지 않는다(위 normalize 주석).
+                'DB_PORT', 'DB_DRIVER', 'DB_SQLITE_PATH',
                 'SECRET_ENC_KEY', 'APP_KEY', 'TRUSTED_PROXIES', 'MAIL_FROM',
             ],
             'derived_table_constants' => 17,
-            'constants_total'         => 54,
+            'constants_total'         => 57,
         ],
         'excluded' => [
             'secret_values' => [
@@ -1946,7 +1985,7 @@ if ($method === 'GET') {
                 'reason'   => '런타임에 config.php 를 쓰지 않는다. SECRET_ENC_KEY 가 잘못되면 저장된 모든 시크릿이 영구히 복호화 불가능해지고, 부분 쓰기는 관리자 콘솔을 포함한 전 엔드포인트를 500 으로 만든다.',
                 'managed_by' => 'server/install.php · 수동 편집',
                 'constants_with_value'    => 29,
-                'constants_value_omitted' => 8,
+                'constants_value_omitted' => 11,
                 'constants_derived'       => 17,
             ],
             'terms' => [
@@ -2116,11 +2155,11 @@ if ($dropped) {
         'path' => '/', 'code' => 'body_missing_or_dropped',
         'message' => '요청 본문이 서버에 도착하지 않았습니다. '
             . ($byPostMax
-                ? 'Content-Length(' . (string) $clen . ' 바이트)가 PHP 의 post_max_size('
-                    . (string) $postMax . ' 바이트)를 넘고 본문이 비어 있습니다 — 이 실행 환경은 '
-                    . '초과 본문을 버립니다. php.ini 의 post_max_size 를 올리십시오.'
+                ? 'Content-Length(' . (string) $clen . ' 바이트)가 PHP의 post_max_size('
+                    . (string) $postMax . ' 바이트)를 넘고 본문이 비어 있습니다. 이 실행 환경은 '
+                    . '초과 본문을 버립니다. php.ini의 post_max_size를 올리십시오.'
                 : 'Content-Length 는 ' . (string) $clen . ' 바이트인데 파싱된 본문이 비었습니다. '
-                    . 'php.ini 의 post_max_size 와 중간 프록시의 본문 크기 제한을 확인하십시오.'),
+                    . 'php.ini의 post_max_size와 중간 프록시의 본문 크기 제한을 확인하십시오.'),
         'expected' => 'non-empty body',
         'got' => $clen, 'got_type' => 'integer',
     ]], null, '요청 본문이 도착하지 않았습니다.', 'body');
@@ -2140,7 +2179,7 @@ $bundleIn = array_key_exists('bundle', $req) ? $req['bundle'] : null;
 if (!array_key_exists('bundle', $req)) {
     sb_fail([[
         'path' => '/', 'code' => 'bundle_not_recognized',
-        'message' => '요청 본문에 bundle 이 없습니다. {"bundle": { ... }} 형태로 보내십시오.',
+        'message' => '요청 본문에 bundle이 없습니다. {"bundle": { ... }} 형태로 보내십시오.',
         'expected' => 'object with key "bundle"',
         'got' => null, 'got_type' => 'missing',
     ]], null, 'ulogin 설정 번들이 아닙니다.', 'bundle');
@@ -2180,7 +2219,7 @@ if ($errs !== []) {
     if ($first === 'bundle_version_unsupported') {
         sb_fail($errs, $checked, '지원하지 않는 번들 버전입니다.', 'ulogin_settings_bundle');
     }
-    sb_fail($errs, $checked, '번들 검증에 실패했습니다. 오류 ' . (string) count($errs) . '건. data.errors 를 보십시오.', 'bundle');
+    sb_fail($errs, $checked, '번들 검증에 실패했습니다. 오류 ' . (string) count($errs) . '건. data.errors를 보십시오.', 'bundle');
 }
 
 // ---- validate: 여기서 끝난다. DB 를 한 번도 읽지 않았다 -------------
@@ -2196,14 +2235,14 @@ if ($action === 'validate') {
 if ($action === 'dry-run') {
     $built = sb_build_plan($norm, false, false, $errs, $warnings);
     if ($errs !== []) {
-        sb_fail($errs, $checked, '번들 검증에 실패했습니다. 오류 ' . (string) count($errs) . '건. data.errors 를 보십시오.', 'bundle');
+        sb_fail($errs, $checked, '번들 검증에 실패했습니다. 오류 ' . (string) count($errs) . '건. data.errors를 보십시오.', 'bundle');
     }
     if ($built['conflicts'] !== []) {
         json_err('CONFLICT', 409, [
             'conflicts'      => $built['conflicts'],
             'conflict_count' => count($built['conflicts']),
             'on_conflict'    => $norm['on_conflict'],
-            'hint'           => 'on_conflict 를 "merge"(있는 필드만 갱신) 또는 "skip"(기존 행 보존) 으로 바꾸십시오.',
+            'hint'           => 'on_conflict를 "merge"(있는 필드만 갱신) 또는 "skip"(기존 행 보존)으로 바꾸십시오.',
             'field'          => 'on_conflict',
             'message'        => '기존 설정과 충돌합니다. 충돌 ' . (string) count($built['conflicts']) . '건.',
         ]);
@@ -2226,13 +2265,13 @@ $expect = array_key_exists('expect_plan_hash', $req) && is_string($req['expect_p
 if ($expect === '') {
     json_err('VALIDATION_FAILED', 400, [
         'field'   => 'expect_plan_hash',
-        'message' => 'expect_plan_hash 가 필요합니다. 먼저 ?action=dry-run 으로 계획을 확인하십시오.',
+        'message' => 'expect_plan_hash가 필요합니다. 먼저 ?action=dry-run으로 계획을 확인하십시오.',
     ]);
 }
 if (!is_token_format($expect)) {
     json_err('VALIDATION_FAILED', 400, [
         'field'   => 'expect_plan_hash',
-        'message' => 'expect_plan_hash 형식이 올바르지 않습니다. dry-run 응답의 plan_hash 를 그대로 보내십시오.',
+        'message' => 'expect_plan_hash 형식이 올바르지 않습니다. dry-run 응답의 plan_hash를 그대로 보내십시오.',
     ]);
 }
 $reason = v_string($req, 'reason', 0, 255, false);
@@ -2260,14 +2299,23 @@ $applied      = null;
  *
  * 잡는 것만 잡는다: 교착(1213) · 잠금 대기 초과(1205) · 중복키(1062). 나머지 DB 오류는
  * 그대로 올려 보내 `SERVER_ERROR` 가 되게 한다 — 삼키면 진짜 결함이 조용해진다.
+ *
+ * ── v1.8.0 SQLite (설계 B-3) ──────────────────────────────────────────
+ * SQLite 는 `BEGIN IMMEDIATE` 가 DB 전체를 직렬화하므로 위의 갭 잠금 경합 자체가 없다.
+ * 남는 경합 신호는 둘이다: **busy(5) · locked(6)** — busy_timeout 을 넘겨 잠금을 못 얻은 경우.
+ * 중복키는 `db_is_duplicate()` 하나로 판정한다. **SQLite 의 19 는 UNIQUE·CHECK·NOT NULL
+ * 공용이라** errno 만 보면 CHECK(length) 위반이 「경합」으로 409 가 되고, 진짜 검증 결함이
+ * 「다시 시도하라」로 숨는다 — 메시지 대조는 그 함수가 한다. 여기서 19 를 직접 보지 마라.
  */
 function sb_is_race_error(Throwable $e): bool
 {
     if (!($e instanceof PDOException)) {
         return false;
     }
-    $errno = isset($e->errorInfo[1]) ? (int) $e->errorInfo[1] : 0;
-    return in_array($errno, [1213, 1205, 1062], true);
+    // 두 판정 모두 core/db.php 한 곳이 드라이버별로 한다 — errno 를 여기 복사하지 않는다.
+    //   db_is_duplicate()     MySQL 1062 · SQLite 23000 + 'UNIQUE constraint failed'
+    //   db_is_lock_conflict() MySQL 1213·1205 · SQLite 5(busy)·6(locked)
+    return db_is_duplicate($e) || db_is_lock_conflict($e);
 }
 
 $applyFn = function () use ($norm, $expect, $adminId, $reason, &$planErrs, &$applyWarn) {
@@ -2279,7 +2327,7 @@ $applyFn = function () use ($norm, $expect, $adminId, $reason, &$planErrs, &$app
             'error_count' => count($planErrs),
             'truncated'   => count($planErrs) >= SB_MAX_ERRORS,
             'field'       => 'bundle',
-            'message'     => '번들 검증에 실패했습니다. 오류 ' . (string) count($planErrs) . '건. data.errors 를 보십시오.',
+            'message'     => '번들 검증에 실패했습니다. 오류 ' . (string) count($planErrs) . '건. data.errors를 보십시오.',
         ]);
     }
     if ($built['conflicts'] !== []) {
@@ -2287,7 +2335,7 @@ $applyFn = function () use ($norm, $expect, $adminId, $reason, &$planErrs, &$app
             'conflicts'      => $built['conflicts'],
             'conflict_count' => count($built['conflicts']),
             'on_conflict'    => $norm['on_conflict'],
-            'hint'           => 'on_conflict 를 "merge"(있는 필드만 갱신) 또는 "skip"(기존 행 보존) 으로 바꾸십시오.',
+            'hint'           => 'on_conflict를 "merge"(있는 필드만 갱신) 또는 "skip"(기존 행 보존)으로 바꾸십시오.',
             'field'          => 'on_conflict',
             'message'        => '기존 설정과 충돌합니다. 충돌 ' . (string) count($built['conflicts']) . '건.',
         ]);
@@ -2298,7 +2346,7 @@ $applyFn = function () use ($norm, $expect, $adminId, $reason, &$planErrs, &$app
             'expected_plan_hash' => $expect,
             'current_plan_hash'  => $built['hash'],
             'reason'             => '계획을 만든 뒤 설정이 바뀌었거나, 다른 관리자가 먼저 적용했습니다.',
-            'hint'               => 'dry-run 을 다시 호출해 새 계획을 확인한 뒤 그 plan_hash 로 다시 apply 하십시오. 아무것도 적용되지 않았습니다.',
+            'hint'               => 'dry-run을 다시 호출해 새 계획을 확인한 뒤 그 plan_hash로 다시 apply 하십시오. 아무것도 적용되지 않았습니다.',
             // 설계 5-4 가 "새 계획을 함께 준다" 고 적었다. 그것을 여기 싣는다.
             'plan'               => $built['plan'],
             'field'              => 'expect_plan_hash',
@@ -2448,7 +2496,7 @@ try {
         'expected_plan_hash' => $expect,
         'current_plan_hash'  => null,
         'reason'             => '다른 관리자가 같은 대상을 동시에 적용했습니다.',
-        'hint'               => 'dry-run 을 다시 호출해 새 계획을 확인한 뒤 그 plan_hash 로 다시 apply 하십시오. 아무것도 적용되지 않았습니다.',
+        'hint'               => 'dry-run을 다시 호출해 새 계획을 확인한 뒤 그 plan_hash로 다시 apply 하십시오. 아무것도 적용되지 않았습니다.',
         'field'              => 'expect_plan_hash',
         'message'            => '동시에 적용된 변경과 충돌했습니다. 적용하지 않았습니다.',
     ]);

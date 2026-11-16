@@ -44,6 +44,205 @@ function service_require(?string $serviceId): array
     return $s;
 }
 
+// ---------------------------------------------------------------------
+// 서비스 id 별칭 — v1.8.6 (설계 104 C-1 · C-2 · C-4, 마이그레이션 0006)
+//
+// **DB 의 진실은 새 id 하나다.** 옛 id 는 `services.former_service_id` 한 칸에만 있고,
+// 입력에서 service_id 를 읽는 **그 줄**(`v_service_id()`)에서만 새 id 로 바꾼다. 그 뒤의
+// 코드(로그·버킷·code 대조·payload·account_link)는 새 id 만 본다.
+// `service_load()` 안에 숨기지 않는다 — exchange 가 code 행의 id 와 **입력 변수**를 직접
+// 비교하므로(hash_equals), 조회 함수만 고치면 옛 id 로 받은 code 가 SSO_CODE_INVALID 가 된다.
+//
+// 시스템에 돌려주는 응답의 service_id 는 클라이언트가 보낸 값을 되돌린다(echo, C-2).
+// 응답 값을 자기 설정과 비교하는 시스템이 있으면 새 id 응답이 곧 그 시스템의 로그인 정지다.
+// 관리자 API·me/*·로그·감사는 언제나 새 id 다.
+// ---------------------------------------------------------------------
+
+/** 이번 요청에서 별칭으로 들어온 id. [새 id => 클라이언트가 보낸 옛 id]. 요청 단위. */
+$GLOBALS['ULOGIN_SID_ALIAS'] = [];
+
+/** 별칭 사용 기록 상한(초). 이 안의 두 번째 사용은 갱신하지 않는다 — 매 요청 쓰기를 막는다. */
+const SERVICE_ALIAS_TOUCH_SEC = 600;
+
+/**
+ * service_id 문자열을 정식 id 로 푼다.
+ * 순서: ① `services.service_id` 일치(상태 무관) ② `former_service_id` 일치 + 별칭 유효
+ * ①이 먼저다 — 같은 문자열이 두 칸에 있을 수 없게 service_id_taken() 이 막지만,
+ * 그 막힘이 뚫려도 별칭이 진짜 서비스를 가리지 못하게 한다.
+ * @return array{canonical:string,presented:string,via_alias:bool}|null  없으면 null
+ */
+function service_id_resolve(string $p): ?array
+{
+    if ($p === '') {
+        return null;
+    }
+    $hit = db_val('SELECT service_id FROM ' . T_SERVICES . ' WHERE service_id = ?', [$p]);
+    if ($hit !== null && $hit !== false) {
+        return ['canonical' => (string) $hit, 'presented' => $p, 'via_alias' => false];
+    }
+    $row = db_one('SELECT service_id FROM ' . T_SERVICES
+        . ' WHERE former_service_id = ? AND (former_until IS NULL OR former_until > ?)', [$p, now_utc()]);
+    if ($row === null) {
+        return null;
+    }
+    return ['canonical' => (string) $row['service_id'], 'presented' => $p, 'via_alias' => true];
+}
+
+/**
+ * 시스템·브라우저가 보내는 service_id 입력. `v_string()` + 별칭 해석.
+ * 정식 id 를 돌려준다. 해석에 실패하면 **입력 원문**을 돌려준다 — 뒤의 service_require()·
+ * secret 검증이 지금과 같은 오류(SSO_INVALID_SERVICE · SSO_CLIENT_AUTH_FAILED)를 낸다.
+ * 오류 경로를 새로 만들지 않는다.
+ */
+function v_service_id(array $in, string $key, bool $required = false): ?string
+{
+    $raw = v_string($in, $key, 1, 64, $required);
+    if ($raw === null) {
+        return null;
+    }
+    $r = service_id_resolve($raw);
+    if ($r === null) {
+        return $raw;
+    }
+    if ($r['via_alias']) {
+        $GLOBALS['ULOGIN_SID_ALIAS'][$r['canonical']] = $r['presented'];
+    }
+    return $r['canonical'];
+}
+
+/** 이번 요청이 이 서비스에 별칭으로 들어왔으면 그 옛 id, 아니면 null. */
+function service_id_presented_alias(string $canonical): ?string
+{
+    return isset($GLOBALS['ULOGIN_SID_ALIAS'][$canonical]) ? (string) $GLOBALS['ULOGIN_SID_ALIAS'][$canonical] : null;
+}
+
+/** $alias 가 지금도 $canonical 의 유효한 별칭인가. */
+function service_alias_active(string $canonical, string $alias): bool
+{
+    if ($canonical === '' || $alias === '' || $canonical === $alias) {
+        return false;
+    }
+    return db_val('SELECT id FROM ' . T_SERVICES . ' WHERE service_id = ? AND former_service_id = ?'
+        . ' AND (former_until IS NULL OR former_until > ?)', [$canonical, $alias, now_utc()]) !== null;
+}
+
+/**
+ * 시스템에 돌려줄 service_id (C-2).
+ *   이번 요청이 별칭으로 들어왔다 → 그 옛 id
+ *   아니면 세션 행의 client_service_id 가 지금도 유효한 별칭이다 → 그 값
+ *   아니면 → 정식 id
+ * 별칭이 끝나면(former_until 경과) echo 도 멈춘다 — 그때는 시스템이 이미 새 id 를 쓴다.
+ */
+function service_id_out(string $canonical, ?array $sessionRow = null): string
+{
+    $p = service_id_presented_alias($canonical);
+    if ($p !== null) {
+        return $p;
+    }
+    $c = ($sessionRow !== null && isset($sessionRow['client_service_id'])) ? (string) $sessionRow['client_service_id'] : '';
+    if ($c !== '' && service_alias_active($canonical, $c)) {
+        return $c;
+    }
+    return $canonical;
+}
+
+/** 직렬화된 user/session 객체의 service_id 를 echo 규칙으로 바꾼다. 시스템 응답 전용. */
+function service_id_echo(array &$out, ?array $sessionRow = null): void
+{
+    if (isset($out['service_id']) && is_string($out['service_id']) && $out['service_id'] !== '') {
+        $out['service_id'] = service_id_out($out['service_id'], $sessionRow);
+    }
+}
+
+/**
+ * 별칭 사용 기록 — **secret 을 검증한 요청에서만** 부른다(exchange 성공 · al_s2s_auth 성공).
+ * validate·authorize 는 인증 없는 공개 요청이라 세지 않는다 — 누구나 두드려
+ * 「아직 쓰는 중」으로 보이게 해 별칭 종료를 막을 수 있다.
+ * 10분에 1회 상한은 조건부 UPDATE 가 진다(읽고 쓰기 경합 없음).
+ */
+function service_alias_touch(string $canonical): void
+{
+    if (service_id_presented_alias($canonical) === null) {
+        return;
+    }
+    try {
+        db_exec('UPDATE ' . T_SERVICES . ' SET former_last_used_at = ? WHERE service_id = ?'
+            . ' AND (former_last_used_at IS NULL OR former_last_used_at < ?)',
+            [now_utc(), $canonical, gmdate('Y-m-d H:i:s', time() - SERVICE_ALIAS_TOUCH_SEC)]);
+    } catch (Throwable $e) {
+        // 기록 실패가 로그인을 막지 않는다. 종료 판단이 늦어질 뿐이다.
+        error_log('[ulogin] alias last-used update failed: ' . $e->getMessage());
+    }
+}
+
+/**
+ * 새 서비스 id 로 쓸 수 없는가 (C-4). 쓸 수 없으면 사유, 쓸 수 있으면 null.
+ * `services.service_id` 또는 `former_service_id`(별칭 종료 뒤 포함)에 있으면 taken.
+ * 두 열에 걸친 UNIQUE 는 DB 가 못 한다 — 그래서 판정을 이 함수 하나에 둔다.
+ * 부르는 곳: admin/services 생성 · settings_bundle 신규 서비스 · register_services 등록 · 개명 대상.
+ */
+const SERVICE_ID_RESERVED = ['ulogin', '*'];
+
+function service_id_taken(string $id): ?string
+{
+    // v1.9.0 보안 L190-1 — 예약 id. `ulogin` 은 통합로그인 자기 감사의 service_id, `*` 는 전역 설정 범위다.
+    // 그 id 로 서비스를 등록하면 s2s 감사가 ulogin 자기 감사 행처럼 체인에 들어간다.
+    if (in_array(strtolower($id), SERVICE_ID_RESERVED, true)) {
+        return 'reserved';
+    }
+    if (db_val('SELECT id FROM ' . T_SERVICES . ' WHERE service_id = ?', [$id]) !== null) {
+        return 'exists';
+    }
+    if (db_val('SELECT id FROM ' . T_SERVICES . ' WHERE former_service_id = ?', [$id]) !== null) {
+        return 'former';
+    }
+    return null;
+}
+
+/**
+ * 관리자 API 의 service_id 입력 — **별칭을 받지 않는다** (B-2 · E-1).
+ * 개명 전 id 면 400 VALIDATION_FAILED(field=service_id). 관리 화면은 목록에서 고르므로
+ * 옛 id 가 들어오면 오타·낡은 북마크다. 조용히 0건을 보여 주면 안 된다.
+ */
+function admin_service_id_reject_former(?string $sid): void
+{
+    if ($sid === null || $sid === '') {
+        return;
+    }
+    if (db_val('SELECT id FROM ' . T_SERVICES . ' WHERE service_id = ?', [$sid]) !== null) {
+        return;
+    }
+    $now = db_val('SELECT service_id FROM ' . T_SERVICES . ' WHERE former_service_id = ?', [$sid]);
+    if ($now !== null) {
+        throw new AppError('VALIDATION_FAILED', 400, ['field' => 'service_id',
+            'message' => '개명 전 서비스 ID입니다. 현재 ID는 ' . (string) $now . '입니다.']);
+    }
+}
+
+/**
+ * 신규 가입을 받는가 — **판정은 이 함수 한 곳에만 있다** (v1.8.2).
+ *
+ * 부르는 곳 3개가 같은 값을 내야 한다:
+ *   api/auth/register.php         — 실제 가입 거절(403 REGISTRATION_DISABLED)
+ *   api/auth/register_status.php  — 화면이 링크·폼을 감출지 정하는 공개 읽기($service = null)
+ *   api/sso/validate.php          — SSO 진입 화면의 같은 판단($service = 그 서비스)
+ * v1.8.1 까지 이 식이 register·validate 두 곳에 따로 적혀 있었고, SSO 파라미터가 없는
+ * 화면은 값을 받을 길이 없어 차단 상태에서도 「회원가입」 링크를 그렸다.
+ *
+ * 전역 설정(`settings.allow_register`, 없으면 config 의 ALLOW_REGISTER) AND
+ * (서비스가 주어졌으면) 그 서비스의 `allow_register`. 둘 중 하나라도 꺼져 있으면 false.
+ */
+function registration_open(?array $service = null): bool
+{
+    if (!(bool) setting_get('allow_register', ALLOW_REGISTER)) {
+        return false;
+    }
+    if ($service !== null && empty($service['allow_register'])) {
+        return false;
+    }
+    return true;
+}
+
 /**
  * redirect_uri 를 origin+path 로 정규화한다.
  * 쿼리스트링·프래그먼트는 비교에서 제외한다 (스펙 §4-2).
@@ -55,6 +254,16 @@ function normalize_uri(?string $uri): string
         return '';
     }
     $p = parse_url(trim($uri));
+    if ($p !== false && !empty($p['scheme']) && empty($p['host']) && !empty($p['path'])) {
+        // v1.10.0 D-369 — RFC 8252 사용자 지정 scheme 의 경로형(com.example.app:/cb). 화이트리스트에는
+        // 공개 클라이언트만 이런 항목을 둘 수 있다(core/urlrules.php). 대조는 여전히 완전 일치다.
+        $cs = strtolower((string) $p['scheme']);
+        if ($cs !== 'http' && $cs !== 'https' && preg_match('/^[a-z][a-z0-9+.\-]{2,63}$/', $cs) === 1
+            && !in_array($cs, ['javascript', 'data', 'file', 'vbscript', 'blob', 'about', 'ftp', 'ws', 'wss'], true)) {
+            return $cs . ':' . (string) $p['path'];
+        }
+        return '';
+    }
     if ($p === false || empty($p['scheme']) || empty($p['host'])) {
         return '';
     }
@@ -93,6 +302,46 @@ function redirect_uri_allowed(array $service, ?string $uri): bool
     return false;
 }
 
+/**
+ * SSO 복귀 주소 조립 — `redirect_to` 를 **서버가 만든다**.
+ * 담당 계약: 01_architect_api_contract.md §5-2 / 설계 §2-3(12)
+ *
+ * 조립 로직이 서버와 프론트 두 곳에 있으면 반드시 어긋난다.
+ * 프래그먼트(#)가 있으면 쿼리는 그 앞에 붙어야 한다.
+ *
+ * ── 왜 이 함수가 새로 생겼나, 그리고 왜 authorize.php 는 안 쓰나 ──────
+ * v1.7.0 이 `api/sso/authorize_session.php`(무음 인가)를 추가하면서
+ * 같은 조립이 두 번째로 필요해졌다. 설계(§9 backend 2)는 「공용 헬퍼로 빼라」고
+ * 했고 그 판단은 옳다 — 두 곳에 복사하면 어긋난다.
+ *
+ * **그러나 리더 판정 D-234 가 `api/sso/authorize.php` 를 한 줄도 고치지 못하게 한다.**
+ * 그래서 이 함수는 지금 호출자가 **authorize_session.php 하나뿐**이고,
+ * `authorize.php` 는 자기 안의 인라인 사본(12번 블록)을 그대로 쓴다.
+ * **두 구현은 글자 그대로 같다. 한쪽을 고치면 반드시 다른 쪽도 고쳐라.**
+ * authorize.php 를 이 함수로 돌리는 것은 그 파일의 동결이 풀리는 라운드의 일이다
+ * (`_workspace/73_backend_v17_report.md` 에 미해소 항목으로 올렸다).
+ *
+ * @param string  $redirectUri 화이트리스트를 이미 통과한 복귀 주소
+ * @param string  $code        발급된 auth code 원문
+ * @param ?string $state       클라이언트가 준 값. null 이면 붙이지 않는다
+ */
+function sso_build_redirect_to(string $redirectUri, string $code, ?string $state): string
+{
+    $frag = '';
+    $base = $redirectUri;
+    $hash = strpos($base, '#');
+    if ($hash !== false) {
+        $frag = substr($base, $hash);
+        $base = substr($base, 0, $hash);
+    }
+    $sep        = strpos($base, '?') === false ? '?' : '&';
+    $redirectTo = $base . $sep . 'code=' . rawurlencode($code);
+    if ($state !== null) {
+        $redirectTo .= '&state=' . rawurlencode($state);
+    }
+    return $redirectTo . $frag;
+}
+
 // ---------------------------------------------------------------------
 // 아이디 · 비밀번호 정책
 // ---------------------------------------------------------------------
@@ -115,8 +364,10 @@ function validate_username_format(string $u): void
  * 비밀번호 정책. 스펙 §8-1.
  *   8자 이상(설정값) + 영문/숫자/특수 중 2종 이상 + username 과 동일 문자열 금지
  */
-function validate_password(string $pw, ?string $username = null, string $field = 'password'): void
+function validate_password(string $pw, ?string $username = null, string $field = 'password', int $roleRank = 0): void
 {
+    // v1.9.1 D-362 - role_rank 20 이상은 12자 이상 + 흔한 비밀번호 거절(호출자가 대상 계정의 rank 를 넘긴다)
+    em_enforce_strong_password($pw, $username, $roleRank, $field);
     $min = (int) setting_get('password_min_length', PASSWORD_MIN_LENGTH);
     if ($min < 8) {
         $min = 8;
@@ -280,6 +531,10 @@ function create_session(array $user, ?array $service, string $authType, array $o
     if ($rttl <= 0) {
         $rttl = (int) REFRESH_TTL;
     }
+    // v1.10.0 (설계 127 §6-2) — 비상 계정 세션 상한(1시간). 호출자가 ttl_cap 을 넘긴다.
+    if (isset($opt['ttl_cap']) && (int) $opt['ttl_cap'] > 0 && $ttl > (int) $opt['ttl_cap']) {
+        $ttl = (int) $opt['ttl_cap'];
+    }
 
     // service_id 는 서비스 행에서 온다. 행이 없을 때만 $opt['service_id_fallback'] 을 쓴다 —
     // 리더 판정 D-162. 지금 이것을 쓰는 곳은 rotate_refresh() 하나이고, 이유는 그 함수의
@@ -305,6 +560,12 @@ function create_session(array $user, ?array $service, string $authType, array $o
         'user_agent'         => mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255),
         'device_label'       => $opt['device_label'] ?? device_label_from_ua(),
     ];
+    // v1.8.6 — 클라이언트가 옛 id(별칭)로 들어온 세션이면 그 값을 남긴다(설계 104 C-2).
+    // 이후 Bearer 요청(session·refresh)은 입력에 service_id 가 없어 이 칸이 유일한 기억이다.
+    // **값이 있을 때만 넣는다** — 0006 이전 DB 에서도 보통 경로의 INSERT 가 그대로 돈다.
+    if (isset($opt['client_service_id']) && is_string($opt['client_service_id']) && $opt['client_service_id'] !== '') {
+        $row['client_service_id'] = $opt['client_service_id'];
+    }
     $row['id'] = db_insert(T_SESSIONS, $row);
 
     if (!empty($opt['set_cookie'])) {
@@ -660,6 +921,8 @@ function rotate_refresh(string $refreshToken, array $opt = []): array
             'set_cookie'   => $setCookie,
             // 리더 판정 D-162 — 회전이 세션의 service_id 를 **잃지 않는다.**
             'service_id_fallback' => !empty($old['service_id']) ? (string) $old['service_id'] : null,
+            // v1.8.6 — 회전이 echo 기억(별칭)을 잃지 않는다. 회전 뒤 응답도 옛 id 를 되돌린다.
+            'client_service_id'   => isset($old['client_service_id']) ? (string) $old['client_service_id'] : null,
         ];
         if (array_key_exists('cookie_ttl', $opt)) {
             $copt['cookie_ttl'] = $opt['cookie_ttl'];
@@ -795,6 +1058,11 @@ function ensure_user_service(int $userId, ?array $service, ?array $user = null)
         return $us;
     }
     if (empty($service['auto_join'])) {
+        return null;
+    }
+    // v1.10.0 (설계 127 §6-2) — 비상 계정은 서비스에 가입하지 않는다(행을 만들지 않는다).
+    $kind = $user !== null ? ($user['account_kind'] ?? null) : db_val('SELECT account_kind FROM ' . T_USERS . ' WHERE id = ?', [$userId]);
+    if ((string) $kind === 'emergency') {
         return null;
     }
 

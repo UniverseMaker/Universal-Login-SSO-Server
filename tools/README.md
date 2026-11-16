@@ -174,6 +174,22 @@ if (PHP_VERSION_ID >= 70300) {
 
 ---
 
+## `router-ulogin.php` — `php -S` 운영 라우터 (v1.8.1부터 여기)
+
+공용 호스팅(Apache)에는 **쓰이지 않는다.** 이 PC에서 내장 서버로 공개 도메인을 서빙할 때만 쓴다.
+`.htaccess`가 효력이 없는 내장 서버에서 같은 차단·헤더를 재현하고, `/public` 없는 별칭
+(`/` · `/login` · `/login.html` · `/assets/*` · `/version.txt` → `public/…`, 내부 매핑)을 더한다.
+별칭 표는 설치 루트 `.htaccess`의 RewriteRule과 **같아야 한다** — 함께 고쳐라.
+이 폴더에 있어도 웹에서 내려가지 않는다(라우터 자신이 `/tools`를 403으로 막고, Apache는 `tools/.htaccess`).
+
+```
+php -c <ini> -S 127.0.0.1:<port> -t <설치루트> <설치루트>/tools/router-ulogin.php
+```
+
+시험: `php tests/run.php --tier=2 --filter=router_alias` (별칭·우회·접합·변이).
+
+---
+
 ## 알아 둘 것
 
 **`glob()`을 쓰지 않는다.** `glob()`은 패턴의 `[...]`를 문자 클래스로 해석하므로, 경로에

@@ -25,6 +25,14 @@
   # 러너는 server/migrate.php 이고 그것은 여기서 막지 않는다.
   RewriteRule ^(core|storage|migrations)(/|$) - [F,L]
 
+  # v1.8.9 허용 목록 — server/ 에서 웹으로 실행되는 .php 는 api/ 아래 입구, install.php, migrate.php 뿐이다.
+  # 그 밖의 .php(config.php 는 아래 FilesMatch 가 따로 막는다)는 404. 확장자 생략 리라이트가 만드는
+  # `foo.php` 도 재요청에서 이 줄에 걸린다.
+  #   ★ **migrate.php 를 남기는 이유**: 공용 호스팅은 셸·cron 이 없을 수 있고, INSTALL.md 8-2절이
+  #     웹 화면을 정본 경로로 적는다(superadmin 인증 · 시도 제한 5회/900초가 걸려 있다). `php -S` 운영
+  #     라우터는 셸(CLI)이 있으므로 그 파일을 404 로 막는다 — 두 목록의 유일한 차이다.
+  RewriteRule ^(?!api/|install\.php$|migrate\.php$).*\.php$ - [R=404,L]
+
   # 확장자 없는 경로를 .php 로
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
@@ -50,7 +58,51 @@
 # 실행 대상이 아닌 확장자 전면 차단 (감사 H-5)
 #   nginx·정적 서빙 환경에서 schema.sql 은 전 테이블 구조를, .log/.txt 는
 #   메일 본문을 그대로 내보낸다. api/ 는 전부 .php 이므로 여기 걸릴 것이 없다.
-<FilesMatch "\.(sql|log|txt|md|ini|conf|bak|old|orig|swp|dist|sample|json|lock|yml|yaml)$">
+#
+#   v1.7.0 수정 라운드: eml · mbox · env 추가 (감사 L17-4).
+#   `storage/` 트리 차단이 먼저 걸리므로 정상 경로에서는 도달하지 않는다. 그런데
+#   **트리 차단 하나에만 기댄 구조가 C17-1 이 성립한 이유**였다 — 경로 조각의
+#   후행 점 한 글자로 그 트리 차단을 비켜 가면 `*.eml`(유효한 비밀번호 재설정 링크가
+#   평문으로 들어 있다)이 그대로 나갔다. 심층 방어로 둔다.
+#
+#   ★ 이 목록은 `<웹 설정 폴더>/router-ulogin.php` 의 `$denyExt` 와
+#     **글자 단위로 같아야 한다.** 한쪽만 고치면 「로컬 통과 → 호스팅 실패」
+#     (또는 그 반대)가 되돌아온다. 라우터 주석 `:46-58` 의 규약이다.
+#
+#   v1.7.0 2차 (감사 H17-4): 편집기 백업 save · swo · tmp · part 추가.
+#   config.php 는 손으로 편집되는 파일이고(D-264) 그 옆에 남는 `config.php.save` 는
+#   확장자가 save 라 **정적 파일로 본문이 내려간다**(합성 루트 실측).
+<FilesMatch "\.(sql|log|txt|md|ini|conf|bak|old|orig|swp|dist|sample|json|lock|yml|yaml|eml|mbox|env|save|swo|tmp|part)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# 접미로 붙는 편집기 백업 — `config.php~`(vim 등) · `#config.php#`(emacs) (감사 H17-4)
+#   마지막 점 뒤가 `php~` 라 위 확장자 목록으로는 잡히지 않는다. 라우터는 경로 조각
+#   허용 글자 목록(영숫자·`.`·`_`·`-`)이 `~`·`#` 를 막는다 — 뜻이 같아야 한다.
+<FilesMatch "(~|#)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# 데이터베이스 파일 — SQLite 본체와 동반 파일(-wal · -shm · -journal) (감사 H17-4 / D-279)
+#   v1.8.0 기본 저장소가 SQLite 다. 이 파일이 내려가면 전 회원의 password_hash 와
+#   암호화된 시크릿이 한 번의 GET 으로 나간다. 동반 파일은 **접미**라(`x.sqlite-wal`)
+#   확장자 목록에 `wal` 을 넣어서는 안 잡힌다. 라우터 `r_deny_rules()` (d) 와 같은 패턴.
+#   ★ 두 번째 겹이다. 본 방어는 DB 파일을 **문서 루트 밖**에 두는 것(v1.8.0 설계).
+#   ★ 이 블록은 server/ 아래만 지킨다. 라우터는 트리 전체에서 막는다 — 설치 루트
+#     `.htaccess`(integrator, M17-6)에 같은 블록이 들어가야 두 경로가 같아진다.
+<FilesMatch "\.(sqlite|sqlite3|db|db3|s3db|sl3)(-(wal|shm|journal))?$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>

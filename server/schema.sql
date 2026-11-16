@@ -3,7 +3,9 @@
 -- 원안: ulogin-architect (내부 설계 기록)
 -- 구현: ulogin-backend / 2026-08-25
 -- 대상: MySQL 5.7+ / MariaDB 10.3+ , InnoDB, utf8mb4
--- 테이블 수: 17 (v1.0.0 의 15 + v1.4.0 의 schema_migrations · secret_access_logs)
+-- 테이블 수: 27 (v1.0.0 의 15 + v1.4.0 의 schema_migrations · secret_access_logs
+--               + v1.8.4 의 ext_accounts · link_jobs · link_job_items
+--               + v1.9.0 의 rc_drafts · rc_versions · plat_logs · plat_audit · plat_collections · plat_docs · plat_usage)
 -- =====================================================================
 --
 -- [이 파일의 지위 — v1.4.0]
@@ -50,7 +52,13 @@
 CREATE TABLE IF NOT EXISTS `app_ulogin_users` (
   `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `uuid`                 CHAR(36)        NOT NULL COMMENT '외부 노출 식별자. API는 id 대신 이것을 쓴다',
+  -- v1.8.0: 아래 태그 두 줄은 MySQL 에서는 주석이고, SQLite 번역기(core/ddl.php)만 읽는다.
+  -- 바로 다음 컬럼에 COLLATE NOCASE 를 붙여 UNIQUE 까지 대소문자 무시로 만든다 —
+  -- MySQL utf8mb4_unicode_ci 와 같은 유일성을 SQLite 에서도 DB 가 보장하게(설계 A-6).
+  -- 신원 컬럼 둘에만 붙인다. **ASCII 만 무시한다** — 비ASCII 는 코드의 mb_strtolower() 가 메운다(H-4).
+  -- @sqlite-collate: nocase
   `username`             VARCHAR(50)     NOT NULL COMMENT '로그인 아이디. 소문자 정규화 저장',
+  -- @sqlite-collate: nocase
   `email`                VARCHAR(190)    NOT NULL COMMENT '이메일. 소문자 정규화 저장',
   `password_hash`        VARCHAR(255)    NOT NULL COMMENT 'password_hash() 결과. 응답 반환 금지',
   `password_changed_at`  DATETIME        NULL     COMMENT '이 시각 이전 발급 세션은 무효 처리',
@@ -84,6 +92,10 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_users` (
   `updated_at`           DATETIME        NOT NULL,
   `withdrawn_at`         DATETIME        NULL,
   `withdraw_reason`      VARCHAR(255)    NULL,
+  -- v1.9.2 (마이그레이션 0009)
+  `password_epoch`       INT             NOT NULL DEFAULT 0 COMMENT '비밀번호가 바뀔 때마다 +1. 시각 해상도와 무관한 변경 대조용',
+  -- v1.10.0 (마이그레이션 0010) — 비상 관리자 계정 표지(설계 127 §6). emergency 는 CLI 로만 만들고 정한다
+  `account_kind`         VARCHAR(12)     NOT NULL DEFAULT 'normal' COMMENT 'normal|emergency',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_users_uuid`     (`uuid`),
   UNIQUE KEY `uq_users_username` (`username`),
@@ -130,9 +142,26 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_services` (
   `meta_json`             TEXT            NULL,
   `created_at`            DATETIME        NOT NULL,
   `updated_at`            DATETIME        NOT NULL,
+  -- v1.8.6 (마이그레이션 0006) — 서비스 id 개명. 옛 id 는 이 칸에만 남는다(설계 104 A-1).
+  -- 개명은 마이그레이션이 아니라 `tools/register_services.php --rename` 이 한다(D-341 H-1).
+  -- 별칭이 끝나도 former_service_id 는 지우지 않는다 — 옛 id 재사용 금지(C-4).
+  `former_service_id`     VARCHAR(64)     NULL COMMENT '개명 전 id. 해석 기간 동안 별칭',
+  `former_until`          DATETIME        NULL COMMENT 'NULL=별칭 유효. 값이 지나면 해석 안 함(재사용 금지는 계속)',
+  `former_last_used_at`   DATETIME        NULL COMMENT '인증된 별칭 사용 마지막 시각(10분 상한 갱신)',
+  -- v1.9.0 (마이그레이션 0007) — 서비스별 접근 제한 · 계정 목록 권한 · 기능 등록부 · 플랫폼 상한 (설계 116 §3·§7)
+  `access_rule`           VARCHAR(16)     NOT NULL DEFAULT 'all' COMMENT 'all|all_view|granted|admin. 그 밖의 값은 거절(fail-closed)',
+  `can_list_users`        TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '1이면 sso/users.php 계정 목록 허용. 재등록하면 0',
+  `features_json`         TEXT            NULL COMMENT 'NULL=ulogin이 기능을 관리하지 않음. 배열 [{id,name,default}] 64개 이하',
+  `platform_json`         TEXT            NULL COMMENT '객체 {logs_from_users,quota}. 서비스별 상한은 기본값보다 낮게만',
+  -- v1.9.1 (마이그레이션 0008) — 비상 로그인 확인값(emergency/1)
+  `emergency_allow`       TINYINT(1)      NOT NULL DEFAULT 1 COMMENT '1이면 이 서비스에 비상 로그인 확인값을 발급(emergency/1)',
+  `emergency_days`        INT             NOT NULL DEFAULT 30 COMMENT '비상 확인값 유효 일수(1~365)',
+  -- v1.10.0 (마이그레이션 0010) — 접근 단계(설계 127 §1 K4)
+  `level_aware`           TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '1=서비스가 view 단계를 이해함(K4). 재등록하면 0',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_services_service_id` (`service_id`),
-  KEY `idx_services_status` (`status`)
+  KEY `idx_services_status` (`status`),
+  UNIQUE KEY `uq_services_former` (`former_service_id`)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -155,10 +184,21 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_user_services` (
   `meta_json`          TEXT            NULL,
   `joined_at`          DATETIME        NOT NULL,
   `last_used_at`       DATETIME        NULL,
+  -- v1.9.0 (마이그레이션 0007) — 계정별 접근 허용·차단 · 기능 지정 (설계 116 §7)
+  `access_grant`       VARCHAR(8)      NOT NULL DEFAULT 'inherit' COMMENT 'inherit|allow|deny. deny 는 어느 규칙보다 우선',
+  `features_json`      TEXT            NULL COMMENT 'NULL=서비스 기본값. 배열=그 id 만(등록부와 교집합)',
+  -- v1.10.0 (마이그레이션 0010) — 계정 직접 덮어쓰기(설계 127 K2). 허용·거부 원천은 access_grant 하나다
+  `access_level`       VARCHAR(8)      NULL COMMENT 'view|use|admin. access_grant=allow 일 때만 의미. NULL=use',
+  `access_starts_at`   DATETIME        NULL COMMENT 'allow·deny 유효 시작. NULL=제한 없음',
+  `access_ends_at`     DATETIME        NULL COMMENT 'allow·deny 유효 끝(이 시각부터 무효). NULL=무기한',
+  `access_note`        VARCHAR(255)    NULL COMMENT '관리자 메모',
+  `access_updated_by`  BIGINT UNSIGNED NULL,
+  `access_updated_at`  DATETIME        NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_user_services` (`user_id`, `service_id`),
   KEY `idx_us_service_id` (`service_id`, `status`),
-  KEY `idx_us_last_used`  (`last_used_at`)
+  KEY `idx_us_last_used`  (`last_used_at`),
+  KEY `idx_us_access_grant` (`service_id`, `access_grant`)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
@@ -240,6 +280,8 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_sessions` (
   `device_label`        VARCHAR(80)     NULL COMMENT '사용자에게 보여줄 기기명',
   `revoked_at`          DATETIME        NULL,
   `revoke_reason`       VARCHAR(50)     NULL COMMENT 'logout|logout_all|password_changed|admin|expired|refresh_rotated|refresh_reuse|withdraw',
+  -- v1.8.6 (0006) — 클라이언트가 옛 id(별칭)로 들어온 세션이면 그 값. 응답 echo 용(설계 104 C-2).
+  `client_service_id`   VARCHAR(64)     NULL COMMENT '클라이언트가 별칭으로 들어왔을 때 그 값(응답 echo용)',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_sessions_session_id`   (`session_id`),
   UNIQUE KEY `uq_sessions_access_hash`  (`access_token_hash`),
@@ -266,6 +308,13 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_auth_codes` (
   `redirect_uri`   VARCHAR(500)    NOT NULL COMMENT '발급 시점 값. exchange 에서 재대조',
   `state`          VARCHAR(255)    NULL COMMENT '클라이언트가 준 값. 그대로 되돌려줌',
   `code_challenge` VARCHAR(128)    NULL COMMENT 'PKCE S256 challenge',
+  -- v1.7.0 (마이그레이션 0004). 이 code 를 **무엇으로 인증받아** 발급했는가.
+  --   password — POST /api/sso/authorize       (아이디·비밀번호를 받은 기존 경로)
+  --   session  — POST /api/sso/authorize_session (쿠키 세션만 보는 무음 경로)
+  -- exchange.php 가 이 값을 보고 login_logs.result 를 success / success_silent 로 가른다.
+  -- 기본값이 'password' 인 이유: 이 컬럼이 없던 시절에 발급된 행과 기존 경로가 넣는 행이
+  -- 전부 비밀번호 인증을 거친 것이고, 그것이 사실이다. 무음은 **명시적으로만** 기록된다.
+  `issued_via`     VARCHAR(16)     NOT NULL DEFAULT 'password' COMMENT 'password|session — 무음 인가로 발급됐는가(v1.7.0)',
   `expires_at`     DATETIME        NOT NULL COMMENT '발급 +60초',
   `used_at`        DATETIME        NULL COMMENT 'NOT NULL 이면 재사용 거부',
   `created_ip`     VARCHAR(45)     NOT NULL,
@@ -285,6 +334,8 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_password_resets` (
   `used_at`    DATETIME        NULL,
   `created_ip` VARCHAR(45)     NOT NULL,
   `created_at` DATETIME        NOT NULL,
+  -- v1.8.4 (마이그레이션 0005). 맨 뒤에 둔다 — 0005 가 ADD COLUMN 으로 같은 자리(끝)에 붙인다.
+  `purpose`    VARCHAR(12)     NOT NULL DEFAULT 'reset' COMMENT 'reset|setup. setup=이관 계정의 첫 비밀번호 설정 링크(72h)',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_pw_resets_token` (`token_hash`),
   KEY `idx_pw_resets_user`    (`user_id`, `created_at`),
@@ -317,7 +368,19 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_login_logs` (
   `user_id`        BIGINT UNSIGNED NULL COMMENT '존재하지 않는 계정 시도면 NULL',
   `username_input` VARCHAR(190)    NOT NULL DEFAULT '' COMMENT '입력값 원본. 계정 열거 시도 추적용',
   `service_id`     VARCHAR(64)     NULL,
-  `result`         VARCHAR(30)     NOT NULL COMMENT 'success|fail_credential|fail_locked|fail_status|fail_ratelimit|fail_service_blocked|fail_client_auth|fail_migrate_auth|fail_refresh_reuse|fail_refresh_revoked|logout',
+  -- v1.7.0 에서 두 값이 늘었다(13값). 동의 화면을 두지 않는 대신의 사후 확인 수단이다(D-235).
+  --   `issued_silent`  — 무음 SSO code 를 **발급**했다 (api/sso/authorize_session.php)
+  --   `success_silent` — 그 code 가 **교환**돼 토큰이 나갔다 (api/auth/exchange.php)
+  -- **둘은 다른 사건이다.** 발급만 있고 교환이 없는 줄이 신호다 — 제3자가 피해자
+  -- 브라우저를 무음 경로로 몰아넣었는데 서비스가 state 불일치로 거절한 모양이고,
+  -- 1차 구현에서는 그 경우에 로그가 **0행**이었다(감사 M17-3).
+  -- `issued_silent` 는 `success` 로 시작하지 않지만 **실패도 아니다.**
+  -- **이 COMMENT 가 값의 정본 목록이다.** 코드가 읽지는 않지만 운영자가 `result` 값을
+  -- 확인하는 유일한 자리이고, 값 집합의 드리프트는 다음 라운드에 스키마 드리프트로 자란다.
+  -- 마이그레이션 0004 가 기존 설치본의 COMMENT 도 같은 값으로 맞춘다.
+  -- v1.9.0: `fail_service_access` — 서비스 접근 규칙에 걸렸다(core/access.php). 0007 이 COMMENT 를 맞춘다.
+  -- v1.10.0: `fail_emergency_unset`(비상 계정 미설정) · `fail_emergency_scope`(비상 계정의 SSO 시도). 0010 이 맞춘다.
+  `result`         VARCHAR(30)     NOT NULL COMMENT 'success|success_silent|issued_silent|fail_credential|fail_locked|fail_status|fail_ratelimit|fail_service_blocked|fail_service_access|fail_emergency_unset|fail_emergency_scope|fail_client_auth|fail_migrate_auth|fail_refresh_reuse|fail_refresh_revoked|logout',
   `ip`             VARCHAR(45)     NOT NULL,
   `user_agent`     VARCHAR(255)    NOT NULL DEFAULT '',
   `created_at`     DATETIME        NOT NULL,
@@ -515,6 +578,261 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_secret_access_logs` (
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
+-- ---------------------------------------------------------------------
+-- 11. 시스템 계정 연결 (v1.8.4 신규 — 설계 92 C절 · 마이그레이션 0005)
+-- ---------------------------------------------------------------------
+--
+-- 다른 시스템이 밀어넣은(push) 로컬 계정 스냅숏과, 그것을 ulogin 계정에 붙인 연결.
+-- **연결의 진실은 ext_accounts.user_id 하나다.** 유일성은 코드가 아니라 UNIQUE 두 개가 진다:
+--   uq_ext_accounts       한 외부 계정 = 행 하나
+--   uq_ext_accounts_user  한 ulogin 계정 ↔ 서비스당 외부 계정 하나. 연결 안 된 행은 user_id 가
+--                         NULL 이라 여러 행이 공존한다 — MySQL·SQLite 모두 NULL 을 서로 다르게 본다
+-- 「후보」는 저장하지 않는다(읽을 때 계산). 외부 계정의 이메일·이름이 이 표에 쌓인다(D-324 H-2) —
+-- 필드는 계약 S-2 범위로만 받고, ext_status=deleted 면 email·name·extra_json 을 비운다.
+-- 이 표들은 설정 번들(settings_bundle) 대상이 아니다 — 외부 계정 개인정보를 AI 대화창으로 내보내지 않는다.
+
+CREATE TABLE IF NOT EXISTS `app_ulogin_ext_accounts` (
+  `id`                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `service_id`        VARCHAR(64)     NOT NULL,
+  `external_id`       VARCHAR(128)    NOT NULL COMMENT '시스템 로컬 계정 id. 문자열. ASCII @ 허용',
+  `username`          VARCHAR(100)    NULL COMMENT '시스템 쪽 아이디(ulogin 규칙과 무관)',
+  -- @sqlite-collate: nocase
+  `email`             VARCHAR(190)    NULL COMMENT '소문자 정규화(mb_strtolower)',
+  `name`              VARCHAR(80)     NULL,
+  `ext_status`        VARCHAR(12)     NULL COMMENT 'active|disabled|deleted. 그 밖의 값은 NULL로 저장',
+  `ext_created_at`    DATETIME        NULL,
+  `ext_last_login_at` DATETIME        NULL,
+  `bound_uuid`        CHAR(36)        NULL COMMENT '시스템이 스스로 묶어 둔 ulogin uuid(D-321). 제안 근거로만 쓴다',
+  `extra_json`        TEXT            NULL COMMENT '선택 필드 화이트리스트(role|department|note), 4KB 상한',
+  `state`             VARCHAR(12)     NOT NULL DEFAULT 'new' COMMENT 'new|ignored|linked|unlinked',
+  `user_id`           BIGINT UNSIGNED NULL COMMENT 'state=linked 일 때만 값. 그 외 NULL',
+  `last_user_id`      BIGINT UNSIGNED NULL COMMENT '해제 전 주인(표시용)',
+  `link_origin`       VARCHAR(10)     NULL COMMENT 'created|attached',
+  `linked_at`         DATETIME        NULL,
+  `linked_by`         BIGINT UNSIGNED NULL,
+  `row_version`       INT             NOT NULL DEFAULT 0 COMMENT '상태가 바뀔 때마다 +1. plan 값과 commit 시 대조',
+  `source_sent_at`    DATETIME        NOT NULL COMMENT '이 스냅숏을 보낸 시각. 더 오래된 스냅숏은 덮지 않는다',
+  `last_sync_id`      VARCHAR(64)     NULL,
+  `gone_at`           DATETIME        NULL COMMENT '전체 동기화에서 빠짐. 연결은 그대로 둔다',
+  `first_seen_at`     DATETIME        NOT NULL,
+  `updated_at`        DATETIME        NOT NULL,
+  -- v1.10.0 (마이그레이션 0010) — push 의 extra.kind="emergency" 를 받으면 1. 후보·자동 연결에서 빠진다(설계 127 §6-3)
+  `is_emergency`      TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '1=시스템이 비상 계정으로 표시(extra.kind). 연결 대상 아님',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_ext_accounts` (`service_id`, `external_id`),
+  UNIQUE KEY `uq_ext_accounts_user` (`service_id`, `user_id`),
+  KEY `idx_ext_state` (`service_id`, `state`, `updated_at`),
+  KEY `idx_ext_email` (`email`),
+  KEY `idx_ext_username` (`service_id`, `username`),
+  KEY `idx_ext_user` (`user_id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 작업 — plan(관리자 계획·확정) · push(수신 전송 1회 = sync_id 하나) · sync_request(재수집 요청) ·
+-- system(탈퇴·완전삭제가 만든 자동 해제). 비밀번호·토큰·설정 링크는 어떤 컬럼에도 담지 않는다.
+CREATE TABLE IF NOT EXISTS `app_ulogin_link_jobs` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `job_uuid`    CHAR(36)        NOT NULL,
+  `kind`        VARCHAR(12)     NOT NULL COMMENT 'plan|push|sync_request|system',
+  `service_id`  VARCHAR(64)     NULL COMMENT 'push·sync_request 만. plan 은 여러 서비스라 NULL',
+  `sync_id`     VARCHAR(64)     NULL COMMENT 'push 만',
+  `status`      VARCHAR(12)     NOT NULL COMMENT 'planned|running|done|partial|expired|cancelled|receiving|requested',
+  `created_by`  BIGINT UNSIGNED NULL COMMENT 'admin id. push=NULL(파일 가져오기는 관리자 id), system=0',
+  `item_count`  INT             NOT NULL DEFAULT 0,
+  `ok_count`    INT             NOT NULL DEFAULT 0,
+  `fail_count`  INT             NOT NULL DEFAULT 0,
+  `last_page`   INT             NOT NULL DEFAULT 0,
+  `plan_json`   TEXT            NULL COMMENT 'new_users 참조표. 비밀번호·토큰 금지',
+  `retry_of`    BIGINT UNSIGNED NULL,
+  `expires_at`  DATETIME        NULL COMMENT 'plan: +30분',
+  `created_at`  DATETIME        NOT NULL,
+  `updated_at`  DATETIME        NOT NULL,
+  `finished_at` DATETIME        NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_link_jobs_uuid` (`job_uuid`),
+  UNIQUE KEY `uq_link_jobs_sync` (`service_id`, `sync_id`),
+  KEY `idx_link_jobs_kind` (`kind`, `service_id`, `created_at`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 작업 항목. `id` 가 시스템용 사건 피드(link_events)의 커서다 — status=done 인
+-- create_link·link·unlink 행이 곧 사건이다. 피드가 읽는 동안 지우지 않는다(gc 는 done 행을 남긴다).
+CREATE TABLE IF NOT EXISTS `app_ulogin_link_job_items` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '시스템용 사건 피드 커서(S-4)',
+  `job_id`         BIGINT UNSIGNED NOT NULL,
+  `seq`            INT             NOT NULL,
+  `op`             VARCHAR(12)     NOT NULL COMMENT 'create_link|link|unlink|ignore|unignore',
+  `service_id`     VARCHAR(64)     NOT NULL,
+  `external_id`    VARCHAR(128)    NOT NULL,
+  `target_user_id` BIGINT UNSIGNED NULL,
+  `target_ref`     VARCHAR(16)     NULL COMMENT '같은 plan 의 new_users.ref',
+  `expect_version` INT             NULL,
+  `verdict`        VARCHAR(10)     NOT NULL COMMENT 'ok|warn|invalid (plan 시점)',
+  `status`         VARCHAR(10)     NOT NULL COMMENT 'planned|done|failed|skipped',
+  `error_code`     VARCHAR(40)     NULL,
+  `result_user_id` BIGINT UNSIGNED NULL,
+  `created_at`     DATETIME        NOT NULL,
+  `done_at`        DATETIME        NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_link_items_job` (`job_id`, `seq`),
+  KEY `idx_link_items_feed` (`service_id`, `status`, `id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =====================================================================
+-- v1.9.0 — 통합로그인 플랫폼 (마이그레이션 0007, 설계 116 §3)
+--   전역 설정(rc_*) · 로그(plat_logs) · 감사(plat_audit, 행별 HMAC 체인) ·
+--   문서 테이블(plat_collections · plat_docs) · 사용량(plat_usage)
+--   시각은 전부 UTC DATETIME. 비밀값을 담는 컬럼은 없다(키 이름 가드 — core/platform.php).
+-- =====================================================================
+
+-- 전역 설정 초안. scope '*' = 전역, 그 밖 = service_id. 초안은 클라이언트에 나가지 않는다.
+CREATE TABLE IF NOT EXISTS `app_ulogin_rc_drafts` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `scope`       VARCHAR(64)     NOT NULL COMMENT '*=전역 또는 service_id',
+  `pkey`        VARCHAR(64)     NOT NULL COMMENT '설정 키 [a-z][a-z0-9_.]{0,63}',
+  `value_json`  TEXT            NOT NULL COMMENT '기본값 JSON (16KiB 이하)',
+  `cond_json`   TEXT            NULL COMMENT '조건 배열 [{when,value}] 위에서부터 첫 일치',
+  `description` VARCHAR(255)    NULL,
+  `updated_by`  BIGINT UNSIGNED NOT NULL,
+  `updated_at`  DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_rc_drafts` (`scope`, `pkey`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 게시본. 되돌리기도 새 버전이다(이력 보존). 스냅숏은 512KiB 이하.
+CREATE TABLE IF NOT EXISTS `app_ulogin_rc_versions` (
+  `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `scope`        VARCHAR(64)     NOT NULL,
+  `version`      INT             NOT NULL,
+  `snapshot`     LONGTEXT        NOT NULL COMMENT '{키:{value,conditions}} JSON',
+  `etag`         CHAR(64)        NOT NULL COMMENT 'sha256(snapshot)',
+  `source`       VARCHAR(10)     NOT NULL COMMENT 'publish|rollback',
+  `from_version` INT             NULL COMMENT 'rollback 일 때 원본 버전',
+  `note`         VARCHAR(255)    NULL,
+  `published_by` BIGINT UNSIGNED NOT NULL,
+  `published_at` DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_rc_versions` (`scope`, `version`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 운영 로그 사본(정본은 각 시스템). (service_id, event_id) 로 멱등. 보존 만료는 gc_expired() 가 received_at 으로 지운다.
+CREATE TABLE IF NOT EXISTS `app_ulogin_plat_logs` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `service_id`  VARCHAR(64)     NOT NULL,
+  `event_id`    CHAR(36)        NOT NULL COMMENT 'UUIDv4 소문자. 보내는 쪽이 사건을 만들 때 부여',
+  `ts`          DATETIME        NOT NULL COMMENT '사건 발생 시각',
+  `received_at` DATETIME        NOT NULL,
+  `level`       VARCHAR(8)      NOT NULL COMMENT 'debug|info|warn|error|fatal',
+  `event`       VARCHAR(64)     NOT NULL,
+  `message`     VARCHAR(1000)   NULL,
+  `tags`        VARCHAR(300)    NULL COMMENT ',a,b, 형태(LIKE 로 찾는다)',
+  `uuid`        CHAR(36)        NULL COMMENT '통합로그인 계정. 모르면 NULL',
+  `local_user`  VARCHAR(128)    NULL,
+  `request_id`  VARCHAR(64)     NULL,
+  `source`      VARCHAR(8)      NOT NULL COMMENT 's2s|user',
+  `sender_ip`   VARCHAR(45)     NOT NULL,
+  `data_json`   TEXT            NULL COMMENT '비밀값 키는 서버가 가린다',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plat_logs_event` (`service_id`, `event_id`),
+  KEY `idx_plat_logs_svc_ts` (`service_id`, `ts`),
+  KEY `idx_plat_logs_ts` (`ts`),
+  KEY `idx_plat_logs_req` (`request_id`),
+  KEY `idx_plat_logs_recv` (`received_at`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 감사. id = 체인 seq(명시 삽입). service_id 'ulogin' = 통합로그인 자기 감사(log_admin 이중 기록).
+-- row_hash = HMAC-SHA256(K, prev_hash + 줄바꿈 + canon(행)), K 는 SECRET_ENC_KEY 파생. 수정·삭제 API 가 없다 —
+-- audit_prune() 만 지우고, 지우기 전에 체인에 audit.prune 앵커 행을 쓴다.
+CREATE TABLE IF NOT EXISTS `app_ulogin_plat_audit` (
+  `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '체인 seq. 명시 삽입',
+  `service_id`   VARCHAR(64)     NOT NULL,
+  `event_id`     CHAR(36)        NOT NULL,
+  `ts`           DATETIME        NOT NULL,
+  `received_at`  DATETIME        NOT NULL,
+  `actor_type`   VARCHAR(10)     NOT NULL COMMENT 'user|admin|system|service',
+  `actor_uuid`   CHAR(36)        NULL,
+  `actor_local`  VARCHAR(128)    NULL,
+  `action`       VARCHAR(64)     NOT NULL,
+  `target_type`  VARCHAR(32)     NOT NULL,
+  `target_id`    VARCHAR(128)    NULL,
+  `result`       VARCHAR(8)      NOT NULL COMMENT 'success|failure|denied',
+  `changes_json` TEXT            NULL,
+  `ip`           VARCHAR(45)     NULL COMMENT '원 요청자',
+  `user_agent`   VARCHAR(255)    NULL,
+  `request_id`   VARCHAR(64)     NULL,
+  `reason`       VARCHAR(255)    NULL,
+  `sender_ip`    VARCHAR(45)     NOT NULL COMMENT '전송한 서버',
+  `prev_hash`    CHAR(64)        NOT NULL,
+  `row_hash`     CHAR(64)        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plat_audit_event` (`service_id`, `event_id`),
+  KEY `idx_plat_audit_svc_ts` (`service_id`, `ts`),
+  KEY `idx_plat_audit_actor` (`actor_uuid`, `ts`),
+  KEY `idx_plat_audit_target` (`target_type`, `target_id`),
+  KEY `idx_plat_audit_ts` (`ts`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 문서 테이블 컬렉션. 네임스페이스 = 서비스 하나(서비스 간 읽기 없음).
+CREATE TABLE IF NOT EXISTS `app_ulogin_plat_collections` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `service_id`      VARCHAR(64)     NOT NULL,
+  `name`            VARCHAR(64)     NOT NULL COMMENT '[a-z][a-z0-9_]{0,63}',
+  `read_rule`       VARCHAR(10)     NOT NULL COMMENT 'service|owner|auth|public',
+  `write_rule`      VARCHAR(10)     NOT NULL COMMENT 'service|owner',
+  `index_json`      TEXT            NULL COMMENT '[{field,type}] 3개 이하 = 슬롯 ix1..ix3',
+  `max_docs`        INT             NOT NULL DEFAULT 5000,
+  `max_doc_bytes`   INT             NOT NULL DEFAULT 16384,
+  `doc_count`       INT             NOT NULL DEFAULT 0,
+  `reindex_pending` TINYINT(1)      NOT NULL DEFAULT 0,
+  `status`          VARCHAR(10)     NOT NULL DEFAULT 'active' COMMENT 'active|disabled',
+  `created_at`      DATETIME        NOT NULL,
+  `updated_at`      DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plat_colls` (`service_id`, `name`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 문서. 색인 슬롯 3개와 doc_id 는 이진 비교(두 저장소의 == · 범위 결과를 같게). int 색인은 '%016d'(n+10^15) 문자열.
+CREATE TABLE IF NOT EXISTS `app_ulogin_plat_docs` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `service_id`  VARCHAR(64)     NOT NULL,
+  `collection`  VARCHAR(64)     NOT NULL,
+  `doc_id`      VARCHAR(64)     COLLATE utf8mb4_bin NOT NULL,
+  `owner_uuid`  CHAR(36)        NULL,
+  `data_json`   LONGTEXT        NOT NULL,
+  `version`     INT             NOT NULL DEFAULT 1 COMMENT '낙관적 잠금',
+  `ix1`         VARCHAR(191)    COLLATE utf8mb4_bin NULL,
+  `ix2`         VARCHAR(191)    COLLATE utf8mb4_bin NULL,
+  `ix3`         VARCHAR(191)    COLLATE utf8mb4_bin NULL,
+  `created_by`  VARCHAR(48)     NOT NULL COMMENT 'service 또는 user:uuid',
+  `created_at`  DATETIME        NOT NULL,
+  `updated_at`  DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plat_docs` (`service_id`, `collection`, `doc_id`),
+  KEY `idx_plat_docs_ix1` (`service_id`, `collection`, `ix1`, `id`),
+  KEY `idx_plat_docs_ix2` (`service_id`, `collection`, `ix2`, `id`),
+  KEY `idx_plat_docs_ix3` (`service_id`, `collection`, `ix3`, `id`),
+  KEY `idx_plat_docs_owner` (`service_id`, `collection`, `owner_uuid`, `id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 사용량(서비스 x UTC 일 x 지표). db_upsert_increment(..., $by) 로 원자 증가.
+CREATE TABLE IF NOT EXISTS `app_ulogin_plat_usage` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `service_id` VARCHAR(64)     NOT NULL,
+  `day`        CHAR(10)        NOT NULL COMMENT 'YYYY-MM-DD (UTC)',
+  `metric`     VARCHAR(32)     NOT NULL,
+  `value`      BIGINT          NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_plat_usage` (`service_id`, `day`, `metric`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 -- =====================================================================
 -- 확률적 GC 대상 (cron 이 없으므로 요청당 1/100 확률로 실행 — core/gc.php)
 --   DELETE FROM app_ulogin_auth_codes          WHERE expires_at < UTC_TIMESTAMP();
@@ -524,6 +842,10 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_secret_access_logs` (
 --   DELETE FROM app_ulogin_sessions
 --     WHERE (refresh_expires_at IS NOT NULL AND refresh_expires_at < UTC_TIMESTAMP())
 --        OR (refresh_expires_at IS NULL AND expires_at < UTC_TIMESTAMP());
+--   (v1.8.4) app_ulogin_link_jobs · link_job_items — 만료 plan 7일 뒤(완료 항목이 없는 것만) · push 작업 90일.
+--   **status=done 항목은 지우지 않는다** — 시스템 사건 피드(link_events)의 원장이다.
+--   (v1.9.0) app_ulogin_plat_logs — received_at < 지금-plat.log_retention_days, 2,000행씩(수집 경로에서는 건너뜀).
+--   app_ulogin_plat_audit 는 GC 하지 않는다 — audit_prune()(관리자 조작)만 앵커 행을 쓴 뒤 지운다.
 -- 로그 테이블(login_logs / point_logs / admin_logs / secret_access_logs)은 GC 하지 않는다.
 -- 감사 근거다. secret_access_logs 는 (세션 × 경로 × 시간) 으로 늘어나는데,
 -- **갱신 경로는 회전마다 session_id 가 새로 생기므로 요청과 1:1 이다**(V14b-H-1).
@@ -532,3 +854,77 @@ CREATE TABLE IF NOT EXISTS `app_ulogin_secret_access_logs` (
 -- 보존 정책은 아직 없다 — 격차 G-26, D-156(6) 이 v1.9.0 으로 배정했다.
 -- schema_migrations 도 GC 대상이 아니다. 적용 이력 자체가 자산이다.
 -- =====================================================================
+
+
+-- =====================================================================
+-- v1.9.1 — 비상 로그인 확인값 (마이그레이션 0008, emergency/1 §1-1)
+--   사건 피드(link_events)가 읽는 emergency_verifier · emergency_revoke 의 저장소.
+--   item_id = link_job_items.id(op em_verifier|em_revoke) — 피드 커서를 하나로 둔다.
+--   ev 는 AES 봉인본. 새 값이 나가거나 폐기되면 비운다(NULL). 로그·감사·관리 응답에 내지 않는다.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS `app_ulogin_emergency` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `item_id`    BIGINT UNSIGNED NOT NULL COMMENT 'link_job_items.id',
+  `kind`       VARCHAR(8)      NOT NULL COMMENT 'issue|revoke',
+  `service_id` VARCHAR(64)     NOT NULL,
+  `external_id` VARCHAR(128)   NOT NULL COMMENT '그 서비스 쪽 계정 id(피드 사건에 같이 나간다)',
+  `user_id`    BIGINT UNSIGNED NULL COMMENT '완전삭제 뒤에는 남는다(uuid 로 식별)',
+  `uuid`       CHAR(36)        NOT NULL,
+  `ev`         TEXT            NULL COMMENT 'AES 봉인본. issue 만. 대체·폐기·지급 기한 뒤 NULL',
+  `reason`     VARCHAR(30)     NULL COMMENT 'revoke 사유',
+  `issued_at`  DATETIME        NOT NULL,
+  `expires_at` DATETIME        NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_emergency_item` (`item_id`),
+  KEY `idx_emergency_user` (`service_id`, `uuid`, `id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =====================================================================
+-- v1.10.0 — 접근 단계 그룹 (마이그레이션 0010, 설계 127 §1)
+--   단계 판정은 core/access.php 의 access_level_decide() 한 곳. 이 세 표는 「묶음 단위 부여」의 저장소다.
+--   계정 직접 덮어쓰기는 표가 아니라 user_services 의 access_* 컬럼이다(K2).
+--   상한: 그룹 ≤ 200, 그룹당 구성원 ≤ 5,000, 계정당 소속 ≤ 50 (코드가 지킨다).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS `app_ulogin_access_groups` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `group_key`   VARCHAR(64)     NOT NULL COMMENT '[a-z][a-z0-9_.-]{0,63}',
+  `name`        VARCHAR(100)    NOT NULL,
+  `description` VARCHAR(255)    NULL,
+  `status`      VARCHAR(10)     NOT NULL DEFAULT 'active' COMMENT 'active|disabled. disabled 면 판정에서 빠진다',
+  `created_by`  BIGINT UNSIGNED NULL,
+  `created_at`  DATETIME        NOT NULL,
+  `updated_at`  DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_access_groups_key` (`group_key`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS `app_ulogin_access_group_members` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `group_id`   BIGINT UNSIGNED NOT NULL,
+  `user_id`    BIGINT UNSIGNED NOT NULL,
+  `starts_at`  DATETIME        NULL COMMENT 'NULL=제한 없음',
+  `ends_at`    DATETIME        NULL COMMENT 'NULL=무기한. 이 시각부터 무효',
+  `added_by`   BIGINT UNSIGNED NULL,
+  `created_at` DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_agm_group_user` (`group_id`, `user_id`),
+  KEY `idx_agm_user` (`user_id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS `app_ulogin_access_group_services` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `group_id`    BIGINT UNSIGNED NOT NULL,
+  `service_id`  VARCHAR(64)     NOT NULL,
+  `level`       VARCHAR(8)      NOT NULL COMMENT 'view|use|admin. 그 밖의 값은 none(fail-closed)',
+  `scopes_json` TEXT            NULL COMMENT 'NULL=기여 없음. 배열=scope id(등록부와 교집합)',
+  `starts_at`   DATETIME        NULL,
+  `ends_at`     DATETIME        NULL,
+  `updated_by`  BIGINT UNSIGNED NULL,
+  `updated_at`  DATETIME        NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_ags_group_service` (`group_id`, `service_id`),
+  KEY `idx_ags_service` (`service_id`)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

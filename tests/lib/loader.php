@@ -141,6 +141,10 @@ function load_core_constants(array $override = array()): void
         'T_RATE_LIMITS' => 'rate_limits', 'T_SETTINGS' => 'settings', 'T_TERMS' => 'terms',
         'T_CONSENTS' => 'user_consents', 'T_MIGRATIONS' => 'schema_migrations',
         'T_SECRET_ACCESS' => 'secret_access_logs',
+        'T_EXT_ACCOUNTS' => 'ext_accounts', 'T_LINK_JOBS' => 'link_jobs', 'T_LINK_ITEMS' => 'link_job_items', 'T_EMERGENCY' => 'emergency',
+        'T_ACCESS_GROUPS' => 'access_groups', 'T_ACCESS_GROUP_MEMBERS' => 'access_group_members', 'T_ACCESS_GROUP_SERVICES' => 'access_group_services',
+        'T_RC_DRAFTS' => 'rc_drafts', 'T_RC_VERSIONS' => 'rc_versions', 'T_PLAT_LOGS' => 'plat_logs', 'T_PLAT_AUDIT' => 'plat_audit',
+        'T_PLAT_COLLS' => 'plat_collections', 'T_PLAT_DOCS' => 'plat_docs', 'T_PLAT_USAGE' => 'plat_usage',
     );
     foreach ($tables as $k => $suffix) {
         if (!defined($k)) {

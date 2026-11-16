@@ -125,37 +125,175 @@ function req_header(string $name): ?string
 // ---------------------------------------------------------------------
 
 /**
- * 요청 IP. 스펙 §8-3.
- * X-Forwarded-For 는 TRUSTED_PROXIES 에 등록된 홉에서 온 요청에서만 신뢰한다.
- * 무조건 믿으면 헤더 위조로 레이트리밋이 통째로 우회된다.
+ * 신뢰 프록시 체인에서 **실제 클라이언트가 X-Forwarded-For 의 오른쪽에서 몇 번째인가.**
+ * 리더 판정 D-272. 상수 `TRUSTED_PROXY_HOPS`, 기본 **1**(= 맨 오른쪽).
+ *
+ * 상수가 없거나 쓰레기면 1 로 떨어진다 — **기존 배포가 깨지지 않아야 한다**(D-272).
+ * 조용히 떨어지지는 않는다: 상수가 **정의돼 있는데** 값이 틀렸을 때만 로그를 남긴다.
+ * (미정의는 구버전 config.php 의 정상 상태이므로 로그 대상이 아니다.)
+ */
+function trusted_proxy_hops(): int
+{
+    if (!defined('TRUSTED_PROXY_HOPS')) {
+        return 1;
+    }
+    $raw = TRUSTED_PROXY_HOPS;
+    if (is_int($raw) && $raw >= 1 && $raw <= 10) {
+        return $raw;
+    }
+    // QA Q17-13 — 종전에는 **호출마다** 이 줄이 났다(요청당 client_ip() 5곳 안팎 → 같은 줄 5개).
+    // 상수는 요청 중에 안 바뀐다. 아래 log_throttled() 가 프로세스당 60초에 1줄로 묶는다.
+    log_throttled('proxy_hops_bad', '[ulogin] TRUSTED_PROXY_HOPS must be an integer between 1 and 10; '
+        . 'falling back to 1. client_ip() now reads the right-most X-Forwarded-For entry.', 1, 60);
+    return 1;
+}
+
+/**
+ * 같은 종류의 로그를 **창(window) 단위로 묶는다** — 감사 L17-5 · QA Q17-13.
+ *
+ * 1차의 중복 억제는 `static $loggedFor !== $xff` 로 **직전 1개 값**만 기억했다.
+ * `php -S` 는 Windows 에서 단일 프로세스라 static 이 요청 사이에 살아남지만, **XFF 를
+ * 요청마다 바꾸면 요청당 1줄**이 남는다. 홉 수가 틀린 상태(idx 자리가 공격자 손 안)에서는
+ * `api:ip` 300/분 기준 **하루 약 170MB** — 로그 범람 수단이 된다(감사 실측 추정).
+ *
+ * 그래서 값이 아니라 **종류(key)** 로 묶는다: 창마다 `$max` 줄까지 쓰고, 넘친 건수는
+ * 다음 창이 열릴 때 **한 줄로 알린다**(조용히 버리지 않는다 — 「몇 건이 묻혔는가」도 신호다).
+ * Apache·FPM 처럼 요청마다 static 이 초기화되는 SAPI 에서는 「요청당 `$max` 줄」이 된다.
+ */
+function log_throttled(string $key, string $msg, int $max = 5, int $windowSec = 60): void
+{
+    static $state = [];
+    $now = time();
+    if (!isset($state[$key]) || ($now - $state[$key]['t']) >= $windowSec) {
+        if (isset($state[$key]) && $state[$key]['drop'] > 0) {
+            error_log('[ulogin] (' . $state[$key]['drop'] . ' more "' . $key . '" line(s) suppressed in the last '
+                . $windowSec . 's)');
+        }
+        $state[$key] = ['t' => $now, 'n' => 0, 'drop' => 0];
+    }
+    if ($state[$key]['n'] < $max) {
+        $state[$key]['n']++;
+        error_log($msg);
+    } else {
+        $state[$key]['drop']++;
+    }
+}
+
+/**
+ * IP 문자열을 **주소로** 정규화한다 — 감사 M17-9. 유효하지 않으면 null.
+ * IPv4-mapped IPv6(`::ffff:127.0.0.1`)는 IPv4 4바이트로 접는다.
+ * 문자열 동등 비교로는 `::1` ↔ `0:0:0:0:0:0:0:1` 이 다른 값이 되어 신뢰 프록시 검사를 비켜 갔다.
+ */
+function ip_addr_bin(string $ip): ?string
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+        return null;
+    }
+    $b = @inet_pton($ip);
+    if ($b === false) {
+        return null;
+    }
+    if (strlen($b) === 16 && substr($b, 0, 12) === str_repeat("\0", 10) . "\xff\xff") {
+        $b = substr($b, 12);
+    }
+    return $b;
+}
+
+/** 루프백 주소인가(IPv4 127.0.0.0/8 · IPv6 ::1 · 그 mapped 형태). 입력은 ip_addr_bin() 결과. */
+function ip_bin_is_loopback(string $b): bool
+{
+    if (strlen($b) === 4) {
+        return $b[0] === "\x7f";
+    }
+    return $b === str_repeat("\0", 15) . "\x01";
+}
+
+/**
+ * 요청 IP. 스펙 §8-3. **리더 판정 D-272 로 알고리즘이 바뀌었다.**
+ *
+ * ── 무엇이 왜 바뀌었나 ───────────────────────────────────────────────
+ * 종전 코드는 XFF 를 오른쪽부터 훑되 **신뢰 프록시 항목을 `continue` 로 건너뛰어
+ * 왼쪽으로 더 걸어갔다.** 「오른쪽부터 훑는다」는 「맨 오른쪽을 쓴다」와 같지 않다 —
+ * 공격자가 꼬리에 신뢰 프록시 IP(`127.0.0.1`)를 채워 넣으면 훑기가 왼쪽으로 밀려
+ * **자기가 고른 값에 닿는다.** QA 1회차가 `TRUST_PROXY=true` 에서 실측으로 재현했다
+ * (`77_qa_v17.md` 4-2 케이스 5 — `XFF: 1.2.3.4, 127.0.0.1` → `client_ip()` = `1.2.3.4`).
+ *
+ * 이제 **건너뛰지 않는다.** 위치를 고정해 고른다:
+ *
+ *     $idx = count($hops) - TRUSTED_PROXY_HOPS;      // 기본 1 → 맨 오른쪽
+ *
+ * ── 이 알고리즘이 서 있는 **불변식** (깨지면 아래 폴백이 소리를 낸다) ──
+ *   「우리 앞의 신뢰 프록시가 **실제 클라이언트 IP 를 XFF 의 오른쪽 끝에 덧붙인다**」
+ * Cloudflare 가 그렇게 동작한다(클라이언트가 보낸 XFF 뒤에 접속 IP 를 **append**).
+ * 그래서 기본값 1 = 맨 오른쪽이고, QA 가 유일하게 안전하다고 잰 조합
+ * (`XFF: <공격자값>, <실제IP>`)이 바로 이 모양이다.
+ * 앞단이 **두 겹**이고 바깥 겹이 자기 peer 를 한 번 더 덧붙인다면 2 로 올린다.
+ *
+ * **상수 하나로 「몇 번째를 쓸지」를 운영자가 못박는다** — 코드가 추측하지 않는다.
+ * 추측(=건너뛰기)이 정확히 위 결함이었다.
+ *
+ * ── 모자라거나 깨졌으면 **조용히 넘어가지 않는다** (D-53·D-67·D-75 계열) ──
+ * 항목 수가 `TRUSTED_PROXY_HOPS` 보다 적거나 그 자리가 유효 IP 가 아니면
+ * `REMOTE_ADDR` 로 떨어지고 `error_log()` 에 남긴다. 떨어진 값은 프록시 IP 이므로
+ * **IP 레이트리밋이 전 인터넷 공용 버킷 1개**가 되고 감사 로그의 IP 열이 전부 같아진다 —
+ * 그 상태가 소리 없이 유지되는 것이 이 함수에서 가장 나쁜 결말이다.
+ * 로그는 **같은 XFF 값에 대해 한 번만** 낸다(요청 안에서 이 함수는 20곳에서 불린다).
+ *
+ * ── 기준을 `core/transport.php` 와 **갈라놓지 않는다** ───────────────
+ * 신뢰 게이트 조건식을 여기에 다시 적지 않고 `trust_proxy_headers()` 를 **부른다.**
+ * 종전에는 같은 조건식의 사본이 여기 있었고, 그 파일 주석이 「한쪽만 고치지 마라」고
+ * 경고하고 있었다(D-67 이 정정한 항목). 사본을 없애는 것이 그 경고를 지키는 길이다.
+ * 그 함수가 아직 로드되지 않았으면 **fail-closed** 로 헤더를 무시한다.
  */
 function client_ip(): string
 {
-    $remote  = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-    $proxies = defined('TRUSTED_PROXIES') && is_array(TRUSTED_PROXIES) ? TRUSTED_PROXIES : [];
+    $remote = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
 
-    // 리더 판정 D-53: 프록시 헤더 신뢰의 주 게이트는 TRUST_PROXY 하나로 통일한다.
-    // **core/transport.php 의 trust_proxy_headers()** 와 기준이 달라지면, 한쪽은
-    // X-Forwarded-* 를 무시하는데 다른 쪽은 신뢰하는 상태가 되어 레이트리밋·락아웃이
-    // IP 위조로 우회된다. (그 함수는 v1.4.0 후속까지 bootstrap.php 안에 있었고
-    // 보안 재검증 V14b-M-3 로 transport.php 로 옮겨졌다 — 여기 아래 세 줄이
-    // 그 함수와 **같은 조건식**이다. 합치는 것은 별건으로 남겨 두었다.)
-    $trustProxy = defined('TRUST_PROXY') && TRUST_PROXY;
+    // 신뢰 게이트는 transport.php 단일 정의. 사본을 만들지 마라 (D-51·D-67).
+    $trusted = function_exists('trust_proxy_headers') ? trust_proxy_headers() : false;
 
-    if ($trustProxy && $proxies !== [] && in_array($remote, $proxies, true)) {
+    if ($trusted) {
         $xff = (string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '');
         if ($xff !== '') {
             $hops = array_map('trim', explode(',', $xff));
-            for ($i = count($hops) - 1; $i >= 0; $i--) {
-                $ip = $hops[$i];
-                if (in_array($ip, $proxies, true)) {
-                    continue;   // 신뢰 프록시는 건너뛴다
+            $n    = count($hops);
+            $want = trusted_proxy_hops();
+            $idx  = $n - $want;
+            $pick = ($idx >= 0 && $idx < $n) ? $hops[$idx] : '';
+            // 고른 자리가 **신뢰 프록시 자신**이면 불변식이 깨진 것이다 — 앞단이
+            // 실제 클라이언트 IP 를 덧붙이지 않았거나 홉 수가 틀렸다는 뜻이다.
+            // 실제 외부 클라이언트의 IP 가 우리 신뢰 프록시 목록에 들어 있을 수는 없다.
+            // 그 값을 그대로 쓰면 **틀린 것을 조용히 맞다고 기록하는** 꼴이므로 떨어진다.
+            //
+            // v1.7.0 2차 (감사 M17-9): 이 검사를 **문자열이 아니라 주소로** 한다.
+            // 1차는 `in_array($pick, $proxies, true)` 였고, 같은 주소의 다른 표기
+            // (`0:0:0:0:0:0:0:1` · `::ffff:127.0.0.1` · `127.0.0.2`)가 그대로 통과했다(실측).
+            // 터널이 같은 PC 에 있어 **루프백 peer 가 곧 신뢰 프록시**이므로, 같은 PC 의
+            // 비관리자 프로세스가 8080 에 직접 붙어 임의 XFF 를 보내면 client_ip() 를 조작한다.
+            // 그리고 **루프백은 목록 등재와 무관하게 「외부 클라이언트 IP」일 수 없다** — 거절한다.
+            // (원격 공격자는 맨 오른쪽 자리를 차지할 수 없다 — 앞단이 append 한다. [판단])
+            $pickBin = $pick === '' ? null : ip_addr_bin($pick);
+            $isProxy = false;
+            if ($pickBin !== null) {
+                $proxies = defined('TRUSTED_PROXIES') && is_array(TRUSTED_PROXIES) ? TRUSTED_PROXIES : [];
+                foreach ($proxies as $p) {
+                    $pb = ip_addr_bin((string) $p);
+                    if ($pb !== null && $pb === $pickBin) {
+                        $isProxy = true;
+                        break;
+                    }
                 }
-                if (filter_var($ip, FILTER_VALIDATE_IP) !== false) {
-                    return substr($ip, 0, 45);
-                }
-                break;
             }
+            if ($pickBin !== null && !$isProxy && !ip_bin_is_loopback($pickBin)) {
+                return substr($pick, 0, 45);
+            }
+            // 전제가 깨졌다. 멈추지는 않지만(정상 요청까지 죽는다) 반드시 남긴다.
+            // **값이 아니라 종류로 묶는다**(감사 L17-5) — XFF 를 매번 바꿔 로그를 범람시키지 못하게.
+            log_throttled('xff_fallback', '[ulogin] X-Forwarded-For from a trusted proxy has no usable entry at '
+                . 'position ' . $want . ' from the right (' . $n . ' hop(s) present). '
+                . 'falling back to REMOTE_ADDR - every client is now counted as the proxy IP, '
+                . 'so IP rate limits become one shared bucket and login_logs.ip is meaningless. '
+                . 'check TRUSTED_PROXY_HOPS against what your proxy actually appends.', 5, 60);
         }
     }
     if (filter_var($remote, FILTER_VALIDATE_IP) === false) {
@@ -376,22 +514,117 @@ function page_params(array $in, int $defaultPerPage = 20): array
 }
 
 // ---------------------------------------------------------------------
+// LIKE 부분 일치 — v1.8.0 (설계 A30)
+// ---------------------------------------------------------------------
+
+/**
+ * 검색어를 「부분 일치」 LIKE 패턴으로. 와일드카드(`%` `_`)와 이스케이프 문자 자신을 이스케이프한다.
+ * **SQL 쪽은 반드시 `col LIKE ?' . sql_like_escape()` 로 짝을 맞춘다.** 둘은 한 쌍이다.
+ *
+ * ── 왜 백슬래시가 아니라 `!` 인가 ─────────────────────────────────────
+ * v1.7.0 까지는 백슬래시로 이스케이프하고 `ESCAPE` 절을 쓰지 않았다 — MySQL 의 **기본**
+ * 이스케이프 문자가 백슬래시라 그것으로 됐다. SQLite 의 LIKE 는 `ESCAPE` 없이는 이스케이프
+ * 문자가 **없다**(실측: `'a_b' LIKE 'a\_b'` → 0). 그대로 두면 `_`·`%` 가 든 검색어가
+ * **오류 없이 0건**을 낸다.
+ *
+ * `ESCAPE '\'` 를 SQL 리터럴로 적으면 두 저장소가 **서로 다르게 읽는다**:
+ *   - MySQL(기본 sql_mode) — 문자열 리터럴 안의 `\` 가 닫는 따옴표를 이스케이프해 **구문 오류**
+ *   - `'\\'` 로 적으면 MySQL 은 1글자, **SQLite 는 2글자**라 「ESCAPE expression must be a
+ *     single character」 오류
+ * 즉 백슬래시로는 **양쪽에서 같은 뜻이 되는 리터럴이 없다.** 백슬래시를 특별히 다루지 않는
+ * 문자 `!` 를 쓰면 `ESCAPE '!'` 하나가 두 저장소 · NO_BACKSLASH_ESCAPES 유무와 무관하게 같은
+ * 뜻이다. 검색어 안의 백슬래시는 이제 **보통 문자**로 일치한다(두 저장소 같음).
+ */
+function like_contains(string $q): string
+{
+    return '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $q) . '%';
+}
+
+/** `like_contains()` 와 짝을 이루는 ESCAPE 절. 앞 공백을 포함한다. */
+function sql_like_escape(): string
+{
+    return " ESCAPE '!'";
+}
+
+// ---------------------------------------------------------------------
 // CORS — 스펙 §8-5
 // ---------------------------------------------------------------------
 
-/** 이 서버 자신의 origin. 자체 UI 는 same-origin 이라 CORS 가 필요 없지만 방어적으로 허용한다. */
+/**
+ * 이 서버 자신의 origin. 자체 UI 는 same-origin 이라 CORS 가 필요 없지만 방어적으로 허용한다.
+ *
+ * ── **정본은 `BASE_URL` 하나다** (리더 판정 D-268 / 감사 M17-1) ──────
+ * 종전 코드는 `HTTP_HOST` 와 `HTTP_X_FORWARDED_PROTO` 를 **신뢰 검사 없이** 읽었다.
+ * 그래서 `origin_allowed()` 가 DB 의 `allowed_origins` 를 보기도 **전에**
+ * 임의 Origin 에 true 를 냈다 — 보안 1회차가 실측으로 재현했다:
+ *
+ *     curl -H 'Host: evil.example' -H 'X-Forwarded-Proto: https' \
+ *          -H 'Origin: https://evil.example' …   → origin_match=TRUE → CORS ALLOWED
+ *
+ * `bootstrap.php` 의 FORCE_HTTPS 301 이 **같은 이유로** `HTTP_HOST` 를 쓰지 않고
+ * `BASE_URL` 만 쓴다(D-53). 두 곳의 기준을 맞춘다.
+ *
+ * **지금 당장 악용이 성립하지는 않는다** — `cors_handle()` 이 `Allow-Credentials` 를
+ * 붙이지 않고 브라우저는 `Host` 를 위조하지 못한다. 그런데 이 라운드가 추가한
+ * **쿠키 세션 기반 무음 SSO** 가 `Allow-Credentials` 를 요구하는 방향이고,
+ * `core/mailer.php` 의 링크 조립 · `core/bootstrap.php` 의 FORCE_HTTPS 301 ·
+ * `config.sample.php` 의 BASE_URL 절이
+ * **이 함수를 "호스트를 알아내는 데" 쓰고 싶어지는 유혹을 이미 경고**하고 있다.
+ * 그때 열리는 것은 오픈 리다이렉트와 **독이 든 비밀번호 재설정 링크**다.
+ * 수정 비용이 몇 줄이므로 미루지 않는다.
+ *
+ * 폴백(`BASE_URL` 미설정 구버전 설치본)에서도 **새 https 판정식을 만들지 않는다** —
+ * `request_is_https()` 를 쓴다. 새 판정식을 만들면 D-67 이 통일한 기준이 또 갈라진다.
+ * `client_ip()` · `trust_proxy_headers()` 와 **항상 함께 본다.**
+ */
 function own_origin(): string
 {
-    $https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
-        || strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+    if (defined('BASE_URL') && BASE_URL !== '' && strpos((string) BASE_URL, '__') === false) {
+        $p = parse_url((string) BASE_URL);
+        if (is_array($p) && !empty($p['scheme']) && !empty($p['host'])) {
+            $scheme = strtolower((string) $p['scheme']);
+            $o      = $scheme . '://' . strtolower((string) $p['host']);
+            if (!empty($p['port'])) {
+                $dflt = ($scheme === 'https' && (int) $p['port'] === 443)
+                     || ($scheme === 'http'  && (int) $p['port'] === 80);
+                if (!$dflt) {
+                    $o .= ':' . (int) $p['port'];
+                }
+            }
+            return $o;
+        }
+    }
+    // BASE_URL 이 없는 구버전 설치본용 폴백. 여기서는 `Host` 위조가 여전히 가능하다 —
+    // **그래서 origin_allowed() 가 이 경우 자기 origin 특례를 쓰지 않는다**(아래 함수 참조).
     $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
-    return ($https ? 'https://' : 'http://') . $host;
+    $https = function_exists('request_is_https')
+        ? request_is_https()
+        : (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off');
+    return ($https ? 'https://' : 'http://') . strtolower($host);
 }
 
-/** 등록된 서비스 중 하나라도 이 Origin 을 허용하는가. */
+/** `BASE_URL` 이 정본으로 쓸 수 있는 값인가 — `own_origin()` 의 폴백 여부와 같은 판정. */
+function base_url_is_canonical(): bool
+{
+    if (!defined('BASE_URL') || BASE_URL === '' || strpos((string) BASE_URL, '__') !== false) {
+        return false;
+    }
+    $p = parse_url((string) BASE_URL);
+    return is_array($p) && !empty($p['scheme']) && !empty($p['host']);
+}
+
+/**
+ * 등록된 서비스 중 하나라도 이 Origin 을 허용하는가.
+ *
+ * 자기 origin 특례는 **`BASE_URL` 이 정본일 때만** 쓴다 (D-268 / 감사 M17-1).
+ * `BASE_URL` 이 없으면 `own_origin()` 이 `Host` 헤더로 떨어지고, 그 값은 클라이언트가
+ * 정하므로 **특례가 곧 "아무 Origin 이나 허용"** 이 된다. 그 배포에서는 특례를 끄고
+ * DB 화이트리스트만 본다 — **기능 손실이 없다.** 자체 UI 는 same-origin 이라
+ * 애초에 CORS 를 타지 않는다(브라우저가 `Origin` 을 보내지 않거나 same-origin 이다).
+ */
 function origin_allowed(string $origin): bool
 {
-    if ($origin === own_origin()) {
+    if (base_url_is_canonical() && $origin === own_origin()) {
         return true;
     }
     try {
@@ -434,7 +667,9 @@ function cors_handle(): void
     }
     header('Access-Control-Allow-Origin: ' . $origin);
     header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-Token, X-Auth-Token');
+    // v1.9.0 (설계 116 §4) — 설정 조회 ETag · 문서 낙관적 잠금 헤더, 429 의 Retry-After 를 JS 가 읽게.
+    header('Access-Control-Allow-Headers: Content-Type, Authorization, X-CSRF-Token, X-Auth-Token, If-None-Match, If-Match');
+    header('Access-Control-Expose-Headers: ETag, Retry-After');
     header('Access-Control-Max-Age: 600');
 }
 

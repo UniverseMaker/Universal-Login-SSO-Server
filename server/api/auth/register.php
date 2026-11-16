@@ -16,7 +16,9 @@ rate_limit('register:ip:' . client_ip(), 5, 3600);
 // 3) 입력
 $in = body_json();
 
-if (!setting_get('allow_register', ALLOW_REGISTER)) {
+// 가입 허용 판정은 core/auth.php 의 registration_open() 한 곳에만 있다(v1.8.2).
+// 화면용 공개 읽기 api/auth/register_status.php 가 같은 함수를 부른다 — 여기서 식을 다시 쓰지 마라.
+if (!registration_open()) {
     throw new AppError('REGISTRATION_DISABLED', 403);
 }
 
@@ -45,11 +47,11 @@ if (v_bool($in, 'agree_privacy', false, false) !== true) {
 }
 
 // service_id 는 선택. 주어졌으면 실재하는 활성 서비스여야 한다.
-$serviceId = v_string($in, 'service_id', 1, 64);
+$serviceId = v_service_id($in, 'service_id');   // v1.8.6 — 옛 id 는 여기서 새 id 로(설계 104 C-1)
 $service   = null;
 if ($serviceId !== null) {
     $service = service_require($serviceId);
-    if (empty($service['allow_register'])) {
+    if (!registration_open($service)) {
         throw new AppError('REGISTRATION_DISABLED', 403);
     }
 }
@@ -194,8 +196,11 @@ $us   = $service !== null
     ? db_one('SELECT * FROM ' . T_USER_SERVICES . ' WHERE user_id = ? AND service_id = ?', [$userId, $service['service_id']])
     : null;
 
+// v1.8.6 — service_id 는 클라이언트가 보낸 값을 되돌린다(설계 104 C-2)
+$userOut = serialize_user($user, $us);
+service_id_echo($userOut, null);
 json_out([
-    'user'                        => serialize_user($user, $us),
+    'user'                        => $userOut,
     'email_verification_required' => $requireVerify,
     'granted_points'              => $bonus,
     'auto_login'                  => false,

@@ -167,15 +167,15 @@ if (!function_exists('admin_secret_guard_gate')) {
                 'message' => $defeated
                     ? '민감한 시크릿(' . $key . ')의 min_account_level(' . (string) $minLevel . ') '
                         . '게이트가 이 서비스에서는 아무도 막지 않습니다. 이 서비스는 '
-                        . 'default_account_level(' . (string) $autoLevel . ') 을 가입하는 회원에게 '
+                        . 'default_account_level(' . (string) $autoLevel . ')을 가입하는 회원에게 '
                         . '자동으로 보장하므로, 가입한 전원이 그 등급을 갖고 게이트를 통과합니다. '
-                        . 'min_billing_tier=lite 를 권장합니다 — 결제등급과 역할은 서비스가 자동으로 '
-                        . '부여하지 않습니다. 의도한 공개라면 allow_public=true 를 함께 보내십시오.'
+                        . 'min_billing_tier=lite를 권장합니다. 결제등급과 역할은 서비스가 자동으로 '
+                        . '부여하지 않습니다. 의도한 공개라면 allow_public=true를 함께 보내십시오.'
                     : '민감한 시크릿(' . $key . ')에는 최소 등급 게이트가 필요합니다. '
                         . '게이트를 비우면 가입한 모든 사용자가 이 값을 받습니다. '
-                        . 'min_billing_tier=lite 를 권장하며, 의도한 공개라면 allow_public=true 를 함께 보내십시오. '
+                        . 'min_billing_tier=lite를 권장하며, 의도한 공개라면 allow_public=true를 함께 보내십시오. '
                         . '(guest / basic 계정등급, free 결제등급, user 역할은 전 회원의 기본값이라 '
-                        . '게이트로 인정되지 않습니다 — 걸어도 전원이 통과합니다.)',
+                        . '게이트로 인정되지 않습니다. 걸어도 전원이 통과합니다.)',
             ]);
         }
         return true;
@@ -204,6 +204,7 @@ require_global_role($ctx, 'admin');
 $adminId   = (int) $ctx['user']['id'];
 $now       = now_utc();
 $serviceId = (string) v_string($_GET, 'service_id', 1, 64, true);
+admin_service_id_reject_former($serviceId);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
 
 // 서비스 존재 확인 (status 무관 — 관리자는 disabled 서비스의 시크릿도 다룬다)
 //
@@ -221,7 +222,7 @@ $svcAutoLevel = secret_service_auto_level_of_row($serviceRow);
 $loadSecret = function ($rawId) use ($serviceId) {
     $id = (int) $rawId;
     if ($id <= 0) {
-        throw new AppError('VALIDATION_FAILED', 400, ['field' => 'id', 'message' => '시크릿 id 가 필요합니다.']);
+        throw new AppError('VALIDATION_FAILED', 400, ['field' => 'id', 'message' => '시크릿 id가 필요합니다.']);
     }
     $r = db_one('SELECT * FROM ' . T_SECRETS . ' WHERE id = ? AND service_id = ?', [$id, $serviceId]);
     if ($r === null) {
@@ -422,7 +423,7 @@ if ($method === 'PUT') {
     $valueChanged = false;
     if (array_key_exists('secret_value', $body)) {
         if ($body['secret_value'] === null) {
-            v_fail('secret_value', '값을 비우려면 빈 문자열을 보내 주세요. null 은 허용되지 않습니다.');
+            v_fail('secret_value', '값을 비우려면 빈 문자열을 보내 주세요. null은 허용되지 않습니다.');
         }
         if (!is_string($body['secret_value'])) {
             v_fail('secret_value', '문자열이어야 합니다.');

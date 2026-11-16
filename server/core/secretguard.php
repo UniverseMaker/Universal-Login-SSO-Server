@@ -280,9 +280,10 @@ if (!function_exists('admin_secrets_has_allow_public')) {
     {
         static $has = null;
         if ($has === null) {
-            $has = db_val('SELECT COUNT(*) FROM information_schema.COLUMNS'
-                . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-                [T_SECRETS, 'allow_public']) > 0;
+            // v1.8.0 — SQLite 에는 information_schema 가 없다(설계 A19). 질문을 드라이버별로
+            // 바꾸는 일은 core/db.php 의 db_column_exists() 한 곳이 한다
+            // (MySQL information_schema.COLUMNS · SQLite pragma_table_info).
+            $has = db_column_exists(T_SECRETS, 'allow_public');
         }
         return $has;
     }
@@ -305,7 +306,7 @@ if (!function_exists('secret_value_rule_check')) {
         if ($valueType === 'json') {
             $d = json_decode($value, true);
             if ($d === null && strtolower(trim($value)) !== 'null') {
-                $reason = 'value_type 이 json 이면 유효한 JSON 문자열이어야 합니다.';
+                $reason = 'value_type이 json 이면 유효한 JSON 문자열이어야 합니다.';
                 return false;
             }
             return true;
@@ -314,7 +315,7 @@ if (!function_exists('secret_value_rule_check')) {
             $p = parse_url(trim($value));
             if ($p === false || empty($p['scheme']) || empty($p['host'])
                 || !in_array(strtolower((string) $p['scheme']), ['http', 'https'], true)) {
-                $reason = 'value_type 이 url 이면 http(s) 절대 URL 이어야 합니다.';
+                $reason = 'value_type이 url 이면 http(s) 절대 URL 이어야 합니다.';
                 return false;
             }
             return true;

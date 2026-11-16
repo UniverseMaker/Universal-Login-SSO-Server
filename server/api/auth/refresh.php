@@ -49,9 +49,17 @@ $devLabel = v_string($in, 'device_label', 1, 80);
 
 $r = rotate_refresh($refresh, ['device_label' => $devLabel]);
 
+// v1.8.6 — 회전 전 세션의 echo 기억(client_service_id)을 새 세션이 이어받았다(설계 104 C-2).
+$userOut = serialize_user($r['user'], $r['user_service']);
+$sessOut = serialize_session($r['session'], true);
+service_id_echo($userOut, $r['session']);
+service_id_echo($sessOut, $r['session']);
+
+features_emit($r['session']['service_id'] ?? null, $r['user_service'], $r['user']);   // v1.9.0 — features 순수 추가
+access_emit($r['session']['service_id'] ?? null, $r['user'], $r['user_service']);       // v1.10.0 — 설계 127 §3-1
 json_out([
-    'user'               => serialize_user($r['user'], $r['user_service']),
-    'session'            => serialize_session($r['session'], true),
+    'user'               => $userOut,
+    'session'            => $sessOut,
     'access_token'       => $r['access_token'],
     'refresh_token'      => $r['refresh_token'],
     'token_type'         => 'Bearer',

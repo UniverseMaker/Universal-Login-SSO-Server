@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-rui-font>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,17 +15,35 @@
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
 <meta http-equiv="Cache-Control" content="no-store">
-<link rel="stylesheet" href="assets/style.css?v=1.6.0">
+<!-- 공용 테마 (research-ui G17) — v1.8.6 / 리더 판정 D-337·D-342
+     공용 파일 셋(rui-theme.js · rui-tokens.css · rui.css)은 research-ui 원본을 **바이트 그대로** 복사했다.
+     ulogin 전용 보정은 따로 둔다:
+       · rui-ulogin-pre.js — rui-theme.js 보다 **먼저**. `?rui=` 인계가 SSO 쿼리·일회용 토큰을 지우지 않게
+       · rui-layer.css     — rui.css 를 cascade layer 로 불러 style.css 와의 클래스 충돌(D-236)을 푼다
+       · ulogin-theme.css  — 화면 모양 보정(G16 로그인 틀 안의 ulogin 요소 · 공통 테마 2 · Pretendard 파일)
+       · ulogin-shell.js   — G16 `RUI.login` 틀을 세우고 이 화면의 카드(#ul-pane)를 폼 자리에 넣는다
+       · theme-ui.js       — 화면 설정(RUI.picker, 인라인 style 을 CSSOM 으로 옮긴다) · 밝기 · 버전 뱃지
+
+     rui-theme.js 를 **스타일시트보다 먼저, head 에서** 부른다. <html> 에 data-rui-* 를 세우므로
+     첫 그리기부터 색이 맞는다(GUIDE "새 앱에 쓰기").
+
+     <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
+     글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
+     **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
+<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
+<script src="assets/rui-theme.js?v=1.10.0"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
+<link rel="stylesheet" href="assets/style.css?v=1.10.0">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
+<script src="assets/theme-ui.js?v=1.10.0" defer></script>
 </head>
-<body>
-<div class="page">
-
-  <header class="site-header">
-    <a class="brand" href="index.html">ulogin</a>
-    <span class="spacer"></span>
-  </header>
-
-  <main class="container narrow">
+<body class="ul-auth-body">
+<!-- v1.8.6 — G16/G17 공통 로그인 틀(GUIDELINE 4-2장). 왼쪽 시스템 면·오른쪽 위 밝기 버튼은 RUI.login 이 그리고,
+     ulogin-shell.js 가 로그인 폼 자리에 아래 #ul-pane(이 화면의 카드들)을 **옮겨** 넣는다.
+     [data-ul-tools] 의 자식은 오른쪽 위 도구 줄로 간다. 공용 파일을 못 읽으면 pane 은 이 자리에 그대로 보인다. -->
+<div id="ul-shell" class="rui ul-rui"></div>
+<div class="ul-own ul-pane" id="ul-pane">
 
     <!-- 토큰이 없거나 무효할 때 -->
     <section class="card auth-card" id="bad-card" hidden>
@@ -39,12 +57,12 @@
     <!-- 재설정 폼 -->
     <section class="card auth-card" id="reset-card" hidden>
       <div class="card-head">
-        <h1>새 비밀번호 설정</h1>
+        <h1 id="reset-title">새 비밀번호 설정</h1>
       </div>
 
       <div class="card-body">
-        <p class="text-sm text-muted">
-          새 비밀번호를 입력해 주세요. 변경하면 기존에 로그인되어 있던 모든 기기의 세션이 종료됩니다.
+        <p class="text-sm text-muted" id="reset-lead">
+          새 비밀번호 입력, 변경 시 기존 로그인 기기의 세션 모두 종료
         </p>
 
         <form class="form" id="reset-form" novalidate>
@@ -52,7 +70,7 @@
             <label for="password">새 비밀번호<span class="req" aria-hidden="true">*</span></label>
             <input type="password" id="password" name="password" autocomplete="new-password" required>
             <span class="field-error"></span>
-            <span class="hint">8자 이상. 영문·숫자·특수문자 중 2종류 이상을 섞어 주세요.</span>
+            <span class="hint">8자 이상, 영문·숫자·특수문자 중 2종류 이상 조합</span>
             <div class="strength" id="pw-strength" data-level="0">
               <div class="strength-bar"><i></i></div>
               <div class="strength-text" id="pw-strength-text" role="status" aria-live="polite"></div>
@@ -76,19 +94,17 @@
     <!-- 완료 -->
     <section class="card auth-card" id="done-card" hidden>
       <div class="card-head">
-        <h1>비밀번호가 변경되었습니다</h1>
+        <h1 id="done-title">비밀번호가 변경되었습니다</h1>
       </div>
       <div class="card-body" id="done-body"></div>
       <div class="card-foot" id="done-foot"></div>
     </section>
 
-  </main>
+</div><!-- /#ul-pane -->
 
-  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
-</div>
-
-<script src="assets/api.js?v=1.6.0"></script>
-<script src="assets/ui.js?v=1.6.0"></script>
+<script src="assets/ulogin-shell.js?v=1.10.0"></script>
+<script src="assets/api.js?v=1.10.0"></script>
+<script src="assets/ui.js?v=1.10.0"></script>
 <script>
 /* ============================================================================
  * reset.html — 비밀번호 재설정 (메일 링크의 ?token= 을 받는다)
@@ -105,6 +121,10 @@
   var SSO_KEEP = ['service_id', 'redirect_uri', 'state', 'code_challenge'];
   var qs = new URLSearchParams(location.search);
   var token = (qs.get('token') || '').trim();
+  /* v1.8.4 계정 연결 — 관리자가 다른 시스템 계정을 이관해 만든 새 계정은 비밀번호가 없다.
+     관리자가 전달한 「첫 비밀번호 설정 링크」(reset.html?token=…&setup=1, 72시간)로 여기 온다.
+     서버 동작은 비밀번호 재설정과 같다(password_reset.php 가 setup_pending 만 지운다). 문구만 바꾼다. */
+  var isSetup = qs.get('setup') === '1';
 
   function withSso(target) {
     var next = new URLSearchParams();
@@ -143,6 +163,13 @@
 
   var cardReset = $('#reset-card');
   var cardDone = $('#done-card');
+  if (isSetup) {
+    document.title = '첫 비밀번호 설정 · ulogin';
+    $('#reset-title').textContent = '첫 비밀번호 설정';
+    $('#reset-lead').textContent = '관리자가 다른 시스템 계정을 이 계정으로 이관, 사용할 비밀번호 설정 필요, 링크는 한 번만 사용 가능';
+    $('#submit-btn').textContent = '비밀번호 정하기';
+    $('#done-title').textContent = '비밀번호를 정했습니다';
+  }
   var doneBody = $('#done-body');
   var doneFoot = $('#done-foot');
 
@@ -196,8 +223,8 @@
   }
   var LEVEL_TEXT = {
     0: '',
-    1: '사용할 수 없습니다 — 8자 이상, 영문·숫자·특수문자 중 2종류 이상이 필요합니다.',
-    2: '보통 — 길이를 늘리거나 문자 종류를 추가하면 더 안전합니다.',
+    1: '사용할 수 없습니다. 8자 이상, 영문·숫자·특수문자 중 2종류 이상이 필요합니다.',
+    2: '보통: 길이를 늘리거나 문자 종류를 추가하면 더 안전합니다.',
     3: '양호',
     4: '강함'
   };
@@ -221,8 +248,8 @@
     badTitle.textContent = title;
     badBody.appendChild(alertNode(message, 'danger'));
     badBody.appendChild(el('p', { class: 'text-sm text-muted' },
-      '재설정 링크는 한 번만 쓸 수 있고 발급 후 일정 시간이 지나면 만료됩니다. ' +
-      '아래에서 새 링크를 다시 요청해 주세요.'));
+      '재설정 링크는 한 번만 사용 가능, 발급 후 일정 시간 경과 시 만료, ' +
+      '아래에서 새 링크 다시 요청'));
     badFoot.appendChild(el('a', { class: 'btn btn-primary', href: forgotHref }, '재설정 링크 다시 요청'));
     badFoot.appendChild(el('a', { class: 'btn btn-ghost', href: loginHref }, '로그인으로'));
     cardReset.hidden = true;
@@ -235,7 +262,9 @@
     clear(doneBody);
     clear(doneFoot);
 
-    doneBody.appendChild(alertNode('새 비밀번호로 변경되었습니다. 이제 새 비밀번호로 로그인해 주세요.', 'success'));
+    doneBody.appendChild(alertNode(isSetup
+      ? '비밀번호를 정했습니다. 이제 아이디와 이 비밀번호로 로그인해 주세요.'
+      : '새 비밀번호로 변경되었습니다. 이제 새 비밀번호로 로그인해 주세요.', 'success'));
 
     var revoked = (data && typeof data.revoked_count === 'number') ? data.revoked_count : null;
     if (revoked !== null) {

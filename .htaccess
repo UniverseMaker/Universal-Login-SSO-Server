@@ -1,0 +1,88 @@
+# ---------------------------------------------------------------------
+# ulogin 설치 루트 .htaccess   (v1.8.1 신규 / 리더 판정 D-313·D-316)
+#
+# 하는 일은 셋이다.
+#   1) `/public` 없는 주소 — **내부 재작성**(리다이렉트가 아니다. 주소창은 그대로)
+#        /                      -> public/index.html
+#        /{page} · /{page}.html -> public/{page}.html   (아래 8개, 정확히 소문자)
+#        /assets/{file}         -> public/assets/{file} (한 조각 · 정적 확장자만)
+#        /version.txt           -> public/version.txt
+#      `php -S` 운영 라우터(`tools/router-ulogin.php` 의 r_alias())와 **같은 표**다 — 함께 고쳐라.
+#      `assets/`·`version.txt` 를 잇는 이유: 화면이 자산을 **상대 경로**(`assets/style.css?v=`)로
+#      부르므로 `/login` 에서는 `/assets/style.css` 가 된다.
+#   2) 디렉터리 목록 끔 · 점(.)파일 차단
+#   3) X-Powered-By 제거
+#
+# 기존 `/public/…` 주소는 **그대로 동작한다**(메일 링크·연동 코드·handoff 가 그 주소를 쓴다).
+#
+# ▣ 재작성 뒤의 보안 헤더·CSP·캐시 — `public/.htaccess` 가 그대로 건다.
+#   .htaccess 문맥의 RewriteRule 은 **내부 재요청**을 만들고, Apache 는 새 경로
+#   (`public/login.html`)의 디렉터리 설정을 다시 합친다. 그래서 별칭 주소의 응답에도
+#   `public/.htaccess` 의 헤더 6종·CSP·no-store 가 붙는다.
+#   `public/.htaccess` 에는 RewriteEngine 지시가 없어 이 파일의 규칙이 상속되지만,
+#   그 자리에서 경로는 `public/…` 로 시작하므로 아래 패턴(^login 등)에 다시 걸리지 않는다(루프 없음).
+#   `server/.htaccess` 는 자기 RewriteEngine 이 있어 이 파일의 규칙을 상속하지 않는다.
+#
+# ▣ 왜 별칭이 public 밖으로 새지 못하는가
+#   치환 결과는 언제나 **고정 접두 `public/` + 허용 목록 이름**이다. 사용자 입력이 치환에
+#   들어가는 곳은 `assets/` 한 조각뿐이고, 그 조각은 `[A-Za-z0-9._-]` 와 정적 확장자로 묶였다
+#   (슬래시·`..`·`%`·공백이 들어올 수 없다). `..` 와 `%2e%2e` 는 Apache 가 재작성 **전에**
+#   정규화·거절하고, `%2f` 는 AllowEncodedSlashes 기본값(Off)에서 404 다.
+#   RewriteRule 은 기본이 대소문자 구분이라 `/LOGIN` 은 별칭이 아니다.
+#
+# ▣ 한계 — 이 파일이 무시되면 별칭도 없다
+#   `AllowOverride None` · nginx · mod_rewrite 없는 호스팅에서는 재작성이 일어나지 않는다.
+#   그때 별칭 주소는 404 이고 `/public/…` 주소는 그대로 동작한다(조용히 다른 파일을 주지 않는다).
+#   mod_rewrite 가 없어도 500 이 나지 않도록 <IfModule> 안에 둔다.
+#   `Options -Indexes` 는 `public/`·`server/`·`examples/` 의 .htaccess 와 같은 전제
+#   (AllowOverride Options 허용)다.
+#   서브디렉터리 설치(`/ulogin/`)에서 `Alias` 로 매핑된 경로라면 `RewriteBase /ulogin/` 을 넣어라.
+# ---------------------------------------------------------------------
+
+Options -Indexes
+
+<FilesMatch "^\.">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header unset X-Powered-By
+  Header always unset X-Powered-By
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # v1.8.9 허용 목록 (G20 라운드) — 아래 별칭 표에 없는 **설치 루트 바로 아래 파일**(README.md ·
+  # INSTALL.md · CHANGELOG.md · AI_*_GUIDE.md · LICENSE …)과 `docs/` 는 404 다. 운영 실측(v1.8.8)에서
+  # 루트 문서가 200 으로 나갔다. 별칭 규칙이 먼저 [L] 로 끝나므로 별칭은 영향이 없다.
+  RewriteRule ^docs(/|$) - [R=404,L]
+  RewriteRule ^$ public/index.html [L]
+  RewriteRule ^(admin|forgot|index|login|mypage|register|reset|verify)(\.html)?$ public/$1.html [L]
+  RewriteRule ^assets/([A-Za-z0-9_-][A-Za-z0-9._-]*\.(css|js|svg|png|ico|webp|gif|jpg|jpeg|woff|woff2|map))$ public/assets/$1 [L]
+  RewriteRule ^version\.txt$ public/version.txt [L]
+  # G18 (v1.8.7) — 공용 새 버전 알림(RUI.updates)이 `GET /version.json` 을 본다. 위 표와 라우터 r_alias() 도 같다.
+  RewriteRule ^version\.json$ public/version.json [L]
+  # 별칭이 아닌 루트 바로 아래의 **실제 파일**은 404 (디렉터리 `public`·`server`·`examples` 는 -f 가 아니라 해당 없음)
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule ^[^/]+$ - [R=404,L]
+</IfModule>
+
+# v1.8.9 — 화면이 쓰지 않는 확장자는 어느 폴더에서든 내보내지 않는다(허용 목록의 보강 겹).
+#   `version.txt` · `version.json` 은 화면이 쓰므로 예외다(부정 선행 탐색). public/ · examples/ 는
+#   자기 .htaccess 에 RewriteEngine 이 없어 이 블록이 그대로 걸린다. `server/.htaccess` 는 자기 목록을 갖는다.
+#   ★ `tests/` 를 도는 라우터 `r_allowed()` 와 같은 뜻이다 — 함께 고쳐라.
+<FilesMatch "^(?!(version\.(txt|json)|OFL-Pretendard\.txt)$).*\.(md|sql|bat|cmd|ps1|py|sh|txt|log|ini|env|bak|old|orig|swp|dist|sample|conf|json|lock|yml|yaml|key|pem|crt|eml|mbox|save|swo|tmp|part|sqlite|sqlite3|db|db3|s3db|sl3)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>

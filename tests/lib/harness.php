@@ -8,12 +8,15 @@ declare(strict_types=1);
  *
  * ─────────────────────────────────────────────────────────────────────
  * **`glob()` 을 쓰지 않는다.** 이 저장소가 놓이는 경로에 대괄호가 들어가는
- * 사례가 실제로 있고(`.../[일반] .../`), `glob()` 은 패턴의 `[...]` 를 문자
+ * 사례가 실제로 있고(`.../[예시] .../`), `glob()` 은 패턴의 `[...]` 를 문자
  * 클래스로 해석해 **오류 없이 0건을 반환한다.** 조용히 실패하는 종류라
  * "0건"을 "대상이 없다"로 오독하게 된다. `tools/bump_asset_version.php` 와
  * 같이 `scandir()` + 수동 필터를 쓴다.
  * ─────────────────────────────────────────────────────────────────────
  */
+
+// D-339 — 자식 프로세스 기한. h_run() 과 tier3 의 병렬 자식이 쓴다.
+require_once __DIR__ . '/proc.php';
 
 /** 설치 루트 = `server/` 와 `public/` 을 가진 폴더. 이 파일의 조부모다. */
 function h_root(): string
@@ -328,13 +331,22 @@ function h_split_args(string $args): array
     return $out;
 }
 
-/** 외부 명령 실행. stdout+stderr 와 종료코드를 함께 준다. */
-function h_run(string $cmd, ?int &$code = null): string
+/**
+ * 외부 명령 실행. stdout+stderr 와 종료코드를 함께 준다.
+ * D-339 — **기한이 있다**(기본 300초, tests/lib/proc.php). 멈춘 자식은 자기 PID 트리만 죽이고
+ * 종료코드 124 + 출력 끝의 TIMEOUT 줄로 돌려준다. 호출자의 assert 가 그것을 실패로 본다.
+ * 출력 모양은 종전 exec() 와 같다(줄마다 끝 공백 제거, LF 로 잇기).
+ */
+function h_run(string $cmd, ?int &$code = null, ?float $timeoutSec = 300.0): string
 {
-    $out = array();
-    $code = 0;
-    exec($cmd . ' 2>&1', $out, $code);
-    return implode("\n", $out);
+    $r = proc_run_limited($cmd, $timeoutSec);
+    $code = (int) $r['exit'];
+    $lines = preg_split('/\r\n|\n|\r/', (string) $r['out']);
+    $lines = array_map('rtrim', $lines === false ? array() : $lines);
+    while ($lines !== array() && end($lines) === '') {
+        array_pop($lines);
+    }
+    return implode("\n", $lines);
 }
 
 /** 이 러너를 돌리는 PHP 바이너리. 자식 프로세스에 같은 것을 쓴다. */

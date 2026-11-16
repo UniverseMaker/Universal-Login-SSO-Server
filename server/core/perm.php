@@ -40,6 +40,10 @@ const CAN_MAP = [
     'logs.login.view'       => 'manager',
     'logs.admin.view'       => 'admin',
     'settings.manage'       => 'admin',
+    // v1.8.4 시스템 계정 연결(설계 92 A-5 · G절). 판정은 require_global_role() — 전역 users.role 만.
+    // 쓰기가 superadmin 인 이유: 연결은 「남의 시스템 로컬 계정으로 들어가는 열쇠」를 주는 조작이다.
+    'account_link.view'     => 'admin',
+    'account_link.manage'   => 'superadmin',
 ];
 
 function rank_of(array $map, ?string $v): int
@@ -114,6 +118,12 @@ function effective_grades(array $u, ?array $us = null): array
         'billing_active'     => $active,
         // D-31: 서비스 가입 상태. null=서비스 컨텍스트 없음. 'blocked' 면 payload 를 비운다.
         'membership_status'  => $us === null ? null : (string) ($us['status'] ?? 'active'),
+        // v1.9.0 (80 §5-3) — build_payload() 의 접근 판정 방어층용. **응답에 싣지 마라.**
+        // global_role 은 users.role 그대로(오버라이드 무시) — 접근 판정은 전역 role 만 본다.
+        'global_role'        => global_role_of($u),
+        'access_grant'       => $us === null ? 'inherit' : (string) ($us['access_grant'] ?? 'inherit'),
+        // v1.10.0 (설계 127 §2) — build_payload() 방어층이 단계 판정에 쓸 계정 id. **응답에 싣지 마라.**
+        'user_id'            => isset($u['id']) ? (int) $u['id'] : 0,
     ];
 }
 
@@ -196,10 +206,21 @@ function global_role_of(?array $userRow): string
 /**
  * 행위자(요청자)의 전역 role. `$ctx['grades']` 가 아니라 `$ctx['user']`(= users 행)를 읽는다.
  * `$ctx['user']` 가 없으면 `'user'` — fail-closed.
+ *
+ * v1.8.6 — 리더 판정 D-346 / 보안 High H186-1: **서비스 세션(세션 행 service_id 있음)은 전역 역할이 없다.**
+ * 시스템 SSO 로 받은 토큰은 그 시스템을 위한 것이다. superadmin 이 어느 시스템에 로그인해 받은 토큰이
+ * ulogin 관리자 API 전체(회원·서비스·계정 연결·설정 번들)에 통했다 — Bearer 라 CSRF 도 거치지 않는다.
+ * 그 시스템 하나가 뚫리면 ulogin 관리자가 넘어간다. 그래서 전역 역할을 `user` 로 본다.
+ * 판정 기준은 **정식 id 칸 `service_id`** 다. 개명 echo 용 `client_service_id`(0006)는 보지 않는다 —
+ * 별칭으로 들어온 세션도 service_id 는 언제나 채워져 있다.
+ * ulogin 자체 화면의 세션(login.html → /api/auth/login, service_id 없음)은 그대로다.
  */
 function ctx_global_role(array $ctx): string
 {
-    $u = isset($ctx['user']) && is_array($ctx['user']) ? $ctx['user'] : null;
+    if (!empty($ctx['session']['service_id'])) {
+        return 'user';
+    }
+    $u =isset($ctx['user']) && is_array($ctx['user']) ? $ctx['user'] : null;
     return global_role_of($u);
 }
 

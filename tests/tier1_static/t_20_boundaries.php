@@ -18,6 +18,19 @@ t('every endpoint file has a caller and every call has a file', function () use 
         // 운영용 헬스체크. 화면이 아니라 배포 절차·모니터링이 부른다
         // (INSTALL.md 8절이 배포 직후 curl 로 확인하라고 적는다).
         '/api/health',
+        // v1.8.4 서버 대 서버 — 부르는 쪽은 다른 시스템의 서버다(설계 92 S-2·S-4, 브라우저 호출 금지).
+        // 소비자는 배정됐다: office·manager·learning·research(개명 전 aim·alc·rsa) 가 이미 이 계약으로 운영 중이다(D-331).
+        '/api/sso/accounts_push',
+        '/api/sso/link_events',
+        // v1.9.0 서버 대 서버(설계 116 §0 · §7, service_secret 본문 인증 — 브라우저 호출 금지).
+        // 소비자: 각 시스템 서버(§0 계약 116s0 발송, D-354) · AI 관리(userinfo·users, D-350) · AI_INTEGRATION_GUIDE.md 플랫폼 절(integrator).
+        '/api/platform/audit',
+        '/api/platform/collections',
+        '/api/platform/features',
+        '/api/sso/userinfo',
+        '/api/sso/users',
+        // v1.10.0 — 공유 대상 계정 찾기(s2s, 설계 127 §3-3). 소비자: 각 시스템 서버(주관 세션 경유 통지)
+        '/api/sso/user_search',
     );
     assert_clean(chk_endpoints($ROOT, $allowUncalled), 'endpoint <-> caller mismatch');
 });

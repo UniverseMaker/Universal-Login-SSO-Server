@@ -30,8 +30,10 @@ if (!is_token_format($token)) {
 $now = now_utc();
 
 $out = db_tx(function () use ($token, $now) {
-    // 토큰을 잠근 채로 읽는다. FOR UPDATE 가 없으면 동시 요청이 같은 토큰을 두 번 쓴다.
-    $row = db_one('SELECT * FROM ' . T_EMAIL_VERIFY . ' WHERE token_hash = ? FOR UPDATE', [token_hash($token)]);
+    // 토큰을 잠근 채로 읽는다. 잠금이 없으면 동시 요청이 같은 토큰을 두 번 쓴다.
+    // v1.8.0 — MySQL 은 sql_for_update() 의 ' FOR UPDATE'(행 잠금), SQLite 는 db_tx() 의
+    // BEGIN IMMEDIATE(트랜잭션 직렬화)가 그 일을 한다(설계 B-2). 아래 조건부 UPDATE 는 2차 방어다.
+    $row = db_one('SELECT * FROM ' . T_EMAIL_VERIFY . ' WHERE token_hash = ?' . sql_for_update(), [token_hash($token)]);
     if ($row === null || $row['used_at'] !== null) {
         throw new AppError('TOKEN_INVALID', 400, ['field' => 'token']);
     }
@@ -40,7 +42,7 @@ $out = db_tx(function () use ($token, $now) {
         throw new AppError('TOKEN_INVALID', 400, ['field' => 'token']);
     }
 
-    $user = db_one('SELECT * FROM ' . T_USERS . ' WHERE id = ? FOR UPDATE', [$row['user_id']]);
+    $user = db_one('SELECT * FROM ' . T_USERS . ' WHERE id = ?' . sql_for_update(), [$row['user_id']]);
     if ($user === null || (string) $user['status'] === 'withdrawn') {
         throw new AppError('TOKEN_INVALID', 400, ['field' => 'token']);
     }

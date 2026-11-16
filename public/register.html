@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-rui-font>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,20 +15,52 @@
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
 <meta http-equiv="Cache-Control" content="no-store">
-<link rel="stylesheet" href="assets/style.css?v=1.6.0">
+<!-- 공용 테마 (research-ui G17) — v1.8.6 / 리더 판정 D-337·D-342
+     공용 파일 셋(rui-theme.js · rui-tokens.css · rui.css)은 research-ui 원본을 **바이트 그대로** 복사했다.
+     ulogin 전용 보정은 따로 둔다:
+       · rui-ulogin-pre.js — rui-theme.js 보다 **먼저**. `?rui=` 인계가 SSO 쿼리·일회용 토큰을 지우지 않게
+       · rui-layer.css     — rui.css 를 cascade layer 로 불러 style.css 와의 클래스 충돌(D-236)을 푼다
+       · ulogin-theme.css  — 화면 모양 보정(G16 로그인 틀 안의 ulogin 요소 · 공통 테마 2 · Pretendard 파일)
+       · ulogin-shell.js   — G16 `RUI.login` 틀을 세우고 이 화면의 카드(#ul-pane)를 폼 자리에 넣는다
+       · theme-ui.js       — 화면 설정(RUI.picker, 인라인 style 을 CSSOM 으로 옮긴다) · 밝기 · 버전 뱃지
+
+     rui-theme.js 를 **스타일시트보다 먼저, head 에서** 부른다. <html> 에 data-rui-* 를 세우므로
+     첫 그리기부터 색이 맞는다(GUIDE "새 앱에 쓰기").
+
+     <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
+     글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
+     **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
+<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
+<script src="assets/rui-theme.js?v=1.10.0"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
+<link rel="stylesheet" href="assets/style.css?v=1.10.0">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
+<script src="assets/theme-ui.js?v=1.10.0" defer></script>
 </head>
-<body>
-<div class="page">
+<body class="ul-auth-body">
+<!-- v1.8.6 — G16/G17 공통 로그인 틀(GUIDELINE 4-2장). 왼쪽 시스템 면·오른쪽 위 밝기 버튼은 RUI.login 이 그리고,
+     ulogin-shell.js 가 로그인 폼 자리에 아래 #ul-pane(이 화면의 카드들)을 **옮겨** 넣는다.
+     [data-ul-tools] 의 자식은 오른쪽 위 도구 줄로 간다. 공용 파일을 못 읽으면 pane 은 이 자리에 그대로 보인다. -->
+<div id="ul-shell" class="rui ul-rui"></div>
+<div data-ul-tools hidden><a class="btn" id="nav-login" href="login.html">로그인</a></div>
+<div class="ul-own ul-pane" id="ul-pane">
 
-  <header class="site-header">
-    <a class="brand" href="index.html">ulogin</a>
-    <span class="spacer"></span>
-    <nav><a class="btn btn-ghost btn-sm" id="nav-login" href="login.html">로그인</a></nav>
-  </header>
+    <!-- v1.8.2 — 가입 허용이 **확인되기 전에는** 폼을 보이지 않는다(fail-closed).
+         확인 중 표시 → 허용이면 #register-card / 차단이면 #closed-card(안내) / 확인 실패면 #closed-card(재시도). -->
+    <div id="reg-checking" role="status" aria-live="polite"></div>
 
-  <main class="container narrow">
+    <section class="card auth-card" id="closed-card" hidden>
+      <div class="card-head">
+        <h1 id="closed-title">회원가입</h1>
+      </div>
+      <div class="card-body" id="closed-body"></div>
+      <div class="card-foot" id="closed-foot">
+        <a class="btn btn-ghost btn-sm" id="closed-login" href="login.html">로그인 화면으로</a>
+      </div>
+    </section>
 
-    <section class="card auth-card" id="register-card">
+    <section class="card auth-card" id="register-card" hidden>
       <div class="card-head">
         <h1 id="register-title">회원가입</h1>
       </div>
@@ -44,7 +76,7 @@
                    autocapitalize="off" autocorrect="off" spellcheck="false" required
                    maxlength="20" aria-describedby="hint-username">
             <span class="field-error"></span>
-            <span class="hint" id="hint-username">영문 소문자·숫자·밑줄(_) 4~20자. 대문자는 소문자로 저장됩니다.</span>
+            <span class="hint" id="hint-username">영문 소문자·숫자·밑줄(_) 4~20자, 대문자는 소문자로 저장</span>
           </div>
 
           <div class="field">
@@ -58,7 +90,7 @@
             <label for="reg-password">비밀번호<span class="req" aria-hidden="true">*</span></label>
             <input type="password" id="reg-password" name="password" autocomplete="new-password" required>
             <span class="field-error"></span>
-            <span class="hint">8자 이상. 영문·숫자·특수문자 중 2종류 이상을 섞어 주세요. 아이디와 같은 문자열은 쓸 수 없습니다.</span>
+            <span class="hint">8자 이상, 영문·숫자·특수문자 중 2종류 이상 조합, 아이디와 같은 문자열 사용 불가</span>
             <div class="strength" id="pw-strength" data-level="0">
               <div class="strength-bar"><i></i></div>
               <div class="strength-text" id="pw-strength-text" role="status" aria-live="polite"></div>
@@ -97,15 +129,15 @@
             <div class="check-list">
               <label class="check">
                 <input type="checkbox" id="agree-tos" name="agree_tos">
-                <span>[필수] 이용약관에 동의합니다.</span>
+                <span>[필수] 이용약관 동의</span>
               </label>
               <label class="check">
                 <input type="checkbox" id="agree-privacy" name="agree_privacy">
-                <span>[필수] 개인정보 수집·이용에 동의합니다.</span>
+                <span>[필수] 개인정보 수집·이용 동의</span>
               </label>
               <label class="check">
                 <input type="checkbox" id="marketing-agreed" name="marketing_agreed">
-                <span>[선택] 마케팅 정보 수신에 동의합니다.</span>
+                <span>[선택] 마케팅 정보 수신 동의</span>
               </label>
             </div>
             <span class="field-error" id="agree-error"></span>
@@ -118,7 +150,7 @@
       </div>
 
       <div class="card-foot">
-        <a class="btn btn-ghost btn-sm" id="link-login" href="login.html">이미 계정이 있습니다</a>
+        <a class="btn btn-ghost btn-sm" id="link-login" href="login.html">기존 계정 로그인</a>
       </div>
     </section>
 
@@ -131,13 +163,11 @@
       <div class="card-foot" id="done-foot"></div>
     </section>
 
-  </main>
+</div><!-- /#ul-pane -->
 
-  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
-</div>
-
-<script src="assets/api.js?v=1.6.0"></script>
-<script src="assets/ui.js?v=1.6.0"></script>
+<script src="assets/ulogin-shell.js?v=1.10.0"></script>
+<script src="assets/api.js?v=1.10.0"></script>
+<script src="assets/ui.js?v=1.10.0"></script>
 <script>
 /* ============================================================================
  * register.html — 회원가입
@@ -199,9 +229,10 @@
   /* ---- 링크에 SSO 파라미터 유지 --------------------------------------- */
   $('#link-login').setAttribute('href', withSso('login.html'));
   $('#nav-login').setAttribute('href', withSso('login.html'));
+  $('#closed-login').setAttribute('href', withSso('login.html'));
   if (ssoMode) {
     ssoNote.hidden = false;
-    ssoNote.textContent = '가입을 마치면 요청한 앱의 로그인 화면으로 돌아갑니다.';
+    ssoNote.textContent = '가입 후 요청한 앱의 로그인 화면으로 복귀';
   }
 
   /* ---- 쿨다운 (api.js/ui.js 에 없어 화면에서 구현) -------------------- */
@@ -248,8 +279,8 @@
 
   var LEVEL_TEXT = {
     0: '',
-    1: '사용할 수 없습니다 — 8자 이상, 영문·숫자·특수문자 중 2종류 이상이 필요합니다.',
-    2: '보통 — 길이를 늘리거나 문자 종류를 추가하면 더 안전합니다.',
+    1: '사용할 수 없습니다. 8자 이상, 영문·숫자·특수문자 중 2종류 이상이 필요합니다.',
+    2: '보통: 길이를 늘리거나 문자 종류를 추가하면 더 안전합니다.',
     3: '양호',
     4: '강함'
   };
@@ -353,21 +384,21 @@
 
     if (points > 0) {
       doneBody.appendChild(alertNode(
-        '가입 축하 포인트 ' + fmtNum(points) + 'P 가 지급되었습니다.', 'success'));
+        '가입 축하 포인트 ' + fmtNum(points) + 'P가 지급되었습니다.', 'success'));
     }
 
     if (needVerify) {
       /* leader_decisions D-5: require_email_verify=1 이면 인증 전에는 로그인이 막힌다. */
       doneBody.appendChild(alertNode(
-        '가입 확인을 위해 이메일 인증이 필요합니다. 받은 메일의 링크를 열어 인증을 완료해야 로그인할 수 있습니다.',
+        '가입 확인용 이메일 인증 필요, 받은 메일의 링크로 인증 완료 후 로그인 가능',
         'warn'));
       doneBody.appendChild(el('p', { class: 'text-sm text-muted' },
-        '메일이 오지 않았다면 로그인 화면에서 "인증 메일 재발송"을 이용해 주세요.'));
+        '메일 미수신 시 로그인 화면의 "인증 메일 재발송" 이용'));
     } else if (autoLogin) {
-      doneBody.appendChild(el('p', { class: 'text-sm text-muted' }, '바로 로그인된 상태로 이동합니다.'));
+      doneBody.appendChild(el('p', { class: 'text-sm text-muted' }, '로그인된 상태로 바로 이동'));
     } else {
       doneBody.appendChild(el('p', { class: 'text-sm text-muted' },
-        '보안을 위해 가입과 로그인은 분리되어 있습니다. 방금 만든 계정으로 로그인해 주세요.'));
+        '보안상 가입과 로그인 분리, 방금 만든 계정으로 로그인 필요'));
     }
 
     /* 다음 화면: SSO 파라미터가 있으면 로그인 화면으로 그대로 넘겨 원래 앱으로 복귀시킨다. */
@@ -376,7 +407,7 @@
     else if (autoLogin) { next = 'mypage.html'; }
     else { next = 'login.html'; }
 
-    var label = (next.indexOf('login.html') === 0) ? '로그인하기' : '마이페이지로 이동';
+    var label = (next.indexOf('login.html') === 0) ? '로그인하기' : '내 시스템으로 이동';
     doneFoot.appendChild(el('a', { class: 'btn btn-primary', href: next }, label));
 
     /* 아이디를 로그인 화면이 한 번만 프리필하도록 넘긴다(1회성, sessionStorage). */
@@ -388,7 +419,7 @@
     /* 이메일 인증이 필요하면 자동 이동하지 않는다 — 안내를 읽어야 한다. */
     if (!needVerify) {
       setTimeout(function () { navigate(next, true); }, 2500);
-      doneFoot.appendChild(el('span', { class: 'text-xs text-muted' }, '잠시 후 자동으로 이동합니다.'));
+      doneFoot.appendChild(el('span', { class: 'text-xs text-muted' }, '잠시 후 자동 이동'));
     }
   }
 
@@ -453,6 +484,58 @@
   });
 
   renderStrength();
+
+  /* ---- 가입 허용 확인 (v1.8.2) ----------------------------------------
+   * GET /api/auth/register_status → data.allow_register (전역 설정).
+   * 서버 판정은 POST /api/auth/register 가 거절할 때 쓰는 것과 **같은 함수**다.
+   * 폼은 마크업에서 hidden 으로 시작하고 `allow_register === true` 일 때만 연다.
+   *   false        → 「현재 신규 가입을 받지 않습니다」 안내 (폼 대신)
+   *   값을 못 받음 → 폼을 열지 않고 재시도 안내 (fail-closed. 차단이라고 단정하지도 않는다)
+   * 서비스 단위 차단(SSO service 의 allow_register=0)은 여기서 보지 않는다 — 그 판단은
+   * login.html 이 sso/validate 로 이미 해 링크를 감추고, 제출 시 서버가 같은 함수로 거절한다.
+   * ------------------------------------------------------------------- */
+  var elChecking = $('#reg-checking');
+  var cardClosed = $('#closed-card');
+  var closedBody = $('#closed-body');
+  var closedFoot = $('#closed-foot');
+
+  function showClosed(message, type, retry) {
+    clear(elChecking);
+    elChecking.hidden = true;
+    cardReg.hidden = true;
+    clear(closedBody);
+    closedBody.appendChild(alertNode(message, type));
+    var old = $('#closed-retry');
+    if (old) { old.parentNode.removeChild(old); }
+    if (retry) {
+      closedFoot.insertBefore(el('button', {
+        class: 'btn btn-secondary btn-sm', type: 'button', id: 'closed-retry',
+        on: { click: function () { location.reload(); } }
+      }, '다시 시도'), closedFoot.firstChild);
+    }
+    cardClosed.hidden = false;
+  }
+
+  clear(elChecking);
+  elChecking.hidden = false;
+  elChecking.appendChild(loadingNode('가입 가능 여부를 확인하는 중…'));
+
+  apiGet('/api/auth/register_status')
+    .then(function (data) {
+      if (data && data.allow_register === true) {
+        clear(elChecking);
+        elChecking.hidden = true;
+        cardClosed.hidden = true;
+        cardReg.hidden = false;
+        try { inUsername.focus(); } catch (e) { /* noop */ }
+        return;
+      }
+      showClosed('현재 신규 가입 중단, 관리자 문의', 'warn', false);
+    })
+    .catch(function (err) {
+      showClosed('가입 가능 여부를 확인하지 못했습니다. ' + errorMessage(err) +
+        ' 잠시 후 다시 시도해 주세요.', 'danger', true);
+    });
 })();
 </script>
 </body>

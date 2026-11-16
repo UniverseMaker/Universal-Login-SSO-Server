@@ -35,6 +35,8 @@ php tests/run.php            # 전부
 php tests/run.php --tier=1,2 # DB 없이 돌아가는 것만 (85 케이스, 약 8초)
 ```
 
+**브라우저 점검(run.php 밖, Chrome/Edge 필요):** 빈 포트에 `php -S 127.0.0.1:<port> -t . tools/router-ulogin.php` 를 띄우고 `node tests/ui/account_link_ui.mjs --base=http://127.0.0.1:<port> --out=<스크래치 폴더>` (관리자 「계정 연결」 화면 — API 는 고정 응답으로 가로챈다. 테마 전수는 같은 방식의 `tests/ui/theme_matrix.mjs`). 8080(운영)은 쓰지 않는다. G16/G17 공통 로그인 화면(로그인 성공·실패·잠금·SSO 복귀·가입 차단·토큰 정리·375/768/1400px)은 같은 방식의 `tests/ui/g16_login.mjs --base=… --out=… [--only=func|cells] [--expect=G17]`.
+
 **위 케이스 수를 다시 재는 방법:** `php tests/run.php` 를 **DB를 붙여서** 돌리고 요약 줄의
 `executed` 와 티어별 `pass` 를 읽는다. DB 없이 돌린 값(`pass 85 · skip 43`)을 총계로 적으면
 안 된다. 파일별로 갈라 보려면 `--verbose` 를 붙여 파일 이름 아래의 `ok`/`FAIL`/`skip` 줄을
@@ -475,7 +477,7 @@ php tools/bump_asset_version.php <새버전> --version-txt=<새버전>_<YYYYMMDD
 ## 새 테스트를 추가할 때
 
 1. **`glob()` 을 쓰지 마라.** 이 저장소가 놓이는 경로에 대괄호가 들어가는 사례가 있고
-   (`.../[일반] .../`), `glob()` 은 그것을 문자 클래스로 읽어 **오류 없이 0건을 반환한다.**
+   (`.../[예시] .../`), `glob()` 은 그것을 문자 클래스로 읽어 **오류 없이 0건을 반환한다.**
    `tests/lib/harness.php` 의 `h_files()` 를 써라 (`scandir()` + 수동 필터)
 2. **PHP 7.2 문법만.** `php tests/run.php --tier=1` 이 `tests/` 자신도 스캔한다
 3. **줄 번호를 단언에 넣지 마라** (D-92). 파일명 + 함수명으로 가리켜라

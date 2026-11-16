@@ -120,3 +120,19 @@ $RECYCLE.BIN/
 *.tgz
 *.7z
 *.rar
+
+# ---------------------------------------------------------------------
+# 7. 운영 실행 위치 · 작업 파일 (공개 사본 전용 추가)
+#
+#    운영 데이터(SQLite DB · 비밀 · handoff)와 작업 기록은 저장소에 두지 않는다.
+# ---------------------------------------------------------------------
+runtime/
+handoff/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+config.php
+!server/config.sample.php
+_workspace/
+_publish/

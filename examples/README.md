@@ -261,6 +261,16 @@ php -S localhost:5173 -t .
 
 ---
 
+## 플랫폼 예제 (v1.9.0) — `examples/platform/`
+
+| 파일 | 하는 일 |
+|---|---|
+| `send_logs.php` · `send_logs.js`(Node 18+) · `send_logs.py` | 운영 로그 1건 전송(서버끼리) · 200·429·404 분기 |
+| `spool_flush.php` | 스풀 파일 → 배치 전송 전체 예(400 반으로 · 401/403/404/429/5xx 대기) |
+| `remote_config.js` | 서버끼리 전역 설정 당겨 오기(`if_etag` → `changed`·`params`) |
+
+`service_secret` 은 환경변수 `ULOGIN_SERVICE_SECRET` 로만 넘긴다. 브라우저 쪽은 `public/assets/ulogin-sdk.js`(설정 읽기·로그·문서 테이블, 로그인 토큰만 사용)를 쓴다.
+
 ## 동작 순서 (무엇이 어디서 일어나는가)
 
 ```

@@ -1,0 +1,316 @@
+@charset "UTF-8";
+/* ============================================================================
+ * ulogin v1.8.3 — 화면 모양 보정 (ulogin-theme.css) · v1.8.6 G16 로그인 틀
+ *
+ * style.css 다음에 부른다. 공용 파일(rui-*)은 고치지 않고, ulogin 에만 필요한 것을 여기 둔다.
+ * 원칙(research-ui GUIDELINE·GUIDE): 무채색 바탕 + 강조색 하나, 면은 선으로 나눈다.
+ * 강조색은 현재 위치·주요 동작·로고에만 쓰고, 넓은 면에는 강조색의 옅은 값(--rui-accent-soft)만
+ * 그러데이션으로 깐다. 색은 전부 토큰이다 — 팔레트 12종 × 밝게·어둡게 × 공통 테마 1·2 가 그대로 따른다.
+ *
+ *   1. 글꼴 파일 (Pretendard — CSP font-src 'self' 라 직접 둔다)
+ *   2. 공통 부품: 로고 · 버전 뱃지 · 선 아이콘 · 카드 · 헤더
+ *   3. G16 공통 로그인 틀 (RUI.login — login·register·forgot·reset·verify·mypage, v1.8.6)
+ *   4. 첫 화면(index) 머리
+ *   5. 공통 테마 2 — 조밀한 간격 · 고정폭 숫자
+ *   6. 관리자 콘솔 틀 (rui.css 층 위에서)
+ *   7. 좁은 화면
+ * ========================================================================== */
+
+/* ------------------------------------------------------------ 1. 글꼴 */
+/* SIL OFL 1.1 — Pretendard (github.com/orioncactus/pretendard). 가변 글꼴 한 파일. */
+@font-face {
+  font-family: "Pretendard Variable";
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+  src: url("PretendardVariable.woff2") format("woff2-variations"),
+       url("PretendardVariable.woff2") format("woff2");
+}
+
+/* ------------------------------------------------ 2. 공통 부품 */
+/* 선 아이콘 — rui.css G13~ 의 전역 규칙과 같은 값(공개 화면은 rui 층 밖에서도 같은 모양). */
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.ul-logo {
+  display: inline-grid; place-items: center; flex: none;
+  width: var(--rui-logo, 28px); height: var(--rui-logo, 28px);
+  border-radius: 8px;
+  background: var(--rui-accent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--rui-accent) 82%, #fff), var(--rui-accent) 55%, color-mix(in srgb, var(--rui-accent) 80%, #000));
+  color: var(--rui-accent-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .22), 0 1px 2px rgb(0 0 0 / .12);
+}
+.ul-logo svg.i { width: 58%; height: 58%; stroke-width: 2; }
+:root[data-rui-theme="2"] .ul-logo { border-radius: 6px; background: linear-gradient(135deg, var(--rui-accent), #8b5cf6); color: #fff; }
+
+.ul-ver {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px;
+  border-radius: 5px; background: var(--rui-accent-soft); color: var(--rui-accent-text);
+  font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ul-eyebrow { margin: 0 0 8px; color: var(--rui-accent-text); font-size: 12.5px; font-weight: 650; letter-spacing: .02em; display: flex; align-items: center; gap: 8px; }
+.ul-count { color: var(--rui-ink-2); font-weight: 500; }
+/* 흐린 글자(--rui-ink-3)는 공통 테마 2 · 어둡게에서 바탕 대비 4.22:1 로 4.5:1 에 못 미친다(실측).
+   글자에는 --rui-ink-2 를 쓴다. 대비를 잴 수 없는 장식(선·점)에만 ink-3 을 남긴다. */
+.site-footer { color: var(--rui-ink-2); }
+/* 배지 축 이름(계정·역할·결제)은 style.css 가 opacity .75 로 흐렸다 — 대비 3.0~4.4:1.
+   흐림 대신 굵기로 가른다. */
+.badge .badge-axis { opacity: 1; font-weight: 500; }
+/* 표 머리 글자 크기 토큰(--rui-th-fs) — kv 표의 머리 칸도 같게(RUI.audit 「표 머리 크기」). */
+table.kv th { font-size: var(--rui-th-fs, 12px); }
+
+/* 카드 = 바탕 위에 뜬 흰 면(rui .panel 과 같은 값). v1.8.2 는 바탕과 거의 같은 --rui-sunken 이었다. */
+.card { background: var(--rui-surface, var(--bg-elev)); border-color: var(--rui-line); border-radius: var(--rui-r-lg, var(--radius)); }
+.card .card { background: var(--rui-sunken, var(--card)); }
+
+.site-header .brand { gap: 10px; font-size: var(--rui-title-fs, 15px); letter-spacing: -.01em; }
+.site-header nav { gap: 4px; }
+.site-header .icon-btn { width: 32px; height: 32px; }
+
+.icon-btn svg.i { width: 16px; height: 16px; }
+
+/* 화면 설정 대화상자 안의 RUI.picker (공개 화면) */
+.ul-pick-modal { max-width: 560px; }
+.ul-pick-note { margin: 0 0 var(--sp-3); }
+.pick section { padding: 0; }
+.pick > section + section { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
+.seg button.on { background: var(--rui-accent-soft); color: var(--rui-accent-text); border-color: var(--rui-accent); }
+.swatches i { border: 0; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .12); }
+
+.btn-primary { box-shadow: inset 0 1px 0 rgb(255 255 255 / .16), 0 1px 2px rgb(0 0 0 / .12); }
+
+/* ------------------------------- 3. G16 공통 로그인 틀 (RUI.login, v1.8.6) */
+/* GUIDELINE 4-2장: 왼쪽 시스템 면 + 오른쪽 로그인 칸은 `RUI.login()` 이 그리고 rui.css(rui 층)가 칠한다.
+   login 은 부품의 폼을 그대로 쓰고, register·forgot·reset·verify·mypage 는 같은 틀의 폼 자리에
+   자기 카드(#ul-pane)를 넣는다(ulogin-shell.js). 이 절이 하는 일은 셋이다.
+     (1) 부품이 그린 요소는 **rui 층 값 그대로** — 층 밖의 style.css(label·input·.btn·h1 …)가 덮지 못하게 되돌린다.
+         ulogin 이 넣은 요소(.ul-own 과 그 안)는 되돌리지 않는다 — style.css 로 그린다.
+     (2) 층(ul-fix)으로 부품 배치를 조금 넓힌다 — 오른쪽 칸에 둘 이상 설 때 가운데로 모으기, mypage 넓은 칸.
+     (3) ulogin 고유 요소의 모양 — 로그인 칸과 같은 크기(입력·버튼 42px, 제목 22px). 색은 전부 토큰. */
+.ul-auth-body { background: var(--rui-bg); }
+
+.ul-rui .rui-login,
+.ul-rui .rui-login *:not(.ul-own):not(.ul-own *) { all: revert-layer; }
+.ul-rui [hidden] { display: none !important; }
+
+@layer ul-fix {
+  .ul-rui .rui-login-main { align-content: center; gap: 16px; }
+  .ul-rui.ul-wide .rui-login-main { place-items: start center; align-content: start; }
+  /* 오른쪽 칸이 화면보다 길 때(가입 폼·마이페이지) 왼쪽 시스템 면이 같이 늘어 소개가 화면 밖으로 밀리지 않게 */
+  @media (min-width: 861px) {
+    .ul-rui .rui-login-brand { position: sticky; top: 0; align-self: start; height: 100vh; box-sizing: border-box; overflow: hidden auto; }
+  }
+}
+
+/* 로그인 칸 안의 ulogin 요소 */
+.ul-rui .ul-sso-note { margin: -6px 0 0; color: var(--rui-ink-2); font-size: 13px; line-height: 1.55; }
+.ul-rui .ul-sso-note strong { color: var(--rui-ink); font-weight: 650; }
+.ul-rui .ul-login-banner:empty { display: none; }
+.ul-rui .ul-login-banner { display: grid; gap: 8px; }
+.ul-rui .ul-login-banner .alert { margin: 0; font-size: 13px; }
+.ul-rui .ul-login-checks { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--rui-ink-2); font-size: 13px; }
+.ul-rui .ul-login-checks .text-muted { color: var(--rui-ink-2); }
+.ul-rui .ul-login-checks > * + * { margin-top: 0; }   /* style.css .check-list 의 세로 간격 — 가로로 놓으므로 뗀다 */
+.ul-rui #cooldown-note { margin: -4px 0 0; color: var(--rui-ink-2); font-size: 12.5px; }
+.ul-rui .ul-login-links { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; margin: -6px -10px -8px; }
+.ul-rui .ul-login-site { margin: -8px 0 0; color: var(--rui-ink-2); font-size: 12px; }
+.ul-rui .ul-login-sub,
+.ul-rui .ul-login-alt { width: min(360px, 100%); }
+.ul-rui .ul-login-sub { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--rui-line); }
+.ul-rui .ul-login-sub h2 { margin: 0; color: var(--rui-ink); font-size: 15px; font-weight: 650; }
+.ul-rui .ul-login-sub p { margin: 0; }
+.ul-rui .ul-login-alt.card { width: min(440px, 100%); padding: 0; background: transparent; border: 0; box-shadow: none; }
+
+/* 폼 자리에 들어간 화면 카드(#ul-pane) — 로그인 칸과 같은 폭·크기. 흰 카드 하나만 있는 옛 화면을 두지 않는다
+   (G16 「넣지 않는 것」) — 카드 껍데기를 걷고 선으로만 나눈다. mypage(.ul-wide)는 내용이 많아 카드를 남긴다. */
+.ul-rui .ul-pane { display: grid; gap: 16px; width: min(400px, 100%); min-width: 0; }
+.ul-rui.ul-wide .ul-pane { width: min(1000px, 100%); }
+.ul-rui:not(.ul-wide) .ul-pane .card { margin: 0; padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+/* 보이는 카드끼리만 선으로 나눈다 — 숨긴 카드(가입 차단 안내 등) 뒤의 첫 카드 위에 선이 생기지 않게 */
+.ul-rui:not(.ul-wide) .ul-pane .card:not([hidden]) ~ .card:not([hidden]) { padding-top: 20px; border-top: 1px solid var(--rui-line); }
+.ul-rui:not(.ul-wide) .ul-pane .card-head { margin: 0 0 14px; padding: 0; border: 0; }
+.ul-rui:not(.ul-wide) .ul-pane .card-body { padding: 0; }
+.ul-rui:not(.ul-wide) .ul-pane .card-foot { margin-top: 14px; padding: 0; border: 0; justify-content: space-between; }
+.ul-rui .ul-pane .card-head h1 { margin: 0; color: var(--rui-ink); font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.ul-rui .ul-pane .card-head h2 { font-size: 15px; }
+.ul-rui:not(.ul-wide) .ul-pane label { color: var(--rui-ink-2); font-size: 12.5px; font-weight: 600; }
+.ul-rui:not(.ul-wide) .ul-pane label.check { color: var(--rui-ink); font-size: 13px; font-weight: 400; }
+.ul-rui:not(.ul-wide) .ul-pane input[type="text"], .ul-rui:not(.ul-wide) .ul-pane input[type="password"],
+.ul-rui:not(.ul-wide) .ul-pane input[type="email"], .ul-rui:not(.ul-wide) .ul-pane input[type="tel"] { min-height: 42px; font-size: 14px; }
+.ul-rui:not(.ul-wide) .ul-pane .btn-primary { min-height: 42px; font-size: 14px; }
+.ul-rui .ul-pane > .rui-login-help { margin: 0; color: var(--rui-ink-2); font-size: 12.5px; line-height: 1.55; }
+.ul-rui .ul-pane-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.ul-rui .ul-pane-bar .who { color: var(--rui-ink-2); font-size: 13px; }
+
+/* 도구 줄로 옮겨진 「로그인」 링크(옛 머리줄) — 부품의 .btn(rui 층) 모양 그대로 */
+.ul-rui .rui-login-tools { align-items: center; }
+
+/* 「범용 로그인으로 들어가는 시스템」 목록 — 첫 화면(index) 머리가 쓴다(theme-ui.js fillSystems) */
+.ul-brand-sys-h { display: flex; align-items: baseline; gap: 6px; margin: 0 0 10px; color: var(--rui-ink-2); font-size: 12.5px; font-weight: 650; }
+.ul-sys-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ul-sys-item {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--rui-line); border-radius: var(--rui-r, 8px);
+  background: var(--rui-surface);
+}
+.ul-sys-ic { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--rui-accent-soft); color: var(--rui-accent-text); }
+.ul-sys-tx { display: grid; min-width: 0; }
+.ul-sys-tx b { color: var(--rui-ink); font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ul-sys-tx small { color: var(--rui-ink-2); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+
+/* ------------------------------------------------ 4. 첫 화면 머리 */
+.ul-hero {
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 32px; align-items: center;
+  margin: 0 0 24px; padding: 36px;
+  border: 1px solid var(--rui-line); border-radius: var(--rui-r-lg, 12px);
+  background-color: var(--rui-surface);
+  background-image:
+    radial-gradient(70% 90% at 0% 0%, var(--rui-accent-soft) 0%, transparent 65%),
+    radial-gradient(60% 80% at 100% 100%, var(--rui-accent-soft) 0%, transparent 70%);
+  box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 20px 48px -24px rgb(0 0 0 / .18);
+}
+.ul-hero h1 { margin: 0 0 10px; font-size: clamp(22px, 2.6vw, 30px); letter-spacing: -.025em; line-height: 1.3; }
+.ul-hero .sub { margin: 0 0 20px; color: var(--rui-ink-2); font-size: 14.5px; max-width: 52ch; }
+.ul-hero-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ------------------------------------- 5. 공통 테마 2 — 조밀 · 고정폭 숫자 */
+:root[data-rui-theme="2"] .card { padding: 16px; }
+:root[data-rui-theme="2"] .btn { min-height: 32px; padding: 7px 14px; font-size: 13px; }
+:root[data-rui-theme="2"] .btn-sm { min-height: 26px; padding: 3px 8px; font-size: 12px; }
+:root[data-rui-theme="2"] .btn-lg { min-height: 40px; font-size: 14px; }
+:root[data-rui-theme="2"] input[type="text"], :root[data-rui-theme="2"] input[type="password"],
+:root[data-rui-theme="2"] input[type="email"], :root[data-rui-theme="2"] input[type="search"],
+:root[data-rui-theme="2"] input[type="number"], :root[data-rui-theme="2"] select,
+:root[data-rui-theme="2"] textarea { padding: 6px 10px; font-size: 13px; }
+:root[data-rui-theme="2"] table.table th, :root[data-rui-theme="2"] table.table td { padding: 7px 12px; }
+:root[data-rui-theme="2"] .num, :root[data-rui-theme="2"] td.num, :root[data-rui-theme="2"] .stat .stat-value,
+:root[data-rui-theme="2"] .mono { font-family: var(--rui-mono, var(--font-mono)); }
+:root[data-rui-theme="2"] .stat { padding: 12px 14px; }
+:root[data-rui-theme="2"] .stat .stat-value { font-size: 20px; letter-spacing: -.03em; }
+:root[data-rui-theme="2"] .ul-hero { padding: 24px; }
+
+/* ------------------------------------------ 6. 관리자 콘솔 틀 (rui 층 위) */
+/* 틀(왼쪽 메뉴·위쪽 띠·서랍·바로 가기 목록)은 rui.css 가 그린다. 층 밖의 style.css 요소 규칙
+   (a 색·밑줄, h2·p 여백, .icon-btn …)이 덮지 못하게 rui 층 값으로 되돌린다.
+   .spinner 는 로그아웃 버튼의 setBusy() 표시라 style.css 값을 남긴다. */
+.ul-admin .side, .ul-admin .side *:not(.spinner),
+.ul-admin .main-bar, .ul-admin .main-bar *,
+.ul-admin .mobile-bar, .ul-admin .mobile-bar *,
+.ul-admin .ul-drawer-host, .ul-admin .ul-drawer-host *,
+.ul-admin .rui-sys-pop, .ul-admin .rui-sys-pop * { all: revert-layer; }
+/* 화면 설정 견본 색은 RUI 가 인라인 CSSOM 으로 넣는다 — 위 규칙과 무관(인라인이 이긴다). */
+
+.ul-admin-body { background: var(--rui-bg); }
+.ul-admin .ul-view {
+  display: block; max-width: 1560px; margin: 0 auto;
+  padding: 24px 32px 48px; line-height: 1.6;
+}
+.ul-admin #tabbar { display: none; }        /* 탭 버튼은 왼쪽 메뉴가 대신한다(admin-shell.js) */
+.ul-admin .ul-view .page-head { align-items: flex-end; margin-bottom: 20px; }
+.ul-admin .ul-view .page-head h1 { margin: 0; font-size: var(--rui-h1-fs); font-weight: var(--rui-h1-w, 700); letter-spacing: -.02em; }
+.ul-admin .ul-view .page-head .sub { margin-top: 2px; color: var(--rui-ink-2); }
+
+/* 카드 = rui .panel 모양: 머리줄에 선 하나. 관리자 콘솔의 카드는 전부 card-head + card-body 다. */
+.ul-admin .ul-view .card { padding: 0; }
+.ul-admin .ul-view .card + .card { margin-top: 16px; }
+.ul-admin .ul-view .card-head { margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--rui-line); }
+.ul-admin .ul-view .card-head h2, .ul-admin .ul-view .card-head h3, .ul-admin .ul-view .card-head h4 { font-size: var(--rui-h2-fs, 14px); font-weight: 650; }
+.ul-admin .ul-view .card-body { padding: 16px; }
+.ul-admin .ul-view .card-body > h3 { font-size: 13px; color: var(--rui-ink-2); font-weight: 650; }
+.ul-admin .ul-view .stat { background: var(--rui-surface); border-radius: var(--rui-r); }
+.ul-admin .ul-view .card .card { background: var(--rui-surface); }
+.ul-admin .ul-view .site-footer { border-top: 0; margin-top: 24px; color: var(--rui-ink-2); }
+:root[data-rui-theme="2"] .ul-admin .ul-view { padding: 20px 24px 40px; }
+:root[data-rui-theme="2"] .ul-admin .ul-view .card { padding: 0; }
+:root[data-rui-theme="2"] .ul-admin .ul-view .card-head { padding: 8px 12px; }
+:root[data-rui-theme="2"] .ul-admin .ul-view .card-body { padding: 12px; }
+
+/* ------------------------------------------------------- 7. 좁은 화면 */
+@media (max-width: 860px) {
+  .ul-rui .ul-pane { padding-top: 16px; }
+  .ul-hero { grid-template-columns: minmax(0, 1fr); padding: 20px; gap: 20px; }
+  .ul-admin .ul-view { padding: 20px 16px 48px; }
+}
+@media (max-width: 480px) {
+  .ul-sys-list { grid-template-columns: minmax(0, 1fr); }
+  .ul-rui:not(.ul-wide) .ul-pane .card-foot { flex-direction: column; align-items: flex-start; }
+}
+
+/* ------------------------------------------- 8. 표 — 키-값 · 목록 (v1.8.11) */
+/* 사용자 지시(v1.8.11): 카드 안 「라벨 | 값」 표의 테두리·칸 줄을 없앤다.
+   키-값(table.kv — 마이페이지 내 정보·탈퇴, 관리자 회원 상세·시크릿·계정 연결)은 줄 없는 2열 정의 목록:
+   라벨은 작은 흐린 글씨, 값은 본문, 행 간격으로만 구분한다. 바깥 상자(.table-wrap)도 걷는다.
+   목록 표(table.table)는 표를 두되 세로줄·바깥 상자 없이 옅은 가로줄만 둔다.
+   공용 테마 파일은 건드리지 않는다 — 이 파일(ulogin 전용)만. */
+.table-wrap:has(> table.kv) { border: 0; border-radius: 0; background: transparent; overflow: visible; }
+table.kv { width: 100%; border-collapse: separate; border-spacing: 0; }
+table.kv th, table.kv td { border: 0; vertical-align: baseline; }
+table.kv th {
+  width: 160px; padding: 6px 16px 6px 0;
+  color: var(--rui-ink-2); font-size: var(--rui-th-fs, 12px); font-weight: 500; white-space: nowrap;
+}
+table.kv td { padding: 6px 0; color: var(--rui-ink); overflow-wrap: anywhere; }
+table.kv tr:first-child th, table.kv tr:first-child td { padding-top: 0; }
+table.kv tr:last-child th, table.kv tr:last-child td { padding-bottom: 0; }
+:root[data-rui-theme="2"] table.kv th, :root[data-rui-theme="2"] table.kv td { padding-top: 4px; padding-bottom: 4px; }
+@media (max-width: 560px) {
+  table.kv, table.kv tbody, table.kv tr, table.kv th, table.kv td { display: block; width: auto; }
+  table.kv th { padding: 8px 0 0; white-space: normal; }
+  table.kv td { padding: 2px 0 0; }
+  table.kv tr:first-child th { padding-top: 0; }
+}
+
+.table-wrap:has(> table.table) { border: 0; border-radius: 0; background: transparent; }
+table.table th, table.table td { border-left: 0; border-right: 0; border-bottom: 1px solid var(--rui-line); }
+table.table thead th { background: transparent; border-bottom-color: var(--rui-line-strong); }
+
+/* ------------------------------------------ 8. 지표 줄 (v1.9.3 · statStrip)
+   섹션 하나 = 패널 하나. 칸은 얇은 세로선으로만 나눈다. 0 은 흐리게, 0 이 아닌 값만 진하게.
+   색은 is-bad(실패·침해 의심이 1 이상)일 때만. 색 왼쪽 띠는 쓰지 않는다. */
+.ss-panel { background: var(--rui-surface, var(--card)); border: 1px solid var(--rui-line, var(--border)); border-radius: var(--rui-r, 8px); margin: 0 0 12px; }
+.ss-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 10px 16px 0; }
+.ss-title { margin: 0; font-size: 13px; font-weight: 650; color: var(--rui-ink-2, var(--muted)); }
+.ss-hint { font-size: 12px; color: var(--rui-ink-3, var(--muted)); }
+.ss-clip { overflow: hidden; padding: 6px 0 10px; }
+.ss-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); margin-left: -1px; row-gap: 12px; }
+.ss-cell { padding: 4px 16px; border-left: 1px solid var(--rui-line, var(--border)); min-width: 0; }
+.ss-label { display: block; font-size: 12px; line-height: 1.4; color: var(--rui-ink-2, var(--muted)); word-break: keep-all; }
+.ss-value { display: block; margin-top: 2px; font-size: 26px; line-height: 1.2; font-weight: 650; letter-spacing: -.02em;
+  color: var(--rui-ink, var(--fg)); font-variant-numeric: tabular-nums; }
+.ss-cell.is-zero .ss-value { font-weight: 400; color: var(--rui-ink-3, var(--muted)); opacity: .75; }
+.ss-cell.is-bad .ss-value { color: var(--rui-bad, var(--danger)); }
+.ss-i { display: inline-block; margin-left: 4px; font-size: 12px; line-height: 1; color: var(--rui-ink-3, var(--muted)); cursor: help; border-radius: 50%; }
+.ss-i:hover, .ss-i:focus-visible { color: var(--rui-ink, var(--fg)); outline: 2px solid var(--rui-accent, var(--primary)); outline-offset: 1px; }
+@media (max-width: 768px) {
+  .ss-row { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+  .ss-cell { padding: 4px 12px; }
+  .ss-value { font-size: 22px; }
+}
+
+/* ------------------------------------------ 9. 접근 권한 행렬·그룹 (v1.10.0)
+   표 선은 가로 구분선만. 칸은 버튼이고 단계는 글자 굵기와 색 한 가지로만 구분한다.
+   행렬은 .pf-mx-wrap 안에서만 가로로 스크롤한다(페이지 가로 스크롤 없음). */
+.pf-seg { gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
+.pf-back, .pf-legend { margin: 0 0 8px; }
+.pf-mx-wrap { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+table.pf-mx { width: max-content; min-width: 100%; }
+table.pf-mx th, table.pf-mx td { vertical-align: top; }
+table.pf-mx .pf-mx-first { position: sticky; left: 0; z-index: 1; background: var(--rui-surface, var(--bg)); min-width: 128px; max-width: 168px; text-align: left; font-weight: 400; overflow-wrap: anywhere; }
+.pf-mx-svc { font: inherit; font-weight: 600; text-align: left; }
+.pf-mx-td { padding: 2px 4px; min-width: 104px; }
+.pf-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 5px 8px; border: 1px solid transparent; border-radius: var(--rui-r, 6px); background: transparent; color: var(--rui-ink, var(--fg)); font: inherit; text-align: left; cursor: pointer; }
+.pf-cell:hover { border-color: var(--rui-line-strong, var(--border)); }
+.pf-cell:focus-visible { outline: 2px solid var(--rui-accent, var(--primary)); outline-offset: 1px; }
+.pf-cell-lv { font-size: 13px; font-weight: 600; }
+.pf-cell[data-level="none"] .pf-cell-lv { font-weight: 400; color: var(--rui-ink-3, var(--muted)); }
+.pf-cell[data-level="view"] .pf-cell-lv { font-weight: 500; }
+.pf-cell[data-level="admin"] .pf-cell-lv { color: var(--rui-accent, var(--primary)); }
+.pf-cell-src, .pf-cell-until { font-size: 11px; line-height: 1.35; color: var(--rui-ink-3, var(--muted)); }
+.pf-cell[data-kind="override"] .pf-cell-src { color: var(--rui-ink-2, var(--fg)); font-weight: 600; }
+.badge-emergency { margin-left: 4px; }
+@media (max-width: 768px) {
+  table.pf-mx .pf-mx-first { min-width: 96px; max-width: 120px; }
+  .pf-mx-td { min-width: 92px; }
+}

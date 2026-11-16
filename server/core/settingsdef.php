@@ -48,7 +48,7 @@ if (!function_exists('settings_defs')) {
      * 리더 판정 D-40 으로 `auth_code_ttl` 을 12번째로 **맨 뒤에 추가**했다 — 중간에 끼우면
      * 기존 11개의 `items` 인덱스가 밀려 관리자 화면의 표 순서가 바뀐다.
      * v1.4.0 후속으로 `secret_access_log` 를 **13번째로 맨 뒤에** 더했다. 같은 규칙이다.
-     * **새 키는 언제나 맨 뒤다.** 지금 total 은 13 이다.
+     * **새 키는 언제나 맨 뒤다.** 지금 total 은 16 이다(v1.9.0 이 plat.* 3개를 맨 뒤에 더했다).
      */
     function settings_defs(): array
     {
@@ -83,6 +83,11 @@ if (!function_exists('settings_defs')) {
             // 폴백 상수 SECRET_ACCESS_LOG 의 정의와 기본값(true)의 근거는 core/bootstrap.php
             // 의 가드 블록에 있다. logger.php 도 같은 상수를 폴백으로 읽는다.
             'secret_access_log'    => ['bool',   '시크릿 전달 감사 기록',        'SECRET_ACCESS_LOG',    null, null,     null,             null],
+            // v1.9.0 (설계 116 §3) — 14·15·16번째, **맨 뒤에.** 폴백 상수는 core/bootstrap.php 가드 블록.
+            // `audit.chain_head` 는 여기 넣지 않는다(내부 값 — 관리자 화면 비노출).
+            'plat.enabled'              => ['bool', '통합로그인 플랫폼 사용(로그·감사·설정·테이블)', 'PLAT_ENABLED',              null, null, null, null],
+            'plat.log_retention_days'   => ['int',  '플랫폼 로그 보존(일)',                        'PLAT_LOG_RETENTION_DAYS',   1,    365,  null, null],
+            'plat.audit_retention_days' => ['int',  '플랫폼 감사 보존(일)',                        'PLAT_AUDIT_RETENTION_DAYS', 90,   3650, null, null],
         ];
     }
 }
@@ -150,6 +155,10 @@ if (!function_exists('admin_settings_rows_for_update')) {
      *
      * 잠금은 트랜잭션 수명과 같다 — 고아 잠금이 남지 않는다(설계가 잠금 파일·
      * 잠금 테이블을 기각한 이유가 그것이다).
+     *
+     * v1.8.0 — SQLite 에는 `FOR UPDATE` 문법이 없다. `sql_for_update()` 가 그 경로에서 ''
+     * 를 돌려주고, 대신 `db_tx()` 가 `BEGIN IMMEDIATE` 로 **DB 전체를** 직렬화한다.
+     * 「없는 키의 갭」까지 막는다는 성질은 그쪽이 더 강하게 지킨다(설계 E-4).
      */
     function admin_settings_rows_for_update(array $keys): array
     {
@@ -159,7 +168,7 @@ if (!function_exists('admin_settings_rows_for_update')) {
         $ph  = implode(',', array_fill(0, count($keys), '?'));
         $out = [];
         foreach (db_all('SELECT skey, svalue, vtype, label, updated_at FROM ' . T_SETTINGS
-            . ' WHERE skey IN (' . $ph . ') FOR UPDATE', $keys) as $r) {
+            . ' WHERE skey IN (' . $ph . ')' . sql_for_update(), $keys) as $r) {
             $out[(string) $r['skey']] = $r;
         }
         return $out;

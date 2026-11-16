@@ -57,6 +57,36 @@ t('every response field a server endpoint produces has a consumer (D-181 rule 1)
         // --- OAuth 관례 필드. 클라이언트가 이름으로 읽지 않는다 ---
         'token_type',          // 항상 "Bearer". ulogin-client.js 가 상수로 취급한다
         'refresh_expires_in',  // refresh_token 수명. 클라이언트는 401 을 보고 갱신한다
+
+        // --- **연동 앱이 읽는 필드.** ulogin 의 화면에는 소비자가 없는 것이 맞다 ---
+        // `issued_via` (api/auth/exchange.php, v1.7.0 수정 라운드 / 감사 M17-4):
+        //   'password' | 'session'. 이 code 가 비밀번호를 받고 나왔는가, 기존 쿠키
+        //   세션에서 조용히 나왔는가. **ulogin 자신의 화면은 exchange 를 부르지 않는다** —
+        //   부르는 것은 연동 앱이고, 이 값의 용도가 바로 그 앱의 재인증(step-up) 검증이다.
+        //   `prompt=login` 처리는 `login.html` 의 JS 한 줄이라 URL 조작으로 사라지므로,
+        //   **보증은 서버가 말하는 사실로만 성립한다.**
+        //   >> **소비자는 배정됐다. 화면이 아닐 뿐이다**(D-172):
+        //      `AI_INTEGRATION_GUIDE.md` 의 「재인증이 필요하면 `prompt=login` 을 보내고
+        //      `issued_via === 'password'` 를 확인하라」 — **integrator 담당, 같은 라운드.**
+        //   >> 같은 범주의 선례가 바로 위 두 줄(`token_type`·`refresh_expires_in`)이다.
+        'issued_via',
+
+        // --- v1.8.4 계정 연결 — **다른 시스템의 서버가 읽는 필드.** ulogin 화면에는 소비자가 없는 것이 맞다 ---
+        // `account_link` (exchange·session, 설계 92 S-5): 연결된 로컬 계정 | null | 키 없음(옛 서버).
+        //   소비자: 각 시스템의 SSO 콜백(office·manager·learning·research 선구현, 개명 전 aim·alc·rsa, D-331) + AI_INTEGRATION_GUIDE.md S절(integrator).
+        'account_link',
+        // `link_events.php` 피드 3키(S-4). 부르는 쪽은 시스템 서버의 주기 작업이다.
+        'events',
+        'next_after',
+        'has_more',
+
+        // --- v1.9.0 플랫폼 — **다른 시스템의 서버가 읽는 필드**(설계 116 §0-7·§0-8, 계약 116s0 발송, D-354) ---
+        //   소비자: 각 시스템의 스풀 flush 작업(§0-5 표) + examples/platform/* · AI_INTEGRATION_GUIDE.md 플랫폼 절(integrator).
+        'receipt',    // audit: 체인 위치·해시 — 시스템이 로컬 감사 저장소에 같이 적는다
+        'redacted',   // logs·audit: 0 이 아니면 그쪽 마스킹을 고쳐라
+        'rejected',   // logs·audit: 항목별 거절 사유
+        // health 의 감사 체인 판정 — 모니터링·배포 절차가 읽는다(위 health 묶음과 같은 성격)
+        'audit_chain_ok',
     );
     assert_clean(
         chk_unconsumed_response_fields($ROOT, $allowUnconsumed),
@@ -196,6 +226,11 @@ t('every .data.X the front end reads is a field some server response carries', f
 
     $bad = array();
     foreach (ck_front_files($ROOT) as $f) {
+        // 공용 research-ui 원본(바이트 고정, t_60)은 이 서버의 API 가 아니라 **다른 시스템의 봉투**도 읽는다.
+        // G18 의 RUI.updates 가 `/version.json` 응답에서 `j.version || j.data.version` 을 본다(v1.8.7). 우리 version.json 은 앞쪽 형태다.
+        if (substr(h_rel($f, $ROOT), -strlen('assets/rui-theme.js')) === 'assets/rui-theme.js') {
+            continue;
+        }
         $s = h_js_strip_comments(h_read($f));
         if (!preg_match_all('~\.data\.([a-zA-Z_][a-zA-Z0-9_]*)~', $s, $m)) {
             continue;

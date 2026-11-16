@@ -31,7 +31,7 @@
      굳는다. 그러면 새 버전을 올려도 브라우저가 서버에 묻지도 않고 옛
      ulogin-client.js 를 계속 쓴다(그 자산에는 immutable 이 걸려 있다). -->
 <meta http-equiv="Cache-Control" content="no-store">
-<title>로컬 AI 챗 — ulogin 연동 데모</title>
+<title>로컬 AI 챗 · ulogin 연동 데모</title>
 <style>
   /* 외부 앱이므로 style.css에 의존하지 않는다. 전부 이 파일 안에 있다. */
   :root {
@@ -307,7 +307,7 @@
 <!-- ?v={버전} — 자산 캐시 무효화(주 수단). 로그인 서버를 새 버전으로 갱신하면 이 값도
      바뀐다. 지우면 브라우저가 옛 ulogin-client.js 를 무기한 계속 쓴다.
      값 일괄 변경: tools/bump_asset_version.php -->
-<script src="../public/assets/ulogin-client.js?v=1.6.0"></script>
+<script src="../public/assets/ulogin-client.js?v=1.10.0"></script>
 <script>
 (function () {
   'use strict';
@@ -438,11 +438,11 @@
   if (location.protocol === 'file:') {
     showEnvWarn('file:// 로 열려 있어 동작하지 않습니다',
       '브라우저가 crypto.subtle(PKCE)과 크로스 오리진 요청을 모두 차단합니다. ' +
-      '버전 폴더에서 python -m http.server 5173 을 실행한 뒤 ' +
-      'http://localhost:5173/examples/local-ai-app.html 로 접속하세요.');
+      '버전 폴더에서 python -m http.server 5173을 실행한 뒤 ' +
+      'http://localhost:5173/examples/local-ai-app.html로 접속하세요.');
   } else if (!window.isSecureContext) {
     showEnvWarn('보안 컨텍스트가 아닙니다 (PKCE 비활성)',
-      'HTTPS 또는 http://localhost 가 아니면 crypto.subtle을 쓸 수 없어 PKCE 없이 로그인합니다. ' +
+      'HTTPS 또는 http://localhost가 아니면 crypto.subtle을 쓸 수 없어 PKCE 없이 로그인합니다. ' +
       '운영 환경에서는 반드시 HTTPS로 서비스하세요.');
   }
 
@@ -577,7 +577,7 @@
     // 흔한 실수: 설치 루트에 /server 나 /public 을 붙여 넣는다 → 파생 경로가 두 번 겹친다
     if (/\/(server|public)$/.test(next.server)) {
       $('cfgSaved').textContent =
-        '설치 루트에는 /server 나 /public 을 붙이지 마세요. 그 위 단계 주소를 넣습니다. ' +
+        '설치 루트에는 /server 나 /public을 붙이지 마세요. 그 위 단계 주소를 넣습니다. ' +
         '(입력값: ' + next.server + ')';
       return;
     }

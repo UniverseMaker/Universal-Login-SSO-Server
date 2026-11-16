@@ -23,6 +23,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../core/bootstrap.php';
 // redirect_whitelist / allowed_origins 항목 규칙과 정규화는 core/urlrules.php 가 소유한다.
 require_once __DIR__ . '/../../core/urlrules.php';
+// 서비스 삭제 시 외부 계정 스냅숏 정리(v1.8.4 설계 92 E절).
+require_once __DIR__ . '/../../core/accountlink.php';
 
 only_method('GET', 'POST', 'PUT', 'DELETE');
 
@@ -65,7 +67,14 @@ function admin_service_public(array $r, int $secretCount, int $userCount): array
         'payload_fields'        => ($payloadFields === null || $payloadFields === '')
             ? null : array_values(json_col($payloadFields)),
         'allow_register'        => (bool) $r['allow_register'],
+        // v1.9.1 - 비상 로그인 확인값 허용·유효 일수(emergency/1 1-1장). 0008 이전 DB 는 기본값
+        'emergency_allow'       => !isset($r['emergency_allow']) || (int) $r['emergency_allow'] === 1,
+        'emergency_days'        => isset($r['emergency_days']) ? (int) $r['emergency_days'] : 30,
         'status'                => (string) $r['status'],
+        // v1.8.6 — 개명 별칭(설계 104 E-1). 0006 이전 DB 에는 컬럼이 없어 null 이다.
+        'former_service_id'     => isset($r['former_service_id']) && $r['former_service_id'] !== '' ? (string) $r['former_service_id'] : null,
+        'former_until'          => iso($r['former_until'] ?? null),
+        'former_last_used_at'   => iso($r['former_last_used_at'] ?? null),
         'secret_count'          => $secretCount,
         'user_count'            => $userCount,
         'created_at'            => iso($r['created_at']),
@@ -84,7 +93,7 @@ function admin_service_public(array $r, int $secretCount, int $userCount): array
  * 정규화가 두 곳에서 갈리면 번들의 값과 DB 의 값이 문자열로 달라져 멱등이 조용히 깨진다.
  * @param mixed $v
  */
-function admin_url_list($v, string $field, string $mode): array
+function admin_url_list($v, string $field, string $mode, bool $publicClient = false): array
 {
     if ($v === null) {
         return [];
@@ -98,7 +107,7 @@ function admin_url_list($v, string $field, string $mode): array
             v_fail($field, '각 항목은 문자열이어야 합니다.');
         }
         $reason = null;
-        $norm   = url_rule_check($item, $mode, $reason);
+        $norm   = url_rule_check($item, $mode, $reason, $publicClient);   // v1.10.0 D-369 공개 클라이언트 redirect 만 사용자 지정 scheme
         if ($norm === null) {
             v_fail($field, (string) $reason);
         }
@@ -120,7 +129,7 @@ function admin_service_row(?string $serviceId): array
 {
     $sid = $serviceId === null ? '' : trim($serviceId);
     if ($sid === '') {
-        throw new AppError('VALIDATION_FAILED', 400, ['field' => 'service_id', 'message' => 'service_id 가 필요합니다.']);
+        throw new AppError('VALIDATION_FAILED', 400, ['field' => 'service_id', 'message' => 'service_id가 필요합니다.']);
     }
     $r = db_one('SELECT * FROM ' . T_SERVICES . ' WHERE service_id = ?', [$sid]);
     if ($r === null) {
@@ -153,13 +162,16 @@ if ($method === 'GET') {
     $q      = v_string($_GET, 'q', 1, 100, false);
     $status = v_enum($_GET, 'status', ['active', 'disabled'], false);
     $only   = v_string($_GET, 'service_id', 1, 64, false);
+    admin_service_id_reject_former($only);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
     list($page, $perPage, $offset) = page_params($_GET, 20);
 
     $where  = ['1 = 1'];
     $params = [];
     if ($q !== null) {
-        $like     = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
-        $where[]  = '(service_id LIKE ? OR service_name LIKE ? OR description LIKE ?)';
+        // v1.8.0 — ESCAPE 를 명시한다(설계 A30). 패턴과 절은 한 쌍이다 — core/request.php
+        $like     = like_contains($q);
+        $esc      = sql_like_escape();
+        $where[]  = '(service_id LIKE ?' . $esc . ' OR service_name LIKE ?' . $esc . ' OR description LIKE ?' . $esc . ')';
         $params[] = $like;
         $params[] = $like;
         $params[] = $like;
@@ -213,16 +225,18 @@ if ($method === 'POST') {
 
     $serviceId = (string) v_string($body, 'service_id', 3, 64, true);
     if (preg_match('/^[a-z0-9][a-z0-9\-_]{2,63}$/', $serviceId) !== 1) {
-        v_fail('service_id', '서비스 ID 는 영문 소문자·숫자로 시작하고 소문자·숫자·-·_ 3~64자여야 합니다.');
+        v_fail('service_id', '서비스 ID는 영문 소문자·숫자로 시작하고 소문자·숫자·-·_ 3~64자여야 합니다.');
     }
-    if (db_val('SELECT id FROM ' . T_SERVICES . ' WHERE service_id = ?', [$serviceId]) !== null) {
+    // v1.8.6 — 옛 id(개명 전 id)도 쓸 수 없다. 별칭이 끝난 뒤에도 그렇다(설계 104 C-4).
+    //          옛 id 를 새로 등록하면 아직 옛 설정인 시스템의 요청이 남의 서비스로 간다.
+    if (service_id_taken($serviceId) !== null) {
         throw new AppError('DUPLICATE_SERVICE_ID', 409, ['field' => 'service_id']);
     }
 
     $isConfidential = (bool) v_bool($body, 'is_confidential', false, false);
     $secretPlain    = v_string($body, 'service_secret', 8, 255, false);
     if ($isConfidential && $secretPlain === null) {
-        v_fail('service_secret', 'confidential 서비스는 service_secret 이 필요합니다.');
+        v_fail('service_secret', 'confidential 서비스는 service_secret이 필요합니다.');
     }
 
     $row = [
@@ -231,7 +245,7 @@ if ($method === 'POST') {
         'service_secret_hash'   => $secretPlain !== null ? password_hash($secretPlain, PASSWORD_DEFAULT) : null,
         'is_confidential'       => $isConfidential ? 1 : 0,
         'redirect_whitelist'    => json_encode(
-            admin_url_list(in_raw($body, 'redirect_whitelist'), 'redirect_whitelist', 'redirect'),
+            admin_url_list(in_raw($body, 'redirect_whitelist'), 'redirect_whitelist', 'redirect', !$isConfidential),
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
         ),
         'allowed_origins'       => json_encode(
@@ -244,6 +258,8 @@ if ($method === 'POST') {
         'refresh_ttl'           => (int) v_int($body, 'refresh_ttl', 300, 31536000, false, (int) REFRESH_TTL),
         'payload_fields'        => null,
         'allow_register'        => v_bool($body, 'allow_register', false, true) ? 1 : 0,
+        'emergency_allow'       => v_bool($body, 'emergency_allow', false, true) ? 1 : 0,
+        'emergency_days'        => (int) v_int($body, 'emergency_days', EM_MIN_DAYS, EM_MAX_DAYS, false, 30),
         'status'                => (string) v_enum($body, 'status', ['active', 'disabled'], false, 'active'),
         'description'           => v_string($body, 'description', 0, 255, false),
         'created_at'            => $now,
@@ -299,12 +315,14 @@ if ($method === 'POST') {
 // -----------------------------------------------------------------
 if ($method === 'PUT') {
     $body    = body_json();
-    $target  = admin_service_row(v_string($_GET, 'service_id', 1, 64, true));
+    $putSid  = v_string($_GET, 'service_id', 1, 64, true);
+    admin_service_id_reject_former($putSid);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
+    $target  = admin_service_row($putSid);
     $sid     = (string) $target['service_id'];
 
     // service_id 자체는 변경할 수 없다 (다른 테이블이 문자열 키로 참조한다)
     if (array_key_exists('service_id', $body) && (string) $body['service_id'] !== $sid) {
-        v_fail('service_id', '서비스 ID 는 변경할 수 없습니다. 새로 만들고 기존 서비스를 disabled 로 내려 주세요.');
+        v_fail('service_id', '서비스 ID는 변경할 수 없습니다. 새로 만들고 기존 서비스를 disabled로 내려 주세요.');
     }
 
     $set     = [];
@@ -331,10 +349,16 @@ if ($method === 'PUT') {
     if (array_key_exists('description', $body)) {
         $mark('description', 'description', v_string($body, 'description', 0, 255, false));
     }
+    // v1.10.0 D-369 — 사용자 지정 scheme 복귀 주소는 **공개 클라이언트(is_confidential=0)** 만. 이 요청 뒤의 값으로 판정한다.
+    $confAfter = array_key_exists('is_confidential', $body)
+        ? (bool) v_bool($body, 'is_confidential', true) : !empty($target['is_confidential']);
     if (array_key_exists('redirect_whitelist', $body)) {
         $mark('redirect_whitelist', 'redirect_whitelist', json_encode(
-            admin_url_list($body['redirect_whitelist'], 'redirect_whitelist', 'redirect'),
+            admin_url_list($body['redirect_whitelist'], 'redirect_whitelist', 'redirect', !$confAfter),
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    } elseif ($confAfter && empty($target['is_confidential'])) {
+        // confidential 로 바꾸는데 기존 목록에 사용자 지정 scheme 이 남아 있으면 거절한다(규칙이 저장값에서 깨지지 않게)
+        admin_url_list(json_col((string) ($target['redirect_whitelist'] ?? '')), 'redirect_whitelist', 'redirect', false);
     }
     if (array_key_exists('allowed_origins', $body)) {
         $mark('allowed_origins', 'allowed_origins', json_encode(
@@ -360,6 +384,12 @@ if ($method === 'PUT') {
     }
     if (array_key_exists('status', $body)) {
         $mark('status', 'status', v_enum($body, 'status', ['active', 'disabled'], true));
+    }
+    if (array_key_exists('emergency_allow', $body)) {
+        $mark('emergency_allow', 'emergency_allow', v_bool($body, 'emergency_allow', true) ? 1 : 0);
+    }
+    if (array_key_exists('emergency_days', $body)) {
+        $mark('emergency_days', 'emergency_days', v_int($body, 'emergency_days', EM_MIN_DAYS, EM_MAX_DAYS, true));
     }
     if (array_key_exists('payload_fields', $body)) {
         if ($body['payload_fields'] === null) {
@@ -401,7 +431,7 @@ if ($method === 'PUT') {
         $hasHash = ($target['service_secret_hash'] !== null && $target['service_secret_hash'] !== '')
             || $secretPlain !== null;
         if ($newConf && !$hasHash) {
-            v_fail('service_secret', 'confidential 로 전환하려면 service_secret 이 필요합니다.');
+            v_fail('service_secret', 'confidential로 전환하려면 service_secret이 필요합니다.');
         }
         $mark('is_confidential', 'is_confidential', $newConf ? 1 : 0);
     }
@@ -416,6 +446,11 @@ if ($method === 'PUT') {
         $logId = admin_log_write($adminId, 'service.update', 'service', $sid,
             $before === [] ? null : $before, $after === [] ? null : $after,
             v_string($body, 'reason', 0, 255, false));
+    }
+
+    // v1.9.1 - 허용을 끄거나 서비스를 비활성화하면 그 서비스의 비상 확인값을 폐기
+    if (in_array('emergency_allow', $changed, true) || in_array('status', $changed, true)) {
+        em_reconcile_service($sid);
     }
 
     $fresh = admin_service_row($sid);
@@ -433,7 +468,9 @@ if ($method === 'PUT') {
 // DELETE — 삭제 (계약 §8-14)
 // -----------------------------------------------------------------
 $in     = array_merge(body_json(), $_GET);
-$target = admin_service_row(v_string($in, 'service_id', 1, 64, true));
+$delSid = v_string($in, 'service_id', 1, 64, true);
+admin_service_id_reject_former($delSid);   // v1.8.6 — 관리자 API 는 옛 id 를 받지 않는다(설계 104 B-2)
+$target = admin_service_row($delSid);
 $sid    = (string) $target['service_id'];
 
 list($secretCount, $userCount) = admin_service_counts($sid);
@@ -442,18 +479,27 @@ $force   = (bool) v_bool($in, 'force', false, false);
 $confirm = v_string($in, 'confirm', 1, 64, false);
 $reason  = v_string($in, 'reason', 0, 255, false);
 
+// v1.8.6 — QA Q-3(D-347): 가입자가 0명이어도 외부 계정 스냅숏·연결이 있으면 같은 확인을 요구한다.
+// 종전에는 force 없이 연결된 외부 계정까지 지웠다(실측). 오류 코드는 기존 CONFLICT · VALIDATION_FAILED 그대로다.
+$extCount = db_table_exists(T_EXT_ACCOUNTS)
+    ? (int) db_val('SELECT COUNT(*) FROM ' . T_EXT_ACCOUNTS . ' WHERE service_id = ?', [$sid]) : 0;
+$needForce = $userCount > 0 || $extCount > 0;
+
 // 가입 사용자가 있으면 기본 거부한다 — 실수 한 번으로 복구 불가능한 손실이 난다
-if ($userCount > 0 && !$force) {
+if ($needForce && !$force) {
     throw new AppError('CONFLICT', 409, [
-        'message'      => '가입 사용자가 있는 서비스입니다. force 옵션과 확인 문구가 필요합니다.',
+        'message'      => $userCount > 0
+            ? '가입 사용자가 있는 서비스입니다. force 옵션과 확인 문구가 필요합니다.'
+            : '연결된 외부 계정이 있는 서비스입니다. force 옵션과 확인 문구가 필요합니다.',
         'user_count'   => $userCount,
         'secret_count' => $secretCount,
+        'ext_account_count' => $extCount,
     ]);
 }
-if ($userCount > 0 && ($confirm === null || !hash_equals($sid, (string) $confirm))) {
+if ($needForce && ($confirm === null || !hash_equals($sid, (string) $confirm))) {
     throw new AppError('VALIDATION_FAILED', 400, [
         'field'   => 'confirm',
-        'message' => '확인 문구가 일치하지 않습니다. 서비스 ID 를 정확히 입력해 주세요.',
+        'message' => '확인 문구가 일치하지 않습니다. 서비스 ID를 정확히 입력해 주세요.',
     ]);
 }
 
@@ -464,6 +510,8 @@ $purged = db_tx(function () use ($sid, $adminId, $reason, $target) {
         // 계약 §8-14: '유효한' 세션만 제거한다(회수 이력은 남긴다)
         'sessions'        => db_exec('DELETE FROM ' . T_SESSIONS . ' WHERE service_id = ? AND revoked_at IS NULL', [$sid]),
         'auth_codes'      => db_exec('DELETE FROM ' . T_AUTH_CODES . ' WHERE service_id = ?', [$sid]),
+        // v1.8.4 — 그 서비스의 외부 계정 스냅숏(연결 포함)·미완 plan 항목·수신 작업. 완료 사건은 남긴다.
+        'ext_accounts'    => al_purge_service($sid),
     ];
     db_exec('DELETE FROM ' . T_SERVICES . ' WHERE service_id = ?', [$sid]);
 

@@ -625,6 +625,10 @@ function live_config_php(array $c, array $override = array()): string
         'T_RATE_LIMITS' => 'rate_limits', 'T_SETTINGS' => 'settings', 'T_TERMS' => 'terms',
         'T_CONSENTS' => 'user_consents', 'T_MIGRATIONS' => 'schema_migrations',
         'T_SECRET_ACCESS' => 'secret_access_logs',
+        'T_EXT_ACCOUNTS' => 'ext_accounts', 'T_LINK_JOBS' => 'link_jobs', 'T_LINK_ITEMS' => 'link_job_items', 'T_EMERGENCY' => 'emergency',
+        'T_ACCESS_GROUPS' => 'access_groups', 'T_ACCESS_GROUP_MEMBERS' => 'access_group_members', 'T_ACCESS_GROUP_SERVICES' => 'access_group_services',
+        'T_RC_DRAFTS' => 'rc_drafts', 'T_RC_VERSIONS' => 'rc_versions', 'T_PLAT_LOGS' => 'plat_logs', 'T_PLAT_AUDIT' => 'plat_audit',
+        'T_PLAT_COLLS' => 'plat_collections', 'T_PLAT_DOCS' => 'plat_docs', 'T_PLAT_USAGE' => 'plat_usage',
     );
     foreach ($tables as $k => $suffix) {
         $s .= "define(" . var_export($k, true) . ", DB_PREFIX . " . var_export($suffix, true) . ");\n";
@@ -844,6 +848,9 @@ function live_parallel(int $n, string $method, string $path, array $opt = array(
         $procs[$i] = array(@proc_open($cmd, $desc, $pp, $tmp), $pp);
     }
     $out = array();
+    // D-339 — 무한 대기 금지. 기한을 넘긴 자식은 자기 PID 트리만 죽이고 status 0 으로 남긴다
+    // (호출자가 status 를 단언하므로 그대로 FAIL 이 된다).
+    $deadline = proc_deadline();
     foreach ($procs as $i => $pr) {
         if (!is_resource($pr[0])) {
             continue;
@@ -853,7 +860,11 @@ function live_parallel(int $n, string $method, string $path, array $opt = array(
                 @fclose($p);
             }
         }
-        proc_close($pr[0]);
+        $w = proc_wait_or_kill($pr[0], $deadline);
+        if ($w['timed_out']) {
+            $out[] = array('status' => 0, 'body' => 'HARNESS-TIMEOUT worker killed (pid ' . $w['pid'] . ')');
+            continue;
+        }
         $f = $tmp . '/out_' . $i . '.json';
         $j = is_file($f) ? json_decode((string) @file_get_contents($f), true) : null;
         $out[] = is_array($j) ? $j : array('status' => 0, 'body' => '');

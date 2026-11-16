@@ -25,8 +25,11 @@ $us   = $ctx['user_service'];
 // GET
 // ---------------------------------------------------------------------
 if (strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'GET') {
+    // v1.10.0 (설계 127 §6-2) — 콘솔의 「비상 계정으로 로그인됨」 띠용 표지. 순수 추가(본인 조회에만)
+    $meOut = serialize_user($user, $us);
+    $meOut['is_emergency'] = is_emergency_user($user);
     json_out([
-        'user'    => serialize_user($user, $us),
+        'user'    => $meOut,
         'session' => serialize_session($ctx['session'], true),
     ]);
 }
@@ -123,15 +126,15 @@ if ($hasKey('meta')) {
         $set['meta_json'] = null;
     } else {
         if (!is_array($raw)) {
-            v_fail('meta', 'meta 는 객체여야 합니다.');
+            v_fail('meta', 'meta는 객체여야 합니다.');
         }
         $enc = json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($enc === false) {
-            v_fail('meta', 'meta 를 저장할 수 없습니다.');
+            v_fail('meta', 'meta를 저장할 수 없습니다.');
         }
         // meta_json 은 TEXT(64KB). 여유를 두고 8KB 로 제한한다.
         if (strlen($enc) > 8192) {
-            v_fail('meta', 'meta 가 너무 큽니다. (8KB 이내)');
+            v_fail('meta', 'meta가 너무 큽니다. (8KB 이내)');
         }
         $set['meta_json'] = $enc;
     }

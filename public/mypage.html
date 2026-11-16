@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-rui-font data-ulogin-sysnav>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>마이페이지 · ulogin</title>
+<title>내 시스템 · 통합로그인</title>
 <!-- 캐시 정책 — 아래 ?v= 와 meta 는 성격이 다르다. 지우기 전에 읽어라.
      자산 URL 의 ?v={버전} 이 배포 반영의 **주 수단**이다. 서버 설정·mod_headers·
      프록시에 전혀 의존하지 않는다 — 버전이 바뀌면 URL 이 바뀌고, 브라우저에게는
@@ -15,44 +15,90 @@
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
 <meta http-equiv="Cache-Control" content="no-store">
-<link rel="stylesheet" href="assets/style.css?v=1.6.0">
+<!-- 공용 테마 (research-ui G23) — v1.8.12
+     공용 파일 셋(rui-theme.js · rui-tokens.css · rui.css)은 research-ui 원본을 **바이트 그대로** 복사했다.
+     ulogin 전용 보정은 따로 둔다:
+       · rui-ulogin-pre.js — rui-theme.js 보다 **먼저**. `?rui=` 인계가 SSO 쿼리·일회용 토큰을 지우지 않게
+       · rui-layer.css     — rui.css 를 cascade layer 로 불러 style.css 와의 클래스 충돌(D-236)을 푼다
+       · ulogin-theme.css  — 앱 틀(.ul-admin: 왼쪽 메뉴·위쪽 띠·본문 카드) 보정. 관리자 콘솔과 같은 규칙을 쓴다
+       · mypage.css        — 이 화면만의 모양(계정 요약 · 연결시스템 카드 격자)
+       · mypage-shell.js   — 왼쪽 메뉴·위쪽 띠를 그린다. #tabbar 의 탭 버튼을 읽어 메뉴로 보여 준다
+       · theme-ui.js       — 화면 설정(RUI.picker, 인라인 style 을 CSSOM 으로 옮긴다) · 밝기 · 버전 뱃지
+
+     v1.8.11 — 로그인 후 첫 화면은 로그인 화면(RUI.login 좌우 분할)이 아니라 **앱 틀**이다(사용자 지시:
+     「왼쪽은 로그인창이잖아」). 관리자 콘솔과 같은 계열(GUIDELINE 4-1·5장). 비밀번호 칸(보안·탈퇴)이 있어도
+     `.side`·`.main-bar` 가 있으면 RUI.audit 의 「자체 로그인 화면」 판정 대상이 아니다.
+
+     rui-theme.js 를 **스타일시트보다 먼저, head 에서** 부른다. <html> 에 data-rui-* 를 세우므로
+     첫 그리기부터 색이 맞는다(GUIDE "새 앱에 쓰기").
+
+     <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
+     글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
+     **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
+<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
+<script src="assets/rui-theme.js?v=1.10.0"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
+<link rel="stylesheet" href="assets/style.css?v=1.10.0">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
+<link rel="stylesheet" href="assets/mypage.css?v=1.10.0">
+<script src="assets/theme-ui.js?v=1.10.0" defer></script>
+<script src="assets/mypage-shell.js?v=1.10.0" defer></script>
 </head>
-<body>
-<div class="page">
+<body class="ul-admin-body">
+<!-- 앱 틀: 왼쪽 메뉴 + 위쪽 띠(관리자 콘솔과 같은 마크업). data-ul-shell 이 있으면 theme-ui.js 는 공개 화면용 버튼을 달지 않는다. -->
+<div class="rui ul-admin ul-my" data-ul-shell>
+ <div class="shell">
+  <aside class="side" aria-label="내 계정 메뉴">
+    <div class="side-head"><span class="logo" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM7 15a2 2 0 0 1 4 0M9 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM14 9h4M14 13h4"/></svg></span><span class="side-title">통합로그인</span><span class="ver" data-ul-ver title="현재 버전" hidden></span></div>
+    <nav class="nav" aria-label="내 계정 메뉴"></nav>
+    <div class="side-links" id="ul-side-links"></div>
+    <div class="side-me">
+      <span class="avatar" id="ul-avatar" aria-hidden="true"></span>
+      <div><b id="who"></b><small id="who-role">내 계정</small></div>
+      <button type="button" class="icon-btn" data-appearance aria-label="화면 설정" title="화면 설정"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+      <button type="button" class="icon-btn" id="btn-logout" aria-label="로그아웃" title="로그아웃"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"/></svg></button>
+    </div>
+  </aside>
+  <div class="main" id="main">
+    <div class="mobile-bar"><button type="button" class="icon-btn" data-nav aria-label="메뉴 열기" title="메뉴 열기"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><span class="side-title">통합로그인</span><span class="bar-sp"></span><span data-ul-sys-mobile></span></div>
+    <div class="main-bar"><span data-ul-side-btn></span><span class="bar-title" id="ul-bar-title"></span><span class="bar-sp"></span><div class="bar-acts" id="ul-bar-acts"></div></div>
 
-  <header class="site-header">
-    <a class="brand" href="index.html">ulogin</a>
-    <span class="spacer"></span>
-    <span class="who" id="who"></span>
-    <nav class="row">
-      <a class="btn btn-ghost btn-sm" id="nav-admin" href="admin.html" hidden>관리자 콘솔</a>
-      <button type="button" class="btn btn-secondary btn-sm" id="btn-logout">로그아웃</button>
-    </nav>
-  </header>
-
-  <main class="container">
+  <main class="ul-view">
 
     <!-- 부팅: GET /api/me -->
     <div id="boot" role="status" aria-live="polite"></div>
 
     <div id="app" hidden>
 
-      <!-- ================= 상단 헤더 (탭 위, 항상 표시) ================= -->
-      <section class="card" id="summary">
-        <div class="card-body">
-          <div class="page-head">
-            <div class="grow">
-              <h1 id="sum-title">마이페이지</h1>
-              <div class="sub" id="sum-ident"></div>
-            </div>
-            <div id="sum-points"></div>
+      <div class="page-head">
+        <div class="grow"><h1 id="ul-page-title">내 시스템</h1></div>
+      </div>
+
+      <!-- 탭 버튼 — 화면에서는 숨기고(ulogin-theme.css .ul-admin #tabbar) 왼쪽 메뉴가 대신한다(mypage-shell.js) -->
+      <div id="tabbar" class="tabs"></div>
+
+      <!-- ---------------- 내 시스템 (첫 화면) ---------------- -->
+      <section class="tab-panel" data-tab-panel="home" hidden>
+        <section class="ul-my-sum" id="summary" aria-label="계정 요약">
+          <span class="ul-my-av" id="sum-av" aria-hidden="true"></span>
+          <div class="ul-my-who">
+            <b class="ul-my-name" id="sum-title"></b>
+            <div class="ul-my-ident" id="sum-ident"></div>
+            <div class="ul-my-badges" id="sum-badges"></div>
           </div>
-          <div id="sum-badges"></div>
-        </div>
+          <div class="ul-my-acts">
+            <span class="ul-my-pts" id="sum-points"></span>
+            <a class="btn btn-secondary btn-sm" id="nav-admin" href="admin.html" hidden>관리 콘솔</a>
+          </div>
+        </section>
+
+        <section class="ul-my-sys" aria-labelledby="sys-h">
+          <div class="ul-my-sec"><h2 id="sys-h">연결시스템</h2></div>
+          <div class="ul-my-grid" id="sys-grid" data-ul-portal></div>
+        </section>
       </section>
 
-      <!-- ================= 탭 ================= -->
-      <div id="tabbar" class="tabs"></div>
 
       <!-- ---------------- 정보 ---------------- -->
       <section class="tab-panel" data-tab-panel="info" hidden>
@@ -61,7 +107,7 @@
           <div class="card-head">
             <h2>계정 정보</h2>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-info-reload">새로 고침</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-info-reload">새로고침</button>
           </div>
           <div class="card-body" id="info-readonly"></div>
         </div>
@@ -70,8 +116,7 @@
           <div class="card-head"><h2>정보 수정</h2></div>
           <div class="card-body">
             <p class="text-sm text-muted">
-              등급·역할·결제등급·포인트·상태·아이디·이메일은 이 폼으로 바꿀 수 없습니다.
-              이메일은 <strong>보안</strong> 탭에서 변경합니다.
+              아이디·등급·포인트 변경 불가, 이메일은 보안 메뉴에서 변경
             </p>
             <form class="form" id="form-info" novalidate>
               <div class="grid-2">
@@ -79,13 +124,13 @@
                   <label for="in-name">이름</label>
                   <input type="text" id="in-name" name="name" autocomplete="name" maxlength="80">
                   <span class="field-error"></span>
-                  <span class="hint">비우면 삭제됩니다. 80자 이내</span>
+                  <span class="hint">비우면 삭제, 80자 이내</span>
                 </div>
                 <div class="field">
                   <label for="in-nickname">닉네임</label>
                   <input type="text" id="in-nickname" name="nickname" autocomplete="nickname" maxlength="50">
                   <span class="field-error"></span>
-                  <span class="hint">비우면 삭제됩니다. 50자 이내</span>
+                  <span class="hint">비우면 삭제, 50자 이내</span>
                 </div>
                 <div class="field">
                   <label for="in-phone">연락처</label>
@@ -98,7 +143,7 @@
                   <input type="url" id="in-avatar" name="avatar_url" inputmode="url" maxlength="255"
                          placeholder="https://…">
                   <span class="field-error"></span>
-                  <span class="hint">http 또는 https 주소만 저장됩니다. 255자 이내</span>
+                  <span class="hint">http 또는 https 주소만 저장, 255자 이내</span>
                 </div>
                 <div class="field">
                   <label for="in-timezone">타임존</label>
@@ -116,7 +161,7 @@
                     <option value="America/Los_Angeles"></option>
                   </datalist>
                   <span class="field-error"></span>
-                  <span class="hint">비우면 Asia/Seoul 로 되돌아갑니다</span>
+                  <span class="hint">비우면 Asia/Seoul 적용</span>
                 </div>
                 <div class="field">
                   <label for="in-locale">언어</label>
@@ -152,7 +197,7 @@
           <div class="card-head"><h2>비밀번호 변경</h2></div>
           <div class="card-body">
             <p class="text-sm text-muted">
-              변경하면 <strong>지금 쓰고 있는 기기를 제외한</strong> 다른 모든 기기가 로그아웃됩니다.
+              변경 시 이 기기를 뺀 모든 기기 로그아웃
             </p>
             <form class="form" id="form-password" novalidate>
               <div class="field">
@@ -196,7 +241,7 @@
                 <input type="password" id="in-email-pw" name="password"
                        autocomplete="current-password" required maxlength="200">
                 <span class="field-error"></span>
-                <span class="hint">계정 회수 경로를 바꾸는 작업이므로 비밀번호를 다시 확인합니다</span>
+                <span class="hint">본인 확인용</span>
               </div>
               <div class="row end">
                 <button type="submit" class="btn btn-primary" id="btn-email-save">이메일 변경</button>
@@ -213,7 +258,7 @@
               <span>2단계 인증 사용 <span class="badge" aria-hidden="true">준비 중</span></span>
             </label>
             <p class="text-sm text-muted" id="tfa-note">
-              이 기능은 아직 제공되지 않습니다. 현재 값은 항상 “사용하지 않음”입니다.
+              준비 중인 기능
             </p>
           </div>
         </div>
@@ -226,7 +271,7 @@
           <div class="card-head">
             <h2>포인트</h2>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-points-reload">새로 고침</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-points-reload">새로고침</button>
           </div>
           <div class="card-body">
             <div id="points-stats"></div>
@@ -242,18 +287,18 @@
           <div class="card-head">
             <h2>로그인된 기기</h2>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-sessions-reload">새로 고침</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-sessions-reload">새로고침</button>
           </div>
           <div class="card-body">
             <p class="text-sm text-muted">
-              지금 유효한 세션만 표시됩니다. 낯선 기기가 있으면 종료한 뒤 비밀번호를 변경해 주세요.
+              낯선 기기는 로그아웃 후 비밀번호 변경 권고
             </p>
             <div id="sessions-list"></div>
             <div id="sessions-pager"></div>
           </div>
           <div class="card-foot">
             <button type="button" class="btn btn-danger" id="btn-logout-all">
-              모든 기기에서 로그아웃 (현재 기기 포함)
+              모든 기기에서 로그아웃
             </button>
           </div>
         </div>
@@ -265,12 +310,11 @@
           <div class="card-head">
             <h2>로그인 이력</h2>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-lg-reload">새로 고침</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-lg-reload">새로고침</button>
           </div>
           <div class="card-body">
             <p class="text-sm text-muted">
-              내 계정의 로그인 · 로그아웃 기록입니다. 모르는 기기나 IP 가 있으면
-              <strong>세션</strong> 탭에서 해당 기기를 종료하고 비밀번호를 변경해 주세요.
+              모르는 기기나 IP는 로그인 기기 메뉴에서 로그아웃 후 비밀번호 변경 권고
             </p>
             <form class="toolbar" id="form-loginlogs" novalidate>
               <div class="field">
@@ -278,11 +322,28 @@
                 <select id="lg-result" name="result">
                   <option value="">전체</option>
                   <option value="success">성공</option>
+                  <!-- v1.7.0 — 무재인증 SSO(설계 §A-6). 이미 로그인된 상태에서 다른
+                       시스템으로 넘어갈 때 비밀번호를 다시 묻지 않고 들어간 기록이다.
+                       **내 계정 이력에서 이 줄이 보이는 것이 정상**이고, 내가 한 일이
+                       아니면 바로 알아차릴 수 있어야 한다 — 동의 화면을 두지 않는 대신
+                       둔 사후 확인 수단이다.
+
+                       서버 화이트리스트(`api/me/login_logs.php` 의 `v_enum`)는 backend 가
+                       같은 라운드에 넣었다고 통지받았다. **그 파일을 열어 확인하지는
+                       않았다**(이 라운드에서 `server/` 는 backend 소유다) — QA 교차
+                       확인 대상이다. 안 들어가 있으면 이 선택지는
+                       VALIDATION_FAILED 를 받는다. -->
+                  <option value="success_silent">성공 · 자동 로그인(비밀번호 재입력 없음)</option>
+                  <!-- v1.7.0 보안 M17-3 — 자동 로그인이 **시작됐지만 끝나지 않은** 기록.
+                       사용자 어투로는 「연결되지 않음」이 정확하다. 실패가 아니다
+                       (비밀번호가 틀린 것이 아니다). 색은 중립으로 둔다. -->
+                  <option value="issued_silent">자동 로그인 시작 · 연결되지 않음</option>
                   <option value="fail_credential">실패 · 비밀번호 불일치</option>
                   <option value="fail_locked">실패 · 계정 잠김</option>
                   <option value="fail_status">실패 · 계정 상태</option>
                   <option value="fail_ratelimit">실패 · 시도 횟수 초과</option>
                   <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
+                  <option value="fail_service_access">실패 · 이 시스템 사용 권한 없음</option>
                   <option value="fail_client_auth">실패 · 연동 앱 인증</option>
                   <!-- 옵션 문구는 LOGIN_RESULT 맵과 글자 단위로 같아야 한다.
                        값 집합은 server/api/me/login_logs.php 의 v_enum 목록이 정본이다. -->
@@ -320,11 +381,11 @@
           <div class="card-head">
             <h2>가입한 서비스</h2>
             <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-services-reload">새로 고침</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-services-reload">새로고침</button>
           </div>
           <div class="card-body">
             <p class="text-sm text-muted">
-              서비스별로 등급이 다르게 적용될 수 있습니다. 아래 등급이 그 서비스에서 실제로 적용되는 값입니다.
+              서비스마다 적용 등급이 다를 수 있음
             </p>
             <div id="services-list"></div>
             <div id="services-pager"></div>
@@ -355,7 +416,7 @@
                 <label for="in-wd-reason">사유 (선택)</label>
                 <input type="text" id="in-wd-reason" name="reason" maxlength="255">
                 <span class="field-error"></span>
-                <span class="hint">255자 이내. 비워 두어도 탈퇴할 수 있습니다</span>
+                <span class="hint">255자 이내, 비워도 탈퇴 가능</span>
               </div>
               <div class="field">
                 <label for="in-wd-pw">비밀번호<span class="req" aria-hidden="true">*</span></label>
@@ -364,7 +425,7 @@
                 <span class="field-error"></span>
               </div>
               <div class="row end">
-                <button type="submit" class="btn btn-danger" id="btn-withdraw">탈퇴 진행</button>
+                <button type="submit" class="btn btn-danger" id="btn-withdraw">탈퇴</button>
               </div>
             </form>
           </div>
@@ -372,17 +433,18 @@
       </section>
 
     </div><!-- /#app -->
-
   </main>
-
-  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
+  </div>
+ </div>
 </div>
 
-<script src="assets/api.js?v=1.6.0"></script>
-<script src="assets/ui.js?v=1.6.0"></script>
+<script src="assets/api.js?v=1.10.0"></script>
+<script src="assets/ui.js?v=1.10.0"></script>
 <script>
 /* ============================================================================
- * mypage.html — 마이페이지 (탭: 정보 / 보안 / 포인트 / 세션 / 로그인 이력 / 서비스 / 탈퇴)
+ * mypage.html — 로그인 후 첫 화면 (메뉴: 내 시스템 / 내 정보 / 보안 / 포인트 / 이용 서비스 / 로그인 기기 / 로그인 이력 / 회원 탈퇴)
+ *   v1.8.11 — 앱 틀(왼쪽 메뉴·위쪽 띠, mypage-shell.js). 첫 화면은 「내 시스템」 포털(연결시스템 카드).
+ *   탭 구성·지연 로딩·API 호출은 그대로다. 탭 버튼(#tabbar)은 숨기고 왼쪽 메뉴가 그 버튼을 누른다.
  *
  * 구속 조건 (판정 번호 D-nn 의 내용은 CHANGELOG.md 가 설명한다)
  *   리더 판정 — 수정 라운드 1
@@ -495,6 +557,16 @@
    */
   var LOGIN_RESULT = {
     success: '성공',
+    /* v1.7.0 — 무재인증 SSO. 사용자 어투로는 "자동 로그인"이 정확하다. 실패가 아니다.
+       관리자 콘솔은 같은 값을 '성공 · 무음(재인증 없음)' 으로 적는다(D-37 — 두 화면의
+       어투를 일부러 다르게 쓴다). */
+    success_silent: '성공 · 자동 로그인(비밀번호 재입력 없음)',
+    /* v1.7.0 보안 M17-3 — 자동 로그인이 시작됐지만 그 시스템까지 연결되지 않은
+       기록이다. **실패가 아니다**(비밀번호가 틀린 것이 아니다). 보통은 가는 도중에
+       탭을 닫았거나 그 시스템이 요청을 받지 않은 경우다.
+       관리자 콘솔은 같은 값을 '발급 · 무음(교환 안 됨)' 으로 적는다
+       (D-37 — 두 화면의 어투를 일부러 다르게 쓴다). */
+    issued_silent: '자동 로그인 시작 · 연결되지 않음',
     fail_credential: '실패 · 비밀번호 불일치',
     fail_locked: '실패 · 계정 잠김',
     fail_status: '실패 · 계정 상태',
@@ -502,6 +574,8 @@
     /* D-46 — D-31(차단 회원 로그인 거부) 전용 값. `fail_status`(계정 자체가 정지/휴면/탈퇴)와
        원인이 다르다. 계정은 정상이고 **그 서비스만** 막힌 경우이므로 문구를 분리한다. */
     fail_service_blocked: '실패 · 서비스 이용 제한',
+    /* v1.9.0 — 관리자가 정한 시스템별 사용 권한에 걸린 경우(설계 116 §7). */
+    fail_service_access: '실패 · 이 시스템 사용 권한 없음',
     /* v1.4.0 — 연동 앱이 SSO 코드를 교환할 때 앱 자신의 자격증명(`service_secret`)이
        틀린 경우다. **회원의 비밀번호가 틀린 것이 아니다.** 내 계정 이력에 이 줄이
        보이면 내가 쓰는 앱의 설정 문제이지 내 비밀번호 문제가 아니라는 뜻이므로,
@@ -528,6 +602,12 @@
    * 이력 표에서 마우스를 올렸을 때 나오는 설명. 라벨만으로 뜻이 갈리지 않는 값에만 붙인다.
    */
   var LOGIN_RESULT_TITLE = {
+    issued_silent: '다른 시스템으로 자동 로그인이 시작됐지만 그 시스템까지 연결되지 않은 기록입니다. '
+      + '가는 도중에 창을 닫았거나 그 시스템이 요청을 받지 않은 경우입니다. 비밀번호 문제가 아닙니다. '
+      + '내가 시작한 적이 없다면 "로그인 기기" 메뉴에서 모르는 기기를 로그아웃하고 비밀번호를 바꿔 주세요.',
+    success_silent: '이미 로그인된 상태에서 다른 시스템으로 넘어가며 자동으로 로그인된 기록입니다. '
+      + '비밀번호를 다시 묻지 않았습니다. 내가 한 일이 아니라면 "로그인 기기" 메뉴에서 모르는 기기를 '
+      + '로그아웃하고 비밀번호를 바꿔 주세요.',
     fail_refresh_reuse: '이미 무효가 된 로그인 정보가 다시 사용됐습니다. 안전을 위해 이 계정의 모든 기기를 '
       + '로그아웃했습니다. 내가 한 일이 아니라면 비밀번호를 바꿔 주세요.',
     fail_refresh_revoked: '로그아웃 · 비밀번호 변경 · 세션 정리 뒤에 그 기기의 앱이 자동으로 재접속을 '
@@ -544,6 +624,13 @@
    */
   var LOGIN_RESULT_CLASS = {
     success: 'text-success',
+    /* 무음도 성공이다. 빠뜨리면 폴백이 'text-muted' 로 떨어져 성공 줄과 색이 갈린다. */
+    success_silent: 'text-success',
+    /* `issued_silent` 는 성공도 실패도 아니다 — 중립(흐림)으로 둔다.
+       초록이면 **들어간 것처럼** 보이고(실제로는 연결되지 않았다),
+       빨강이면 **탭을 닫은 것까지 경고**가 된다. 명시적으로 적는 이유는
+       폴백(`indexOf('fail')`)이 우연히 같은 값을 내기 때문이다 — 우연에 기대지 않는다. */
+    issued_silent: 'text-muted',
     logout: 'text-muted',
     fail_refresh_revoked: 'text-muted'
   };
@@ -569,18 +656,18 @@
   }
 
   /* ======================================================================
-   * 2. 상단 헤더 (탭 위, 항상 표시)
+   * 2. 계정 요약(첫 화면 위쪽) · 왼쪽 아래 계정 줄
    * ==================================================================== */
   function renderHeader() {
     var u = state.user;
     if (!u) { return; }
 
-    /* --- 사이트 헤더의 압축 표시 (640px 이하에서는 CSS 가 숨긴다) --- */
-    var who = $('#who');
-    clear(who);
-    mount(who, [
-      el('span', { class: 'mono', text: dash(u.username) })
-    ]);
+    var display = dash(u.nickname || u.name || u.username);
+
+    /* --- 왼쪽 아래 계정 줄: 아바타 · 이름 · 역할 (GUIDELINE 5-1장). 아바타는 mypage-shell.js 가 #who 첫 글자로 --- */
+    $('#who').textContent = display;
+    var roleLabels = (window.ULOGIN_LABELS && window.ULOGIN_LABELS.role) || {};
+    $('#who-role').textContent = roleLabels[u.role] || dash(u.role);
 
     /* --- 관리자 콘솔 링크: role_rank >= 10 (manager) ---
        D-36 / Q-9: 서버는 stats · users 목록 · logs?type=login 을 manager 에게 허용한다
@@ -603,25 +690,27 @@
     var navAdmin = $('#nav-admin');
     navAdmin.hidden = !(Number(u.role_rank) >= ROLE_RANK.manager);
 
-    /* --- 제목 = 닉네임(없으면 이름, 없으면 아이디) --- */
-    $('#sum-title').textContent = dash(u.nickname || u.name || u.username);
+    /* --- 이름 = 닉네임(없으면 이름, 없으면 아이디). 길면 CSS 가 말줄임 — 전체는 title 로 --- */
+    var title = $('#sum-title');
+    title.textContent = display;
+    title.title = display;
+    $('#sum-av').textContent = display.charAt(0).toUpperCase();
 
     /* --- 아이디 / 이메일 --- */
     var ident = $('#sum-ident');
     clear(ident);
     mount(ident, [
-      el('span', null, [text('아이디 '), el('span', { class: 'mono', text: dash(u.username) })]),
-      el('span', { class: 'text-muted' }, ' · '),
-      el('span', null, [text('이메일 '), el('span', { class: 'mono', text: dash(u.email) })]),
+      el('span', { class: 'mono', text: dash(u.username), title: dash(u.username) }),
+      el('span', { class: 'mono', text: dash(u.email), title: dash(u.email) }),
       u.email_verified
         ? null
-        : el('span', { class: 'badge', title: '이메일 인증이 완료되지 않았습니다.' }, ' 이메일 미인증')
+        : el('span', { class: 'badge', title: '이메일 인증 전' }, '이메일 미인증')
     ]);
 
-    /* --- 포인트 잔액 --- */
+    /* --- 포인트 잔액(작은 글씨 한 줄) --- */
     var pts = $('#sum-points');
     clear(pts);
-    mount(pts, statNode('포인트', fmtNum(u.points), null, 'primary'));
+    mount(pts, [text('포인트 '), el('b', { class: 'num', text: fmtNum(u.points) })]);
 
     /* --- 3축 등급 배지 3개 (하나로 합치지 않는다) + 상태 --- */
     var badges = $('#sum-badges');
@@ -632,6 +721,40 @@
     if (u.status && u.status !== 'active') {
       mount(badges, el('span', { class: 'badge-row' }, badge('status', u.status)));
     }
+  }
+
+  /* ======================================================================
+   * 2-1. 내 시스템 — 연결시스템 카드 격자
+   *   목록의 정본은 공용 테마의 RUI.SYSTEMS 하나다(GUIDELINE G9: 시스템마다 링크를 따로 적지 않는다).
+   *   통합로그인으로 들어가는 곳(`sso` 가 있는 항목)만, 통합로그인 자신은 빼고 보여 준다.
+   *   카드를 누르면 그 시스템 주소로 **같은 탭**에서 이동한다. 이름·설명·아이콘은 RUI 상수다.
+   *   아이콘만 RUI.icon() 의 SVG 문자열을 넣는다(상수, style 속성 없음). 글자는 전부 textContent.
+   * ==================================================================== */
+  function renderPortal() {
+    var grid = $('#sys-grid');
+    clear(grid);
+    var R = window.RUI;
+    var list = (R && Array.isArray(R.SYSTEMS))
+      ? R.SYSTEMS.filter(function (s) { return s && s.sso && s.url && s.id !== 'ulogin'; })
+      : [];
+    if (!list.length) {
+      mount(grid, emptyNode('연결된 시스템이 없습니다.', '관리자에게 시스템 연결을 요청하세요.'));
+      return;
+    }
+    list.forEach(function (s) {
+      var ic = el('span', { class: 'ul-my-ic', 'aria-hidden': 'true' });
+      ic.innerHTML = R.icon(s.icon);
+      var go = el('span', { class: 'ul-my-go', 'aria-hidden': 'true' });
+      go.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+      grid.appendChild(el('a', { class: 'ul-my-card', href: String(s.url), dataset: { sys: String(s.id) } }, [
+        ic,
+        el('span', { class: 'ul-my-tx' }, [
+          el('b', { text: String(s.name || ''), title: String(s.name || '') }),
+          el('small', { text: String(s.desc || ''), title: String(s.desc || '') })
+        ]),
+        go
+      ]));
+    });
   }
 
   /* ======================================================================
@@ -1087,10 +1210,10 @@
         it.user_agent ? sub(truncate(it.user_agent, 70)) : null
       ]);
 
-      /* 현재 기기에는 종료 버튼을 두지 않는다(스킬 규약). 로그아웃은 헤더 버튼으로. */
+      /* 현재 기기에는 종료 버튼을 두지 않는다(스킬 규약). 로그아웃은 왼쪽 아래 계정 줄의 버튼으로. */
       var actionCell = el('td', { class: 'actions' },
         it.is_current
-          ? el('span', { class: 'text-xs text-muted' }, '헤더의 로그아웃 사용')
+          ? el('span', { class: 'text-xs text-muted' }, '왼쪽 아래 로그아웃 버튼')
           : el('button', {
               type: 'button',
               class: 'btn btn-danger btn-sm',
@@ -1424,18 +1547,21 @@
   /* ======================================================================
    * 10. 탭 초기화 — 로드는 isFirstLoad === true 일 때만
    * ==================================================================== */
+  /* 첫 항목(home)이 첫 화면이다. 메뉴 묶음·아이콘은 mypage-shell.js 가 key 로 정한다 — 함께 고쳐라. */
   var TABS = [
-    { key: 'info', label: '정보' },
+    { key: 'home', label: '내 시스템' },
+    { key: 'info', label: '내 정보' },
     { key: 'security', label: '보안' },
     { key: 'points', label: '포인트' },
-    { key: 'sessions', label: '세션' },
+    { key: 'services', label: '이용 서비스' },
+    { key: 'sessions', label: '로그인 기기' },
     { key: 'loginlogs', label: '로그인 이력' },
-    { key: 'services', label: '서비스' },
-    { key: 'withdraw', label: '탈퇴' }
+    { key: 'withdraw', label: '회원 탈퇴' }
   ];
 
   function onTab(key, panel, isFirstLoad) {
     if (!isFirstLoad) { return; }      // 재진입 시 재요청하지 않는다
+    if (key === 'home') { renderPortal(); return; }   // 요청 없음(RUI.SYSTEMS 상수 + 부팅 때 받은 /api/me)
     if (key === 'info') { loadInfo(); return; }
     if (key === 'security') { loadSecurity(); return; }
     if (key === 'points') { loadPoints(1); return; }
@@ -1450,7 +1576,7 @@
    * ==================================================================== */
   function boot() {
     var host = $('#boot');
-    showLoading(host, '내 정보를 불러오는 중…');
+    showLoading(host, '불러오는 중…');
 
     apiGet('/api/me')
       .then(function (d) {
@@ -1469,7 +1595,7 @@
            여기서는 문구만 남긴다(이중 이동 금지). */
         clear(host);
         mount(host, [
-          alertNode(errorMessage(err), 'danger', '마이페이지를 열 수 없습니다'),
+          alertNode(errorMessage(err), 'danger', '내 계정 화면을 열 수 없습니다'),
           el('div', { class: 'row' }, [
             el('button', {
               type: 'button', class: 'btn btn-secondary',

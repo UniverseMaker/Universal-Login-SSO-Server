@@ -1,91 +1,146 @@
 @charset "UTF-8";
 /* ============================================================================
- * ulogin v1.0.0 — 공통 스타일 (style.css)
+ * ulogin — 공통 스타일 (style.css)
+ *
+ * ▣ v1.8.3: 아래 D-236 의 「rui.css 를 쓰지 않는다」는 **풀렸다.** rui.css(G14)는 이제
+ *   `rui-layer.css` 가 cascade layer 로 불러온다 — 층 밖인 이 파일이 특정도와 무관하게 이기므로
+ *   클래스 충돌이 없다. 관리자 콘솔 틀(왼쪽 메뉴·위쪽 띠)만 rui.css 가 그리고, 본문은 이 파일이 그린다.
+ *   화면 모양 보정은 `ulogin-theme.css`(이 파일 다음에 불러온다).
+ *
+ * ▣ v1.7.0 에서 바뀐 것: 색·글꼴·반경·높이 토큰이 **`rui-tokens.css` 참조**가 됐다.
+ *
+ *   리더 판정 D-236 — 공용 테마(`research-ui`)에서 **`rui-tokens.css` 만** 가져오고
+ *   `rui.css` 는 **쓰지 않는다.** 설계가 실측한 이유: `rui.css` 97개 클래스와
+ *   이 파일 129개 클래스가 **15개 겹친다** —
+ *     actions · btn · field · loading · num · page · page-head · row ·
+ *     spacer · stack · stat · table-wrap · tabs · toast · wide
+ *   사용 빈도는 field 70회 · btn 56회 · spacer 20회 · row 16회이고
+ *   toast/tabs/table-wrap/loading 은 `ui.js` 가 **만들어 내는** 요소다.
+ *   두 스타일시트를 나란히 불러오면 **나중에 로드된 쪽이 이긴다** — 어느 쪽도 답이 아니다.
+ *   토큰(`--rui-*`)만 받으면 이름이 겹치지 않으므로 충돌이 0 이 되고,
+ *   팔레트 12종 · 밝게/어둡게 전환은 `rui-theme.js` 가 `<html>` 속성으로 제어하므로
+ *   그대로 살아 있다.
+ *
+ *   **클래스 이름은 하나도 바꾸지 않았다.** `ui.js` 와 화면 8개가 그 이름에 묶여 있다.
  *
  * 규약
- *  - 모든 색은 CSS 변수로만 쓴다. 하드코딩 헥스는 :root / @media(dark) 블록에만 존재한다.
- *  - 라이트/다크는 prefers-color-scheme으로 자동 전환된다.
+ *  - 모든 색은 CSS 변수로만 쓴다. 화면 코드(HTML)에 `#hex` 를 넣지 않는다.
+ *  - 밝게/어둡게는 `<html data-rui-mode>` 가 가른다(`rui-theme.js` 가 head 에서 세운다).
+ *    스크립트가 막힌 환경을 위해 `prefers-color-scheme` 폴백을 아래에 따로 둔다.
  *  - 배지 3축은 색으로 구분한다: 계정등급=파랑, 역할=보라, 결제등급=초록.
+ *    **이 셋만 팔레트를 따르지 않는다** — 아래 토큰 절에 이유를 적었다.
  *  - 폼 오류는 빨간 테두리 + 필드 아래 텍스트. 색만으로 표시하지 않는다.
  *  - 표는 .table-wrap(overflow-x:auto) 안에 넣는다.
  * ========================================================================== */
 
 /* ---------------------------------------------------------------- 1. 토큰 */
+/*
+ * `var(--rui-*, 기본값)` 의 **기본값은 v1.6.0 의 라이트 팔레트 그대로**다.
+ * `rui-tokens.css` 가 못 들어오면(404·차단) 이 화면은 v1.6.0 모습으로 떨어진다.
+ * 토큰이 비어 색이 통째로 사라지는 상태를 만들지 않으려고 넣은 폴백이다.
+ */
 :root {
-  /* 기본 팔레트 (auth-ui-builder SKILL.md 규약) */
-  --bg: #ffffff;
-  --fg: #1a1a1a;
-  --muted: #6b7280;
-  --card: #f9fafb;
-  --border: #e5e7eb;
-  --primary: #2563eb;
-  --primary-fg: #ffffff;
-  --danger: #dc2626;
-  --success: #16a34a;
-  --warn: #d97706;
-  --radius: 10px;
+  /* 바탕·글자·선 — research-ui 토큰에 1:1 로 대응한다 */
+  --bg: var(--rui-bg, #ffffff);
+  --fg: var(--rui-ink, #1a1a1a);
+  --muted: var(--rui-ink-2, #6b7280);
+  --card: var(--rui-sunken, #f9fafb);
+  --border: var(--rui-line, #e5e7eb);
+  --primary: var(--rui-accent, #2563eb);
+  --primary-fg: var(--rui-accent-ink, #ffffff);
+  --danger: var(--rui-bad, #dc2626);
+  --success: var(--rui-ok, #16a34a);
+  --warn: var(--rui-warn, #d97706);
+  --radius: var(--rui-r, 10px);
 
-  /* 확장 팔레트 */
-  --bg-elev: #ffffff;
-  --card-hover: #f3f4f6;
-  --border-strong: #cbd5e1;
-  --primary-hover: #1d4ed8;
-  --primary-soft: #dbeafe;
-  --danger-hover: #b91c1c;
-  --danger-soft: #fee2e2;
-  --success-soft: #dcfce7;
-  --warn-soft: #fef3c7;
-  --info: #0284c7;
-  --info-soft: #e0f2fe;
-  --focus: #2563eb;
-  --focus-ring: rgba(37, 99, 235, 0.35);
+  --bg-elev: var(--rui-surface, #ffffff);
+  --card-hover: var(--rui-hover, #f3f4f6);
+  --border-strong: var(--rui-line-strong, #cbd5e1);
+  /* 강조색의 hover 는 research-ui 에 전용 토큰이 없다. 같은 색을 두고 밝기만
+     바꾼다(아래 6절) — 밝게에서는 어둡게, 어둡게에서는 밝게. 팔레트 12종 어디에서도
+     성립하는 방식이고 색 값을 새로 만들지 않는다. */
+  --primary-hover: var(--rui-accent, #1d4ed8);
+  --primary-soft: var(--rui-accent-soft, #dbeafe);
+  /* **강조색을 글자로 쓸 때는 이 토큰을 쓴다.** research-ui 가 그 용도로 따로 둔 값이다.
+     실측: `--rui-accent` 를 링크 글자색으로 쓰면 `lab`(연구소) 팔레트 · 밝게에서
+     바탕 대비 4.3:1 · 카드 대비 4.18:1 로 **4.5:1 에 못 미친다**(팔레트 12종 ×
+     밝기 2종 × 쌍 22개 = 528쌍을 재서 걸린 2건). `--rui-accent-text` 로 바꾸면
+     같은 조건에서 최저 5.24:1 이다. 배경·테두리로 쓰는 자리는 `--primary` 그대로다. */
+  --primary-text: var(--rui-accent-text, #2563eb);
+  --danger-hover: var(--rui-bad, #b91c1c);
+  --danger-soft: var(--rui-bad-soft, #fee2e2);
+  --success-soft: var(--rui-ok-soft, #dcfce7);
+  --warn-soft: var(--rui-warn-soft, #fef3c7);
+  /* research-ui 의 상태색은 ok·warn·bad 셋뿐이다(GUIDELINE 3장).
+     info 는 별도 상태가 아니라 "알림"이므로 강조색에 붙인다. */
+  --info: var(--rui-accent, #0284c7);
+  --info-soft: var(--rui-accent-soft, #e0f2fe);
+  --focus: var(--rui-accent, #2563eb);
+  --focus-ring: var(--rui-accent-soft, #dbeafe);
+  --skeleton: var(--rui-hover, #eceff3);
+
+  /* 아래 넷은 팔레트 색이 아니다(반투명 검정·그림자). research-ui 도 그림자는
+     토큰 없이 rgb(0 0 0 / …) 리터럴을 쓴다. 밝기별 값만 아래에서 바꾼다. */
   --overlay: rgba(15, 17, 21, 0.55);
   --shadow-sm: 0 1px 2px rgba(15, 17, 21, 0.06);
   --shadow-md: 0 4px 16px rgba(15, 17, 21, 0.10);
   --shadow-lg: 0 12px 40px rgba(15, 17, 21, 0.18);
-  --skeleton: #eceff3;
 
-  /* 배지 3축 — 계정등급(파랑) / 역할(보라) / 결제등급(초록) */
+  /* ── 배지 3축 — 계정등급(파랑) / 역할(보라) / 결제등급(초록) ──────────────
+     **계정등급·역할은 일부러 팔레트를 따르지 않는다.** 세 축을 한눈에 갈라
+     보여야 하는 것이 이 화면의 요구사항이고(auth-ui-builder 규약: "같은 색이면
+     세 축이 구분되지 않는다"), 팔레트에 맞추면 셋이 모두 강조색 계열로 수렴한다.
+     결제등급은 research-ui 의 `--rui-ok`(초록)가 팔레트와 **무관하게 고정**이라
+     그대로 쓴다. 중립 배지도 토큰으로 간다. */
   --badge-account-bg: #dbeafe;
   --badge-account-fg: #1e40af;
   --badge-account-border: #93c5fd;
   --badge-role-bg: #ede9fe;
   --badge-role-fg: #5b21b6;
   --badge-role-border: #c4b5fd;
-  --badge-billing-bg: #dcfce7;
-  --badge-billing-fg: #166534;
-  --badge-billing-border: #86efac;
-  --badge-neutral-bg: #f1f5f9;
-  --badge-neutral-fg: #475569;
-  --badge-neutral-border: #cbd5e1;
+  --badge-billing-bg: var(--rui-ok-soft, #dcfce7);
+  --badge-billing-fg: var(--rui-ok, #166534);
+  --badge-billing-border: var(--rui-ok, #86efac);
+  --badge-neutral-bg: var(--rui-sunken, #f1f5f9);
+  --badge-neutral-fg: var(--rui-ink-2, #475569);
+  --badge-neutral-border: var(--rui-line-strong, #cbd5e1);
 
-  /* 상태칩 */
-  --status-active-bg: #dcfce7;
-  --status-active-fg: #166534;
-  --status-active-border: #86efac;
-  --status-pending-bg: #fef3c7;
-  --status-pending-fg: #92400e;
-  --status-pending-border: #fcd34d;
-  --status-suspended-bg: #fee2e2;
-  --status-suspended-fg: #991b1b;
-  --status-suspended-border: #fca5a5;
+  /* ── 상태칩 ── active/pending/suspended 는 ok/warn/bad 에 1:1 로 붙는다.
+     dormant(휴면)만 대응하는 상태색이 없어 남색 리터럴을 유지한다 —
+     정지(빨강)·대기(노랑)와 섞이면 안 되는 다섯 번째 상태다. */
+  --status-active-bg: var(--rui-ok-soft, #dcfce7);
+  --status-active-fg: var(--rui-ok, #166534);
+  --status-active-border: var(--rui-ok, #86efac);
+  --status-pending-bg: var(--rui-warn-soft, #fef3c7);
+  --status-pending-fg: var(--rui-warn, #92400e);
+  --status-pending-border: var(--rui-warn, #fcd34d);
+  --status-suspended-bg: var(--rui-bad-soft, #fee2e2);
+  --status-suspended-fg: var(--rui-bad, #991b1b);
+  --status-suspended-border: var(--rui-bad, #fca5a5);
   --status-dormant-bg: #e0e7ff;
   --status-dormant-fg: #3730a3;
   --status-dormant-border: #a5b4fc;
-  --status-withdrawn-bg: #f1f5f9;
-  --status-withdrawn-fg: #475569;
-  --status-withdrawn-border: #cbd5e1;
+  --status-withdrawn-bg: var(--rui-sunken, #f1f5f9);
+  --status-withdrawn-fg: var(--rui-ink-2, #475569);
+  --status-withdrawn-border: var(--rui-line-strong, #cbd5e1);
 
-  /* 타이포 / 레이아웃 */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
-    "Malgun Gothic", "맑은 고딕", "Noto Sans KR", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "D2Coding", monospace;
-  --fs-xs: 0.75rem;
-  --fs-sm: 0.8125rem;
-  --fs-base: 0.9375rem;
-  --fs-lg: 1.0625rem;
-  --fs-xl: 1.25rem;
-  --fs-2xl: 1.5rem;
+  /* ── 타이포 ── 글꼴·본문 크기는 research-ui 토큰을 쓴다.
+     `--rui-font` 는 Pretendard 우선 스택이다. CDN 주입은 `<html data-rui-font>` 로
+     꺼 두었으므로(CSP style-src/font-src 'self') 실제로는 그 다음 후보인
+     Segoe UI · Malgun Gothic 으로 떨어진다. 그것이 의도다.
+     lg·xl 두 단계는 research-ui 에 대응 토큰이 없어 px 값을 유지한다. */
+  --font-sans: var(--rui-font, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", "Noto Sans KR", Roboto, sans-serif);
+  --font-mono: var(--rui-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "D2Coding", monospace);
+  --fs-xs: var(--rui-th-fs, 12px);
+  --fs-sm: var(--rui-fs-sm, 13px);
+  --fs-base: var(--rui-fs, 15px);
+  --fs-lg: 16px;
+  --fs-xl: 18px;
+  --fs-2xl: var(--rui-h1-fs, 24px);
+
+  /* ── 간격 ── research-ui 는 간격 토큰을 정의하지 않는다(GUIDELINE 은 "4의 배수"만
+     규정한다). 기존 값이 이미 전부 4의 배수라 그대로 둔다. */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
@@ -93,16 +148,48 @@
   --sp-5: 24px;
   --sp-6: 32px;
   --sp-7: 48px;
-  --radius-sm: 6px;
-  --radius-lg: 16px;
+
+  /* ── 반경 ── GUIDELINE: "모서리는 8px·12px 두 가지만". --rui-r / --rui-r-lg 가 그 둘이다. */
+  --radius-sm: var(--rui-r, 6px);
+  --radius-lg: var(--rui-r-lg, 16px);
   --radius-pill: 999px;
+
   --container: 1160px;
   --container-narrow: 420px;
-  --header-h: 56px;
+  --header-h: var(--rui-top-h, 56px);
 }
 
+/*
+ * 어둡게 — 팔레트 색은 `rui-tokens.css` 의 `:root[data-rui-mode="dark"]` 가 이미
+ * 바꾸므로 여기서 다시 적지 않는다. **팔레트가 아닌 값만** 뒤집는다.
+ */
+:root[data-rui-mode="dark"] {
+  --overlay: rgba(0, 0, 0, 0.68);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.65);
+
+  --badge-account-bg: #16273f;
+  --badge-account-fg: #93c5fd;
+  --badge-account-border: #29456b;
+  --badge-role-bg: #241d3d;
+  --badge-role-fg: #c4b5fd;
+  --badge-role-border: #3f3268;
+
+  --status-dormant-bg: #1c1f3d;
+  --status-dormant-fg: #a5b4fc;
+  --status-dormant-border: #333a67;
+}
+
+/*
+ * 스크립트가 막힌 환경용 폴백.
+ * `rui-theme.js` 가 돌면 `<html>` 에 `data-rui-mode` 가 **항상** 붙으므로
+ * (`light` 또는 `dark`) 이 블록은 그때 적용되지 않는다. 기본 밝기가 "밝게"인 것은
+ * research-ui GUIDELINE 3장이고, 어둡게는 사람이 화면 설정에서 고른다.
+ * 스크립트가 없을 때만 OS 설정을 따라 v1.6.0 의 다크 팔레트로 떨어진다.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-rui-mode]) {
     --bg: #0f1115;
     --fg: #e6e8eb;
     --muted: #9aa4b2;
@@ -119,6 +206,7 @@
     --border-strong: #38414f;
     --primary-hover: #60a5fa;
     --primary-soft: #17233a;
+    --primary-text: #7fb0f5;
     --danger-hover: #fca5a5;
     --danger-soft: #341a1a;
     --success-soft: #14301f;
@@ -126,7 +214,7 @@
     --info: #38bdf8;
     --info-soft: #10293a;
     --focus: #60a5fa;
-    --focus-ring: rgba(96, 165, 250, 0.40);
+    --focus-ring: #17233a;
     --overlay: rgba(0, 0, 0, 0.68);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.55);
@@ -195,7 +283,7 @@ pre {
   overflow-x: auto; margin: 0 0 var(--sp-3);
 }
 
-a { color: var(--primary); text-decoration: none; }
+a { color: var(--primary-text); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 img { max-width: 100%; height: auto; }
@@ -334,8 +422,15 @@ textarea { min-height: 96px; resize: vertical; }
 textarea.code { font-family: var(--font-mono); font-size: var(--fs-sm); min-height: 140px; }
 select { appearance: none; padding-right: var(--sp-6); background-image: none; }
 
+/* v1.7.0 — 초점 표시를 outline 으로 바꿨다.
+   종전에는 `box-shadow: 0 0 0 3px rgba(강조색, .35)` 였는데, research-ui 토큰에는
+   **알파가 들어간 강조색이 없다.** `--rui-accent-soft` 를 그대로 쓰면 어둡게에서
+   그 값이 어두운 틴트라 바탕과 거의 구분되지 않는다. `color-mix()` 로 알파를 만들면
+   지원하지 않는 브라우저에서 선언 전체가 무효가 되어 **초점 표시가 아예 사라진다.**
+   outline 은 어느 팔레트·어느 밝기에서도 강조색 그대로 보인다. */
 input:focus, select:focus, textarea:focus {
-  outline: none;
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
   border-color: var(--focus);
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
@@ -405,6 +500,16 @@ input.is-invalid, select.is-invalid, textarea.is-invalid {
 .btn-primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
 .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 
+/* v1.7.0 — 강조색 hover. research-ui 에는 hover 전용 강조색 토큰이 없고, 팔레트가
+   12종이라 색을 손으로 하나 더 만들 수 없다. 같은 색의 밝기만 바꾼다:
+   밝게에서는 어둡게, 어둡게에서는 밝게 — v1.6.0 의 hover 방향과 같다.
+   filter 는 CSS 속성이라 CSP 와 무관하다. */
+.btn-primary:hover, .btn-danger:hover,
+.pager button[aria-current="page"]:hover:not(:disabled) { filter: brightness(0.90); }
+:root[data-rui-mode="dark"] .btn-primary:hover,
+:root[data-rui-mode="dark"] .btn-danger:hover,
+:root[data-rui-mode="dark"] .pager button[aria-current="page"]:hover:not(:disabled) { filter: brightness(1.15); }
+
 .btn-secondary { background: var(--bg-elev); color: var(--fg); border-color: var(--border-strong); }
 .btn-secondary:hover { background: var(--card-hover); }
 
@@ -416,7 +521,7 @@ input.is-invalid, select.is-invalid, textarea.is-invalid {
 
 .btn-link {
   background: none; border: none; padding: 0; min-height: 0;
-  color: var(--primary); font-weight: 600; text-decoration: underline; cursor: pointer;
+  color: var(--primary-text); font-weight: 600; text-decoration: underline; cursor: pointer;
 }
 
 .btn-sm { padding: 4px var(--sp-2); min-height: 28px; font-size: var(--fs-xs); border-radius: var(--radius-sm); }
@@ -545,7 +650,7 @@ table.kv td {
   cursor: pointer; white-space: nowrap;
 }
 .tab:hover { color: var(--fg); }
-.tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
+.tab[aria-selected="true"] { color: var(--primary-text); border-bottom-color: var(--primary); }
 .tab-panel[hidden] { display: none; }
 
 /* ------------------------------------------------------------- 10. 모달 */
@@ -771,6 +876,201 @@ table.kv td {
 
 .masked { font-family: var(--font-mono); letter-spacing: .12em; color: var(--muted); }
 
+/* ------------------------------------------- 17-b. 화면 설정 패널 (v1.7.0)
+ * `RUI.picker()` 가 그리는 마크업의 모양. 원래는 `rui.css` 가 맡는 부분인데
+ * 그 파일을 쓰지 않으므로(D-236 — 클래스 15개 충돌) 여기서 최소한만 그린다.
+ *
+ * 쓰는 이름은 `.pick` · `.seg` · `.swatches` · `.rui-pick-gap` 넷뿐이고
+ * **넷 다 충돌 15개 목록(actions btn field loading num page page-head row
+ * spacer stack stat table-wrap tabs toast wide)에 없다.** 화면 8개와 `ui.js` 의
+ * 어떤 요소도 이 이름을 쓰지 않는다.
+ *
+ * `RUI.picker()` 는 인라인 `style=` 을 만들지 않도록 사본에서 고쳤다
+ * (assets/rui-theme.js 머리 주석 [1]). 팔레트 견본 색만 CSSOM 으로 들어온다.
+ * ------------------------------------------------------------------------ */
+.pick > section + section { margin-top: var(--sp-5); }
+.pick h3 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-sm); font-weight: 700; color: var(--muted);
+}
+.pick h3.rui-pick-gap { margin-top: var(--sp-3); }
+.pick p { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--muted); }
+
+.seg { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.seg button {
+  flex: 0 1 auto;
+  min-height: 32px; padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev); color: var(--fg);
+  font-family: inherit; font-size: var(--fs-sm); font-weight: 600;
+  cursor: pointer;
+}
+.seg button:hover { background: var(--card-hover); }
+.seg button.on {
+  background: var(--primary); color: var(--primary-fg); border-color: var(--primary);
+}
+
+.swatches {
+  display: grid; gap: var(--sp-2);
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+}
+.swatches button {
+  display: flex; align-items: center; gap: var(--sp-2);
+  min-height: 34px; padding: 0 var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev); color: var(--fg);
+  font-family: inherit; font-size: var(--fs-sm); font-weight: 600;
+  text-align: left; cursor: pointer;
+}
+.swatches button:hover { background: var(--card-hover); }
+.swatches button.on { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+/* 견본 동그라미. 배경색만 `rui-theme.js` 가 CSSOM 으로 넣는다(CSP style-src 'self'). */
+.swatches i {
+  flex: none; width: 14px; height: 14px;
+  border: 1px solid var(--border-strong); border-radius: 50%;
+}
+
+/* --------------------------------- 17-c. 시스템 바로 가기 (research-ui G9)
+ * `RUI.sysButton()` 이 만드는 버튼과 `RUI.sysOpen()` 이 만드는 팝업의 모양.
+ *
+ * ▣ 왜 여기 있나 — `rui.css` 를 **쓰지 않기 때문**이다(D-236).
+ *   그리고 쓴다고 해결되지도 않는다: `rui.css` 의 규칙은 **전부 `.rui` 로 시작한다**
+ *   (`.rui .rui-sys-pop { … }`). ulogin 에는 `.rui` 요소가 없으므로 그 파일을 통째로
+ *   불러와도 이 부품은 스타일을 못 받는다. 그래서 **필요한 규칙만** 옮겨 적고
+ *   `.rui` 접두를 뗐다. 값은 `--rui-*` 를 직접 쓰지 않고 위 1절에서 이미 매핑해 둔
+ *   ulogin 토큰으로 옮겼다 — 같은 값이고, 바꿀 자리가 한 곳으로 남는다.
+ *
+ * ▣ 이름이 안전한가 — 실측했다.
+ *   `icon-btn` · `i` · `dot` · `me` · `on` · `off` · `rui-sys-*` 는 화면 8개의
+ *   `class=` 속성과 `ui.js` 의 `el()` / `classList` 호출 어디에도 **쓰이지 않는다**(0건).
+ *   그래도 `dot`·`me`·`on`·`off` 처럼 짧은 이름은 전역으로 풀지 않고 **부품 안으로
+ *   한정**한다(`.rui-sys-it.me`, `.rui-sys-it .dot.on`). 아이콘은 `svg.i` 로만 건다 —
+ *   `<i>` **요소**를 쓰는 기존 규칙(`.strength-bar > i` 등)과 섞이지 않게 하려는 것이다.
+ *
+ * ▣ CSP — 이 부품은 인라인 `style=` 을 만들지 않는다. 팝업 위치만
+ *   `pop.style.left/top` 로 들어오는데 CSSOM 대입이라 `style-src` 대상이 아니다.
+ *   그 대입이 먹히려면 `position: fixed` 가 있어야 하므로 아래 규칙이 **필수**다.
+ * ------------------------------------------------------------------------ */
+.icon-btn {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; flex: none;
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--muted);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--card-hover); color: var(--fg); }
+.icon-btn svg.i, .rui-sys-ic svg.i {
+  width: 16px; height: 16px; flex: none;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+
+.rui-sys-pop {
+  position: fixed; z-index: 150;
+  width: min(560px, calc(100vw - 16px));
+  max-height: min(560px, calc(100vh - 16px));
+  overflow: auto;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.rui-sys-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) var(--sp-2);
+}
+.rui-sys-head b { font-size: var(--fs-sm); }
+.rui-sys-head small, .rui-sys-gt { color: var(--muted); font-size: var(--fs-xs); }
+.rui-sys-g + .rui-sys-g {
+  margin-top: var(--sp-2); padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+.rui-sys-gt { padding: 2px var(--sp-1) var(--sp-1); font-weight: 700; }
+.rui-sys-gl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+.rui-sys-it {
+  display: flex; align-items: center; gap: var(--sp-2);
+  min-width: 0; padding: var(--sp-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg); text-decoration: none;
+}
+.rui-sys-it:hover { background: var(--card-hover); text-decoration: none; }
+.rui-sys-it.me { background: var(--primary-soft); }
+.rui-sys-ic {
+  flex: none; display: grid; place-items: center;
+  width: 30px; height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--card); color: var(--primary-text);
+}
+.rui-sys-it.me .rui-sys-ic { background: var(--primary); color: var(--primary-fg); }
+.rui-sys-tx { display: grid; min-width: 0; flex: 1 1 auto; }
+.rui-sys-tx b { font-size: var(--fs-sm); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rui-sys-tx small { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 연동 상태 점. `RUI.sysSet({status:…})` 를 쓸 때만 나온다 — 지금은 쓰지 않는다. */
+.rui-sys-it .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--muted); }
+.rui-sys-it .dot.on { background: var(--success); }
+.rui-sys-it .dot.off { background: var(--danger); }
+
+@media (max-width: 640px) {
+  .rui-sys-gl { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------- 17-2. 계정 연결 (v1.8.4) */
+/* 관리자 콘솔 「계정 연결」 탭(assets/admin-links.js). 색은 전부 기존 토큰이다 —
+   경고 글자를 --warn 으로 칠하지 않는다(밝게 팔레트에서 4.5:1 이 안 나온다). 글자는 --fg 로 두고
+   왼쪽 선으로 경고·불가를 가른다(색만으로 구분하지 않게 굵기·문구도 함께). */
+.al-subbar { margin: 0 0 var(--sp-4); }
+.al-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.al-cand { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.al-match { font-weight: 600; }
+.al-break { overflow-wrap: anywhere; min-width: 9em; }
+.al-nu td input { min-width: 9em; }
+.al-nu td:first-child { white-space: nowrap; }
+.al-ck { width: 36px; text-align: center; }
+.al-codes { list-style: none; margin: 0; padding: 0; font-size: var(--fs-xs); display: flex; flex-direction: column; gap: 4px; }
+.al-codes li { color: var(--fg); padding-left: var(--sp-2); border-left: 3px solid var(--border-strong); line-height: 1.45; }
+.al-codes li.is-warn { border-left-color: var(--warn); font-weight: 600; }
+.al-codes li.is-bad { border-left-color: var(--danger); }
+.al-code { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+.al-warn-note { color: var(--fg); font-weight: 600; padding-left: var(--sp-2); border-left: 3px solid var(--warn); }
+.al-sel-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--card);
+}
+.al-sel-bar .spacer { flex: 1 1 auto; }
+table.table tr.is-selected td { background: var(--card-hover); }
+.al-h { margin: var(--sp-4) 0 var(--sp-2); font-size: var(--fs-base); }
+.al-sum { margin-bottom: var(--sp-3); }
+.al-ack { margin-top: var(--sp-3); }
+.al-finder { margin-bottom: var(--sp-3); }
+.al-finder .row input { flex: 1 1 200px; min-width: 0; }
+.al-finder-out { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: var(--sp-1) 0; }
+.al-pick { text-align: left; white-space: normal; }
+.al-imp-info { margin: var(--sp-2) 0; }
+.al-progress {
+  height: 10px; margin: var(--sp-2) 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--card);
+}
+.al-progress > i { display: block; height: 100%; width: 0; background: var(--primary); transition: width .2s ease; }
+.al-linkcell { min-width: 260px; }
+.al-person-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: var(--sp-3) 0; }
+.al-person-name { font-size: var(--fs-lg); }
+.al-person-foot { margin-top: var(--sp-3); align-items: center; }
+.al-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: var(--sp-3); }
+.al-cell, .al-group {
+  display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0;
+  padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev);
+}
+.al-group { margin-bottom: var(--sp-3); }
+.al-cell.is-linked { border-left: 3px solid var(--success); }
+.al-cell.is-empty { border-style: dashed; }
+.al-cell-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-1) var(--sp-2); }
+.al-radio { align-items: flex-start; word-break: break-word; }
+.al-radio > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+
 /* --------------------------------------------------------- 18. 반응형 */
 @media (max-width: 640px) {
   .container { padding: var(--sp-4) var(--sp-3); }
@@ -786,8 +1086,13 @@ table.kv td {
 }
 
 @media print {
-  /* 인쇄는 흰 종이 기준이므로 토큰 자체를 라이트 값으로 되돌린다 (변수만 사용) */
-  :root {
+  /* 인쇄는 흰 종이 기준이므로 토큰 자체를 라이트 값으로 되돌린다 (변수만 사용).
+     v1.7.0 — 선택자에 `[data-rui-mode="dark"]` 를 **반드시 함께 적는다.**
+     그 선택자는 특정도가 (0,1,1) 이라 `:root` (0,1,0) 보다 높다. 빠뜨리면
+     어둡게로 보던 사람이 인쇄할 때 검은 바탕이 그대로 나간다
+     (research-ui GUIDELINE 9장 — 다크 모드에서도 흰 종이로 인쇄한다). */
+  :root,
+  :root[data-rui-mode="dark"] {
     --bg: #ffffff; --bg-elev: #ffffff; --fg: #1a1a1a; --muted: #4b5563;
     --card: #ffffff; --card-hover: #ffffff; --border: #d1d5db; --border-strong: #9ca3af;
   }
@@ -795,3 +1100,12 @@ table.kv td {
   body { background: var(--bg); color: var(--fg); }
   .card, .table-wrap, .stat { box-shadow: none; }
 }
+
+/* --------------------------------------------------------- v1.9.0 플랫폼 탭 (admin-platform.js) */
+.pf-root > * + * { margin-top: var(--sp-4); }
+.pf-pre { margin: 0; white-space: pre-wrap; word-break: break-all; max-height: 50vh; overflow: auto; }
+.pf-wrap { white-space: pre-wrap; word-break: break-word; }
+table.table tbody tr.pf-click { cursor: pointer; }
+table.table tbody tr.pf-click:focus-visible td { background: var(--card-hover); }
+.pf-actions { min-width: 0 !important; }
+.pf-more, .pf-verify { margin-top: var(--sp-3); }

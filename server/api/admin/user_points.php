@@ -7,8 +7,10 @@ declare(strict_types=1);
  * 응답 최상위 키: points, delta, balance_after, total_points_earned, total_points_spent,
  *                 log_id, admin_log_id, created_at
  *
- * 트랜잭션 + SELECT ... FOR UPDATE 로 잔액을 잠근다.
- * FOR UPDATE 없이 읽고 쓰면 동시 요청에서 잔액과 원장이 어긋난다 — 사후 복구가 불가능하다.
+ * 트랜잭션 + 잠근 읽기로 잔액을 잠근다. 잠금 없이 읽고 쓰면 동시 요청에서 잔액과 원장이
+ * 어긋난다 — 사후 복구가 불가능하다.
+ * v1.8.0 — MySQL 은 `SELECT ... FOR UPDATE`(sql_for_update()), SQLite 는 db_tx() 의
+ * `BEGIN IMMEDIATE`. 그 위에 조건부 UPDATE(읽은 값과 같을 때만 쓴다)를 2차 방어로 둔다(설계 B-2).
  * 결과 잔액이 음수가 되면 POINT_INSUFFICIENT(409).
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
@@ -119,7 +121,7 @@ admin_guard_target_rank($ctx, $target, '포인트를 조정');
 $body  = body_json();
 $delta = (int) v_int($body, 'delta', -1000000000, 1000000000, true);
 if ($delta === 0) {
-    v_fail('delta', '0 이 아닌 값을 입력해 주세요.');
+    v_fail('delta', '0이 아닌 값을 입력해 주세요.');
 }
 $reason = v_string($body, 'reason', 1, 100, false, 'admin_adjust');
 $memo   = v_string($body, 'memo', 0, 255, false);
@@ -128,9 +130,10 @@ $adminId = (int) $ctx['user']['id'];
 $now     = now_utc();
 
 $out = db_tx(function () use ($uid, $delta, $reason, $memo, $adminId, $now, $target) {
-    // 잔액을 잠근 뒤 읽는다
+    // 잔액을 잠근 뒤 읽는다. v1.8.0 — MySQL 은 ' FOR UPDATE', SQLite 는 db_tx() 의
+    // BEGIN IMMEDIATE 가 잠근다(설계 B-2). 아래 조건부 UPDATE 가 2차 방어다.
     $u = db_one(
-        'SELECT id, uuid, points, total_points_earned, total_points_spent FROM ' . T_USERS . ' WHERE id = ? FOR UPDATE',
+        'SELECT id, uuid, points, total_points_earned, total_points_spent FROM ' . T_USERS . ' WHERE id = ?' . sql_for_update(),
         [$uid]
     );
     if ($u === null) {
@@ -157,12 +160,19 @@ $out = db_tx(function () use ($uid, $delta, $reason, $memo, $adminId, $now, $tar
     $earned = (int) $u['total_points_earned'] + ($delta > 0 ? $delta : 0);
     $spent  = (int) $u['total_points_spent'] + ($delta < 0 ? -$delta : 0);
 
-    db_update(T_USERS, [
-        'points'              => $after,
-        'total_points_earned' => $earned,
-        'total_points_spent'  => $spent,
-        'updated_at'          => $now,
-    ], 'id = ?', [$uid]);
+    // 조건부 UPDATE — 읽은 잔액이 그대로일 때만 쓴다(설계 B-2 의 3겹째).
+    // 0행이면 잠금이 빠졌다는 뜻이다. 쓰면 원장(balance_after)과 잔액이 어긋나므로
+    // 던져서 롤백한다(500 + 로그). delta != 0 이라 points 가 반드시 바뀐다(설계 A32).
+    $cas = db_exec(
+        'UPDATE ' . T_USERS . ' SET points = ?, total_points_earned = ?, total_points_spent = ?, updated_at = ?'
+        . ' WHERE id = ? AND points = ? AND total_points_earned = ? AND total_points_spent = ?',
+        [$after, $earned, $spent, $now, $uid,
+         $before, (int) $u['total_points_earned'], (int) $u['total_points_spent']]
+    );
+    if ($cas !== 1) {
+        throw new RuntimeException('admin points adjust: balance changed under the lock (rows=' . $cas
+            . ', user_id=' . $uid . '). the row lock / BEGIN IMMEDIATE is not in effect.');
+    }
 
     $logId = log_point($uid, [
         'delta'         => $delta,

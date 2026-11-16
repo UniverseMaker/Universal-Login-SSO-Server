@@ -1,0 +1,34 @@
+@charset "UTF-8";
+/* ============================================================================
+ * ulogin v1.8.3 — 공용 rui.css 를 「층(cascade layer)」으로 불러오는 파일 (rui-layer.css)
+ *
+ * ▣ 왜 층인가 — D-236 의 충돌을 원본을 고치지 않고 푼다
+ *   rui.css 와 style.css 는 클래스 이름이 겹친다(btn field row stack stat tabs toast …).
+ *   rui.css 는 `.rui .btn` (0,2,0) 이라 나란히 두면 특정도로 이긴다. 그래서 v1.7.0~v1.8.2 는
+ *   rui.css 를 아예 쓰지 않았고, 관리자 콘솔에 research-ui 같은 왼쪽 메뉴·위쪽 띠를 둘 수 없었다.
+ *   층에 넣으면 **층 밖(style.css·ulogin-theme.css)이 특정도와 무관하게 이긴다.**
+ *
+ * ▣ 이 파일이 하는 일 — 세 줄
+ *   1) 층 순서: rui → rui-undo → (층 밖: style.css · ulogin-theme.css)
+ *   2) rui.css 를 rui 층으로. 파일은 research-ui G17 원본 그대로다(v1.8.6).
+ *   3) rui-undo 층: 관리자 콘솔의 **본문 영역(.ul-view)** 과 G16 틀 안의 ulogin 요소(.ul-own, v1.8.6)에서는 rui 규칙을 모두 걷어 낸다
+ *      (`all: revert` = 브라우저 기본값으로). 본문은 그 위에서 style.css 가 v1.8.2 와 같이 그린다.
+ *      → rui.css 가 그리는 것은 **틀(왼쪽 메뉴·위쪽 띠·서랍·바로 가기)** 뿐이다.
+ *      틀 쪽에서 style.css 의 요소 규칙(a·h2·p …)이 rui 를 덮는 것은 ulogin-theme.css 가
+ *      `all: revert-layer` 로 되돌린다.
+ *
+ * ▣ `?g=G31` (v1.9.1 · G30 v1.9.0 · v1.8.11 · v1.8.8 · v1.8.7 G18, D-342) — 이 주소는 bump_asset_version.php 가 바꾸지 않는다(그 도구는 *.html 만 연다).
+ *   공용 css·js 는 1년 immutable 캐시라 **rui.css 를 새 판으로 바꿀 때 이 값을 반드시 같이 바꿔라.**
+ *   값은 rui-theme.js 의 `RUI.GUIDELINE` 과 같아야 하고, tests/tier1_static/t_60_theme.php 가 대조한다.
+ * ========================================================================== */
+@layer rui, rui-undo;
+@import url("rui.css?g=G31") layer(rui);
+
+@layer rui-undo {
+  /* v1.8.11 — SVG 의 자손(path 등)은 걷지 않는다. `all: revert` 는 CSS 속성 `d` 까지 UA 값(none)으로 되돌려
+     path 의 d 속성(표현 속성)이 무시되고 아이콘이 빈칸이 됐다(마이페이지 연결시스템 카드에서 실측). */
+  .ul-view, .ul-view *:not(svg *) { all: revert; }
+  /* v1.8.6 — G16 로그인 틀(.ul-rui) 안에 ulogin 이 넣은 요소(.ul-own: 화면 카드·체크·링크)도 같은 이유로
+     rui 규칙을 걷는다(.rui .row 의 윗선·.rui .btn 의 높이 등이 style.css 가 안 정한 속성으로 새어 들었다). */
+  .ul-rui .ul-own, .ul-rui .ul-own * { all: revert; }
+}

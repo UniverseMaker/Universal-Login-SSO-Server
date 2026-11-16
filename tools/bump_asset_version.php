@@ -429,6 +429,32 @@ if ($versionTxt !== null) {
     echo "  갱신하지 않으면 배포 후 브라우저로 버전을 확인할 때 옛 값이 보인다.\n";
 }
 
+// ---------------------------------------------------------------------
+// 6-b. version.json (G18 / v1.8.7) — version.txt 에서 **생성**한다. 손으로 고치지 않는다.
+//      `{"version":"<version.txt 의 `_` 앞 부분>"}` 한 줄. 서버가 `GET /version.json` 으로 내고
+//      RUI.updates() 가 열린 탭의 버전과 견준다. 값이 ?v= 와 다르면 알림이 거짓이 되므로 어긋나면 종료코드 3.
+// ---------------------------------------------------------------------
+$vjPath = $dir . '/public/version.json';
+$vtNow  = is_file($vtPath) ? trim((string) file_get_contents($vtPath)) : '';
+if ($versionTxt !== null && !$dryRun) { $vtNow = $versionTxt; }
+$vjVer  = strpos($vtNow, '_') !== false ? substr($vtNow, 0, strpos($vtNow, '_')) : $vtNow;
+if ($vjVer === '' || !preg_match('/^[0-9A-Za-z.-]+$/', $vjVer)) {
+    fwrite(STDERR, "version.txt 에서 버전을 읽지 못했다: '$vtNow' -> version.json 을 쓰지 않았다.\n");
+    $exit = 3;
+} elseif ($dryRun) {
+    echo "[DRY-RUN] public/version.json <- {\"version\":\"$vjVer\"}\n";
+} else {
+    if (file_put_contents($vjPath, '{"version":"' . $vjVer . '"}' . "\n") === false) {
+        fwrite(STDERR, "쓰기 실패: $vjPath\n");
+        exit(2);
+    }
+    echo "public/version.json 갱신: $vjVer\n";
+    if ($vjVer !== $newVersion) {
+        fwrite(STDERR, "경고: version.json($vjVer) 과 ?v= ($newVersion) 이 다르다. --version-txt= 를 함께 줘라.\n");
+        $exit = 3;
+    }
+}
+
 // 실패했을 때 "다음 단계로 가라"고 말하지 않는다. 종료코드만 보는 절차가
 // 통과해 버리는 것이 Q12-3 의 본질이었으므로, 사람이 읽는 출력도 같이 막는다.
 if ($exit === 0) {

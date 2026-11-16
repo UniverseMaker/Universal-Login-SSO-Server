@@ -23,9 +23,10 @@ rate_limit('pwforgot:email:' . $email, 3, 3600);
 $ttl = (int) PW_RESET_TTL;
 
 // 존재하지 않는 계정이어도 아래 응답은 동일하다.
-$user = db_one('SELECT id, username, email, status FROM ' . T_USERS . ' WHERE email = ?', [$email]);
+$user = db_one('SELECT id, username, email, status, account_kind FROM ' . T_USERS . ' WHERE email = ?', [$email]);
 
-if ($user !== null && in_array((string) $user['status'], ['active', 'pending', 'dormant'], true)) {
+// v1.10.0 §6-1 — 비상 계정에는 재설정 메일을 만들지 않는다(응답은 같다 — 존재 여부를 알리지 않는다)
+if ($user !== null && !is_emergency_user($user) && in_array((string) $user['status'], ['active', 'pending', 'dormant'], true)) {
     try {
         $token = gen_token(32);
         db_insert(T_PW_RESETS, [

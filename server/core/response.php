@@ -70,6 +70,8 @@ const ERROR_MESSAGES = [
     'DUPLICATE_SECRET_KEY'      => '이미 등록된 시크릿 키입니다.',
     'POINT_INSUFFICIENT'        => '포인트가 부족합니다.',
     'CONFLICT'                  => '현재 상태에서는 처리할 수 없습니다.',
+    // v1.8.4 계정 연결 — 만료·다른 관리자의 plan·취소됨·이미 확정됨을 **하나로** 묶는다(설계 G-5).
+    'LINK_PLAN_INVALID'         => '계획이 만료되었거나 이미 확정되었습니다. 다시 미리보기 하세요.',
     'SSO_INVALID_SERVICE'       => '알 수 없는 서비스입니다.',
     'SSO_INVALID_REDIRECT'      => '허용되지 않은 복귀 주소입니다. 서비스 관리자에게 문의해 주세요.',
     'SSO_CODE_INVALID'          => '인증 코드가 유효하지 않습니다. 다시 로그인해 주세요.',
@@ -81,6 +83,9 @@ const ERROR_MESSAGES = [
     'MAINTENANCE_MODE'          => '서비스 점검 중입니다. 잠시 후 다시 시도해 주세요.',
     'METHOD_NOT_ALLOWED'        => '허용되지 않은 요청 방식입니다.',
     'SERVER_ERROR'              => '일시적인 오류가 발생했습니다.',
+    // v1.9.0 (설계 116 §11) — 새 코드 2개. 나머지 무변경.
+    'SERVICE_ACCESS_DENIED'     => '이 시스템을 쓸 권한이 없습니다.',
+    'QUOTA_EXCEEDED'            => '사용 한도를 넘었습니다.',
 ];
 
 /**
@@ -119,14 +124,26 @@ const ERROR_MESSAGES = [
  * 각 core 파일 상단의 직접 실행 가드 404, install.php)는 이 함수를 거치지
  * 않는다. 소유자가 다르므로 여기서 건드리지 않는다 — D-89, 22b 리포트 참고.
  */
-function response_headers(): void
+function response_headers(?bool $privateRevalidate = null): void
 {
+    // v1.9.0 (설계 116 §4) — **캐시 허용 인자** 하나. 브라우저 설정 조회(GET platform/remote_config.php) 만
+    // `private, no-cache`(저장은 하되 매번 ETag 로 재검증)를 쓴다. 그 경로는 시크릿을 싣지 않는다(A7).
+    // 인자를 받지 않은 호출은 종전 그대로다. 인자는 요청 단위로 기억된다(json_err 도 같은 값을 쓴다).
+    static $priv = false;
+    if ($privateRevalidate !== null) {
+        $priv = $privateRevalidate;
+        return;
+    }
     if (headers_sent()) {
         return;
     }
     header('Content-Type: application/json; charset=utf-8');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: no-referrer');
+    if ($priv) {
+        header('Cache-Control: private, no-cache');
+        return;
+    }
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
     header('Expires: 0');
@@ -136,8 +153,31 @@ function response_headers(): void
  * 성공 응답. {"ok":true,"data":{...},"error":null}
  * @param mixed $data
  */
+/**
+ * v1.9.0 — 응답 data 에 **조건부로** 붙는 순수 추가 키(지금은 `features` 하나, 설계 116 §7).
+ * 등록부가 없으면 키 자체가 없어야 해서 리터럴에 넣을 수 없다. 리터럴을 변수 조립으로 바꾸면 tests 의 배선 검사가
+ * 그 엔드포인트의 **모든 키**를 못 보게 된다 — 그래서 리터럴은 그대로 두고 여기 등록한 키만 json_out() 이 덧붙인다.
+ * 이미 있는 키는 덮지 않는다. json_err() 에는 붙지 않는다.
+ * @param mixed $v
+ */
+function response_extra(?string $key = null, $v = null): array
+{
+    static $extra = [];
+    if ($key !== null) {
+        $extra[$key] = $v;
+    }
+    return $extra;
+}
+
 function json_out($data = null, int $status = 200): void
 {
+    if (is_array($data) && $data !== [] && array_keys($data) !== range(0, count($data) - 1)) {
+        foreach (response_extra() as $k => $v) {
+            if (!array_key_exists($k, $data)) {
+                $data[$k] = $v;
+            }
+        }
+    }
     http_response_code($status);
     response_headers();
     echo json_encode(

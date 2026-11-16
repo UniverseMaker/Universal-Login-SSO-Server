@@ -513,23 +513,226 @@ function ck_result_values_admin_api(string $root): array
     return array_values(array_unique($out));
 }
 
+/**
+ * 화면(`public/*.html` · `public/assets/*.js` · `examples/*.html`)이 라벨·필터 옵션으로
+ * 다루는 `login_logs.result` 값.
+ *
+ * ── v1.7.0 수정: `success` 에 **접미사를 허용**한다 ─────────────────────
+ * 종전 패턴은 `(?:success|logout|fail_[a-z_]+)` 였다. `fail_` 만 접미사를 받고
+ * **`success` 는 바로 뒤에 닫는 따옴표를 강제**했다. 그래서 `value="success_silent"`
+ * 도 `'success_silent'` 도 **영원히 걸리지 않는다.**
+ *
+ * v1.6.0 까지는 드러나지 않았다 — `success` 계열에 접미사가 붙은 값이 **없었기**
+ * 때문이다. v1.7.0 이 `success_silent`(무음 SSO 로그인)를 추가하면서 처음 밟혔고,
+ * 증상은 **「화면을 어떻게 고쳐도 통과할 수 없는 fail 1」** 이었다.
+ * 수집기가 화면 파일의 실제 등장 8회(admin.html 4 · mypage.html 4)를 0으로 셌다.
+ *
+ * **이 저장소가 29번 데인 유형이다 — 검사기가 틀렸는데 코드를 의심했다.**
+ * 다음에 `logout_*` 같은 값이 생기면 `logout` 도 같은 모양으로 넓혀야 한다.
+ *
+ * 한 방향만 본다(`chk_login_result_values()` 는 `array_diff($srv, $front)` 만 쓴다).
+ * 그래서 패턴을 넓혀 화면 쪽 값이 몇 개 더 걸려도 새 결함으로 보고되지 않는다 —
+ * 넓히는 비용이 0 이라는 뜻이고, 그 점을 확인한 뒤 넓혔다.
+ */
 function ck_result_values_front(string $root): array
 {
     $out = array();
+    foreach (ck_result_values_front_by_file($root) as $vals) {
+        foreach ($vals as $v) {
+            $out[$v] = true;
+        }
+    }
+    return array_keys($out);
+}
+
+/**
+ * **화면 하나하나**가 다루는 `login_logs.result` 값. 반환은 `상대경로 => 값배열`.
+ *
+ * ── v1.7.0 수정 라운드: 해상도를 고쳤다 (QA Q17-2) ──────────────────
+ * 종전 수집기는 `ck_front_files()` 전체의 **합집합** 하나만 돌려줬다. 그래서
+ * **두 화면 중 한쪽만 라벨을 잃으면 검사가 침묵**했다. QA 가 변이 4종으로 실측했다:
+ *
+ *   V-1 `admin.html` 에서만 `success_silent` 제거  → **0건 (침묵)** ← 구멍
+ *   V-2 `mypage.html` 에서만 제거                  → **0건 (침묵)** ← 구멍
+ *   V-3 둘 다 제거                                 → 1건 (소리를 냄)
+ *
+ * **수집기 자체는 눈멀지 않았다**(V-3·V-4 가 증명). 구멍은 **해상도**였다 —
+ * `login_logs.result` 를 그리는 화면이 **둘**(관리자 콘솔 · 마이페이지 이력)인데
+ * 검사는 「어딘가 한 곳에 있으면 통과」였다. 사용자는 한 화면만 본다.
+ *
+ * 정규식은 v1.7.0 1차에서 넓힌 그대로다 — `success` 에도 접미사를 허용한다
+ * (`fail_` 만 접미사를 받고 `success` 는 닫는 따옴표를 강제해 `success_silent` 를
+ *  영원히 못 잡았다. 그 증상이 **「화면을 어떻게 고쳐도 통과할 수 없는 fail 1」** 이었다).
+ * 다음에 `logout_*` 같은 값이 생기면 `logout` 도 같은 모양으로 넓혀야 한다.
+ */
+function ck_result_values_front_by_file(string $root): array
+{
+    // `success` · `success_silent` · `issued_silent` 를 받는다. `fail_` 은 종전대로.
+    $alt = '(?:success(?:_[a-z_]+)?|issued_[a-z_]+|logout|fail_[a-z_]+)';
+    $out = array();
     foreach (ck_front_files($root) as $f) {
-        $s = h_read($f);
-        if (preg_match_all('~[\'"]((?:success|logout|fail_[a-z_]+))[\'"]~', $s, $m)) {
+        $s   = h_read($f);
+        $rel = str_replace('\\', '/', $f);
+        if (strpos($rel, str_replace('\\', '/', $root)) === 0) {
+            $rel = substr($rel, strlen(str_replace('\\', '/', $root)));
+        }
+        $vals = array();
+        if (preg_match_all('~[\'"](' . $alt . ')[\'"]~', $s, $m)) {
             foreach ($m[1] as $v) {
-                $out[$v] = true;
+                $vals[$v] = true;
             }
         }
-        if (preg_match_all('~value="((?:success|logout|fail_[a-z_]+))"~', $s, $m)) {
+        if (preg_match_all('~value="(' . $alt . ')"~', $s, $m)) {
             foreach ($m[1] as $v) {
-                $out[$v] = true;
+                $vals[$v] = true;
+            }
+        }
+        $out[ltrim($rel, '/')] = array_keys($vals);
+    }
+    return $out;
+}
+
+/**
+ * `login_logs.result` 를 **실제로 그리는 화면**이 어느 것인가.
+ *
+ * 자동 판별(값 3개 이상) + **고정 목록**을 함께 쓴다. 둘 다 필요하다:
+ *   · 자동 판별만 쓰면 화면 하나가 라벨을 **전부** 잃었을 때 그 화면이 목록에서
+ *     사라져 **다시 침묵**한다. 「0건」이 「결함 없음」으로 읽히는 바로 그 모양이다.
+ *   · 고정 목록만 쓰면 새 화면이 생겼을 때 검사 범위에 들어오지 않는다.
+ * 고정 목록의 파일이 **존재하는데** 값이 3개 미만이면 그 자체를 결함으로 보고한다.
+ *
+ * @return array [ '판정된 화면 목록', '고정 목록 중 비어 버린 화면의 결함 메시지' ]
+ */
+function ck_result_screens(array $byFile): array
+{
+    $required = array('public/admin.html', 'public/mypage.html');
+    $screens  = array();
+    $errs     = array();
+    foreach ($byFile as $rel => $vals) {
+        if (count($vals) >= 3) {
+            $screens[$rel] = $vals;
+        }
+    }
+    foreach ($required as $r) {
+        if (!array_key_exists($r, $byFile)) {
+            continue;   // 그 화면이 없는 배포(예: 축소 픽스처). 판정하지 않는다
+        }
+        if (!isset($screens[$r])) {
+            $errs[] = $r . ' renders login_logs.result but only ' . count($byFile[$r])
+                . ' result value(s) were collected from it - the per-screen check would go blind';
+            $screens[$r] = $byFile[$r];   // 그래도 아래 대조에 **포함**시킨다
+        }
+    }
+    return array($screens, $errs);
+}
+
+/**
+ * `server/api/me/login_logs.php` 의 `v_enum($_GET, 'result', [...])` 목록 (QA Q17-8).
+ * 파일이 없으면 null(그 소비자가 없는 배포 — 판정하지 않는다). 있는데 못 읽으면 빈 배열.
+ */
+function ck_result_values_me_api(string $root): ?array
+{
+    $f = $root . '/server/api/me/login_logs.php';
+    if (!is_file($f)) {
+        return null;
+    }
+    $s = h_php_code_only_keep_strings(h_read($f));
+    if (!preg_match('~v_enum\(\s*\$_GET\s*,\s*[\'"]result[\'"]\s*,\s*(?:\[|array\()(.*?)(?:\]|\))\s*\)~s', $s, $m)) {
+        return array();
+    }
+    preg_match_all('~[\'"]([a-z][a-z0-9_]*)[\'"]~', $m[1], $mm);
+    return array_values(array_unique($mm[1]));
+}
+
+/**
+ * `login_logs.result` COMMENT 를 **마지막으로** 다시 쓰는 마이그레이션의 값 목록.
+ * 기존 설치본이 받는 정본은 schema.sql 이 아니라 이것이다(두 설치 경로가 갈라지면 안 된다).
+ * 그런 마이그레이션이 없으면 null.
+ */
+function ck_result_values_latest_migration(string $root): ?array
+{
+    $dir = $root . '/server/migrations';
+    $last = null;
+    $vals = null;
+    foreach (h_files($dir, array('sql')) as $f) {
+        $s = h_read($f);
+        if (preg_match('~login_logs`?\s+MODIFY\s+COLUMN\s+`result`[^;]*?COMMENT\s*\'([^\']*)\'~is', $s, $m)) {
+            if ($last === null || strcmp(basename($f), basename($last)) > 0) {
+                $last = $f;
+                $vals = array_values(array_filter(array_map('trim', explode('|', $m[1]))));
+            }
+        }
+    }
+    return $last === null ? null : array('file' => 'server/migrations/' . basename($last), 'values' => $vals);
+}
+
+/**
+ * 화면 하나의 **라벨 맵 키**(QA Q17-7). 선택지(`value="…"`)와 **따로** 센다.
+ *
+ * 라벨 맵은 `issued_silent: '성공 · …'` 처럼 **따옴표 없는 객체 키**라 종전 수집기가 아예 못 봤다.
+ * 그런데 같은 모양의 객체가 **색 맵**(`success_silent: 'success'`)으로도 있어서, 키만 세면
+ * 라벨 한 줄을 지워도 색 맵이 대신 채워 **다시 침묵**한다. 그래서 **값에 비 ASCII 글자
+ * (사람이 읽는 한국어 라벨)가 있는 항목만** 라벨로 친다. 휴리스틱이고, 그 한계를 아래 변이로 쟀다.
+ */
+function ck_result_labels_in(string $text): array
+{
+    $alt = '(?:success(?:_[a-z_]+)?|issued_[a-z_]+|logout|fail_[a-z_]+)';
+    $out = array();
+    if (preg_match_all('~(?<![A-Za-z0-9_])[\'"]?(' . $alt . ')[\'"]?\s*:\s*([\'"])((?:(?!\2).)*)\2~u', $text, $m, PREG_SET_ORDER)) {
+        foreach ($m as $x) {
+            if (preg_match('/[^\x00-\x7f]/', $x[3]) === 1) {
+                $out[$x[1]] = true;
             }
         }
     }
     return array_keys($out);
+}
+
+function ck_result_options_in(string $text): array
+{
+    $alt = '(?:success(?:_[a-z_]+)?|issued_[a-z_]+|logout|fail_[a-z_]+)';
+    preg_match_all('~value="(' . $alt . ')"~', $text, $m);
+    return array_values(array_unique($m[1]));
+}
+
+/**
+ * ── `login_logs.result` 값 집합의 **소비자 목록 — 단일 자리** (리더 D-290 / QA Q17-2·7·8) ──
+ *
+ * 세 결함(Q17-2 화면 합집합 · Q17-7 라벨 미수집 · Q17-8 me API 미대조)이 전부
+ * 「**검사기가 소비자 목록을 스스로 추측한다**」에서 나왔다. 사람이 손으로 센 소비자는 6곳인데
+ * 검사기가 대조한 것은 3곳이었다. 그래서 목록을 **여기 한 곳**에 두고, 대조 대상이
+ * **이 목록 전체**가 되게 했다. 값이 하나 늘 때 고칠 곳이 여기서 보인다.
+ *
+ * ★ **새 소비자가 생기면 여기에 한 줄을 더하라.** 그러지 않으면 그 소비자는 기계 검사 밖이다.
+ *   architect 가 계약서에 같은 목록을 정본으로 적는다(D-290). 두 목록이 갈라지면 계약서가 이긴다.
+ *
+ * 각 항목: 이름 => 값 배열 | null(그 소비자가 이 배포에 없다 — 판정 생략).
+ * **파일이 있는데 값이 0개**면 그것은 「소비자 없음」이 아니라 **수집기가 눈먼 것**이다 — 보고한다.
+ */
+function ck_result_consumers(string $root): array
+{
+    $c = array();
+    $c['server/schema.sql login_logs.result COMMENT'] = is_file($root . '/server/schema.sql')
+        ? ck_result_values_schema($root) : null;
+    $mig = ck_result_values_latest_migration($root);
+    if ($mig !== null) {
+        $c[$mig['file'] . ' login_logs.result COMMENT'] = $mig['values'];
+    }
+    $c['server/api/admin/logs.php $results (filter whitelist)'] = is_file($root . '/server/api/admin/logs.php')
+        ? ck_result_values_admin_api($root) : null;
+    $c['server/api/me/login_logs.php v_enum (filter whitelist)'] = ck_result_values_me_api($root);
+    foreach (array('public/admin.html', 'public/mypage.html') as $rel) {
+        $f = $root . '/' . $rel;
+        if (!is_file($f)) {
+            $c[$rel . ' filter options'] = null;
+            $c[$rel . ' label map']      = null;
+            continue;
+        }
+        $t = h_read($f);
+        $c[$rel . ' filter options'] = ck_result_options_in($t);
+        $c[$rel . ' label map']      = ck_result_labels_in($t);
+    }
+    return $c;
 }
 
 function chk_login_result_values(string $root): array
@@ -539,6 +742,22 @@ function chk_login_result_values(string $root): array
     $admin  = ck_result_values_admin_api($root);
     $front  = ck_result_values_front($root);
     $out    = array();
+
+    // ── 소비자 목록 전체를 대조한다 (D-290). 아래 개별 검사는 메시지 호환을 위해 남겨 둔다 ──
+    if ($srv !== array()) {
+        foreach (ck_result_consumers($root) as $name => $vals) {
+            if ($vals === null) {
+                continue;
+            }
+            if ($vals === array()) {
+                $out[] = $name . ': collected 0 result values from a file that exists - the collector is blind, not the consumer empty';
+                continue;
+            }
+            foreach (array_diff($srv, $vals) as $v) {
+                $out[] = 'server writes login result "' . $v . '" but ' . $name . ' does not have it';
+            }
+        }
+    }
 
     if ($srv === array()) {
         return array('collected 0 login result values from server code - the collector is blind, not the code clean');
@@ -556,9 +775,31 @@ function chk_login_result_values(string $root): array
     foreach (array_diff($srv, $admin) as $v) {
         $out[] = 'server writes login result "' . $v . '" but api/admin/logs.php $results does not accept it as a filter';
     }
+
+    // ── 화면 쪽은 **화면별로** 본다 (QA Q17-2) ───────────────────────
+    // 합집합으로 보면 두 화면 중 한쪽만 라벨을 잃었을 때 **침묵**한다.
+    // 사용자는 한 화면만 본다 — 「어딘가에 있으면 통과」는 그 사실을 반영하지 않는다.
+    $byFile = ck_result_values_front_by_file($root);
+    list($screens, $screenErrs) = ck_result_screens($byFile);
+    foreach ($screenErrs as $e) {
+        $out[] = $e;
+    }
+    if ($screens === array()) {
+        $out[] = 'no screen renders login_logs.result at all - the per-screen collector is blind, not the code clean';
+    }
+    foreach ($screens as $rel => $vals) {
+        foreach (array_diff($srv, $vals) as $v) {
+            $out[] = 'server writes login result "' . $v . '" but ' . $rel
+                . ' never mentions it (quoted value or filter option; labels are checked separately)';
+        }
+    }
+    // 합집합 쪽도 남겨 둔다 — 화면으로 판정되지 않은 파일(예: ui.js)에만 값이
+    // 있는 경우를 놓치지 않기 위해서다. 위 화면별 검사와 중복되는 메시지는
+    // 아래 array_unique 가 정리한다.
     foreach (array_diff($srv, $front) as $v) {
         $out[] = 'server writes login result "' . $v . '" but no screen has a label or filter option for it';
     }
+    $out = array_values(array_unique($out));
     sort($out);
     return $out;
 }

@@ -32,6 +32,80 @@ if (!defined('ULOGIN_MIGRATE_CTX')) {
     exit;
 }
 
+// ---------------------------------------------------------------------
+// v1.8.0 — SQLite 기본 저장소. 이 파일이 core/ 에서 들이는 것은 **둘뿐**이다.
+//   core/dbdriver.php — 드라이버 판정 · UPSERT 꼬리절 (쿼리 0줄)
+//   core/ddl.php      — schema.sql → SQLite DDL 번역기 (문자열 처리만)
+// 둘 다 앱 테이블을 읽지 않으므로 위 「core/ 를 로드하지 않는다」의 근거
+// (core 의 SELECT 는 최신 스키마를 전제한다)에 걸리지 않는다 — dbport.php 와 같은 자리다.
+// **방언 분기는 넘겨받은 PDO 자신에게 묻는다**(`ulogin_pdo_driver()`). 상수를 보지 않는다 —
+// install.php 는 config.php 가 생기기 전에 이 파일을 부른다.
+// ---------------------------------------------------------------------
+require_once __DIR__ . '/../core/dbdriver.php';
+require_once __DIR__ . '/../core/ddl.php';
+
+/** 이 연결이 SQLite 인가. */
+function mig_is_sqlite(PDO $pdo)
+{
+    return ulogin_pdo_driver($pdo) === 'sqlite';
+}
+
+/**
+ * 빈 SQLite DB 에 schema.sql 전체를 번역해 만든다 — 신규 설치와 같은 최종 스키마.
+ * 시험 하네스(경합 시험 등)와 도구가 쓴다. install.php 는 표별 결과를 화면에 그려야 해서
+ * 자기 루프를 갖지만 **번역은 같은 함수(ddl_sqlite_create)** 를 지난다.
+ *
+ * 부르기 전에 필요한 것: `define('ULOGIN_MIGRATE_CTX', 1)` 하나 (DB_PREFIX 등 config 상수 불필요 —
+ * prefix 는 인자로 받는다). `$pdo` 는 호출자가 연다: 앱과 같은 PRAGMA 를 원하면
+ * `ulogin_pdo_open_sqlite($abs, array('create' => true, 'quick_check' => false))`.
+ *
+ * @param bool $baseline true 면 schema_migrations 에 migrations/ 전 파일을 baseline 으로 기록(설치와 동일)
+ * @return array ['tables' => n, 'indexes' => n, 'baseline' => n]
+ */
+function mig_sqlite_create_schema(PDO $pdo, $schemaFile, $prefix, $baseline = true)
+{
+    if (!mig_is_sqlite($pdo)) {
+        throw new RuntimeException('mig_sqlite_create_schema needs a sqlite connection');
+    }
+    $sql = @file_get_contents($schemaFile);
+    if ($sql === false || trim((string) $sql) === '') {
+        throw new RuntimeException('schema.sql 을 읽을 수 없습니다: ' . $schemaFile);
+    }
+    $blocks = ddl_extract_creates(mig_apply_prefix((string) $sql, $prefix));
+    if ($blocks === array()) {
+        // 0건을 「만들 것이 없다」로 읽지 않는다(규약 7).
+        throw new RuntimeException('schema.sql 에서 CREATE TABLE 을 하나도 찾지 못했습니다');
+    }
+    $nt = 0;
+    $ni = 0;
+    $pdo->exec('BEGIN IMMEDIATE');
+    try {
+        foreach ($blocks as $b) {
+            $r = ddl_sqlite_create($b);
+            $pdo->exec($r['table']);
+            $nt++;
+            foreach ($r['indexes'] as $ix) {
+                $pdo->exec($ix);
+                $ni++;
+            }
+        }
+        $pdo->exec('COMMIT');
+    } catch (Throwable $e) {
+        try {
+            $pdo->exec('ROLLBACK');
+        } catch (Throwable $e2) {
+            // 원 예외가 본체다
+        }
+        throw $e;
+    }
+    $nb = 0;
+    if ($baseline) {
+        $mtable = mig_ensure_table($pdo, $schemaFile, $prefix);
+        $nb     = mig_stamp_baseline($pdo, mig_list(__DIR__), $mtable, 'install');
+    }
+    return array('tables' => $nt, 'indexes' => $ni, 'baseline' => $nb);
+}
+
 /** 마이그레이션 파일명 규약. 앞 4자리가 버전이고 그 순서로 적용한다. */
 define('MIG_FILE_RE', '/^([0-9]{4})_([A-Za-z0-9._-]+)\.sql$/');
 
@@ -311,8 +385,14 @@ function mig_should_skip(PDO $pdo, array $guards, $prefix)
     return false;
 }
 
+// information_schema 는 SQLite 에 없다(A19). sqlite_master · PRAGMA table_info 로 같은 질문에 답한다.
 function mig_table_exists(PDO $pdo, $table)
 {
+    if (mig_is_sqlite($pdo)) {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?");
+        $st->execute([(string) $table]);
+        return ((int) $st->fetchColumn()) > 0;
+    }
     $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.TABLES'
         . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
     $st->execute([(string) $table]);
@@ -321,6 +401,11 @@ function mig_table_exists(PDO $pdo, $table)
 
 function mig_column_exists(PDO $pdo, $table, $column)
 {
+    if (mig_is_sqlite($pdo)) {
+        $st = $pdo->prepare('SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?');
+        $st->execute([(string) $table, (string) $column]);
+        return ((int) $st->fetchColumn()) > 0;
+    }
     $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS'
         . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
     $st->execute([(string) $table, (string) $column]);
@@ -329,10 +414,80 @@ function mig_column_exists(PDO $pdo, $table, $column)
 
 function mig_index_exists(PDO $pdo, $table, $index)
 {
+    if (mig_is_sqlite($pdo)) {
+        $st = $pdo->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND name = ?");
+        $st->execute([(string) $table, (string) $index]);
+        return ((int) $st->fetchColumn()) > 0;
+    }
     $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.STATISTICS'
         . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?');
     $st->execute([(string) $table, (string) $index]);
     return ((int) $st->fetchColumn()) > 0;
+}
+
+/**
+ * 마이그레이션 문장 하나를 실행한다. **prefix 치환·FROM SCHEMA 확장이 끝난** MySQL 문장을 받는다.
+ * MySQL 은 그대로 exec. SQLite 는 core/ddl.php 로 번역해 exec (문장 1개 → 여러 개일 수 있다).
+ *
+ * `MODIFY COLUMN` (지금 0003·0004 의 COMMENT 문구 변경 2건) — SQLite 에 컬럼 주석이 없어
+ * 적용할 내용이 없다. 다만 **살아 있는 컬럼이 그 정의와 같을 때만** no-op 이다 —
+ * 타입·길이·NULL·DEFAULT 중 하나라도 다르면 예외로 멈춘다(설계 C-3). 조용히 건너뛰면
+ * 「MySQL 은 바뀌었는데 SQLite 는 안 바뀐」 드리프트가 생긴다.
+ * @return string 'exec' | 'noop'
+ */
+function mig_exec_statement(PDO $pdo, $sql)
+{
+    if (!mig_is_sqlite($pdo)) {
+        $pdo->exec((string) $sql);
+        return 'exec';
+    }
+    $t = ddl_sqlite_statement((string) $sql);
+    if ($t['kind'] === 'modify_column') {
+        $why = mig_sqlite_column_mismatch($pdo, $t['table'], $t['column']);
+        if ($why !== null) {
+            throw new RuntimeException('sqlite: MODIFY COLUMN ' . $t['table'] . '.' . $t['column']['name']
+                . ' changes the definition (' . $why . ') - write an explicit copy-table migration');
+        }
+        error_log('[ulogin-migrate] sqlite: MODIFY COLUMN ' . $t['table'] . '.' . $t['column']['name']
+            . ' only changes metadata SQLite does not store (COMMENT) - skipped as no-op');
+        return 'noop';
+    }
+    foreach ($t['sql'] as $s) {
+        $pdo->exec($s);
+    }
+    return 'exec';
+}
+
+/**
+ * 살아 있는 SQLite 컬럼이 파싱된 정의(core/ddl.php ddl_parse_column 결과)와 같은가.
+ * @return string|null 다른 점(사람용). 같으면 null
+ */
+function mig_sqlite_column_mismatch(PDO $pdo, $table, array $col)
+{
+    $st = $pdo->prepare('SELECT type, "notnull", dflt_value FROM pragma_table_info(?) WHERE name = ?');
+    $st->execute([(string) $table, (string) $col['name']]);
+    $r = $st->fetch(PDO::FETCH_ASSOC);
+    if ($r === false) {
+        return 'column missing';
+    }
+    if (strtoupper((string) $r['type']) !== ddl_sqlite_affinity($col['type'])) {
+        return 'type';
+    }
+    if (((int) $r['notnull'] === 1) !== (bool) $col['notnull']) {
+        return 'null';
+    }
+    $liveDef = $r['dflt_value'] === null ? null : (string) $r['dflt_value'];
+    $wantDef = ($col['default'] === null || $col['default'] === 'NULL') ? null : (string) $col['default'];
+    if ($liveDef !== $wantDef) {
+        return 'default';
+    }
+    $live = mig_live_schema_sqlite($pdo, (string) $table, true);
+    $lc   = isset($live[$table]['columns'][$col['name']]) ? $live[$table]['columns'][$col['name']] : null;
+    $wantLen = (ddl_sqlite_affinity($col['type']) === 'TEXT') ? $col['len'] : null;
+    if ($lc === null || $lc['len'] !== $wantLen) {
+        return 'length';
+    }
+    return null;
 }
 
 // ---------------------------------------------------------------------
@@ -400,7 +555,8 @@ function mig_ensure_table(PDO $pdo, $schemaFile, $prefix)
     if (mig_table_exists($pdo, $table)) {
         return $table;
     }
-    $pdo->exec(mig_apply_prefix(mig_table_ddl_from_schema($schemaFile, 'app_ulogin_schema_migrations'), $prefix));
+    // SQLite 는 같은 정본 DDL 을 번역해 만든다 — 정의는 여전히 schema.sql 한 곳이다.
+    mig_exec_statement($pdo, mig_apply_prefix(mig_table_ddl_from_schema($schemaFile, 'app_ulogin_schema_migrations'), $prefix));
     return $table;
 }
 
@@ -533,8 +689,9 @@ function mig_apply(PDO $pdo, array $files, array $rows, $table, $prefix, $by, $s
             foreach ($stmts as $s) {
                 if (mig_should_skip($pdo, $s['guards'], $prefix)) {
                     $skipped++;
-                } else {
-                    $pdo->exec(mig_apply_prefix(mig_expand_statement($s['sql'], $schemaFile), $prefix));
+                } elseif (mig_exec_statement($pdo, mig_apply_prefix(mig_expand_statement($s['sql'], $schemaFile), $prefix)) === 'noop') {
+                    // SQLite 의 COMMENT 전용 MODIFY — 적용할 것이 없다. 건너뜀으로 센다(설계 C-3).
+                    $skipped++;
                 }
                 $done++;
                 $pdo->prepare('UPDATE `' . $table . '` SET statements_done=? WHERE version=?')
@@ -565,8 +722,12 @@ function mig_stamp_baseline(PDO $pdo, array $files, $table, $by)
     $st  = $pdo->prepare('INSERT INTO `' . $table . '`'
         . ' (version, name, filename, checksum, status, statements_total, statements_done, started_at, finished_at, applied_by)'
         . ' VALUES (?,?,?,?,?,0,0,?,?,?)'
-        . ' ON DUPLICATE KEY UPDATE name=VALUES(name), filename=VALUES(filename), checksum=VALUES(checksum),'
-        . ' status=VALUES(status), finished_at=VALUES(finished_at), applied_by=VALUES(applied_by), error_text=NULL');
+        // MySQL 은 v1.7.0 과 같은 의미(ON DUPLICATE KEY UPDATE …=VALUES(…), error_text=NULL),
+        // SQLite 는 ON CONFLICT(version) DO UPDATE … — 꼬리절은 한 함수가 만든다(core/dbdriver.php).
+        . ulogin_sql_upsert_tail(ulogin_pdo_driver($pdo), ['version'], [
+            'name' => 'new', 'filename' => 'new', 'checksum' => 'new', 'status' => 'new',
+            'finished_at' => 'new', 'applied_by' => 'new', 'error_text' => 'null',
+        ]));
     foreach ($files as $f) {
         $st->execute([$f['version'], $f['name'], $f['filename'], $f['checksum'], 'baseline', $now, $now, (string) $by]);
         $n++;
@@ -614,6 +775,19 @@ function mig_expected_schema($schemaFile, $prefix)
     if ($sql === false) {
         throw new RuntimeException('schema.sql 을 읽을 수 없습니다: ' . $schemaFile);
     }
+    return mig_expected_schema_from_sql((string) $sql, $prefix);
+}
+
+/**
+ * mig_expected_schema() 의 본체 — 파일 대신 **원문 문자열**을 받는다(동등성 검사기의 변이 시험용).
+ *
+ * v1.8.0: 표마다 키 두 개를 더 돌려준다. **MySQL 대조에는 쓰이지 않는다**(mig_schema_diff 가
+ * 살아 있는 쪽이 `strict` 일 때만 본다 — SQLite 경로).
+ *   'unique'  => [인덱스명 => bool]       PRIMARY · UNIQUE KEY 는 true
+ *   'collate' => [컬럼명 => 'nocase']     `-- @sqlite-collate: nocase` 바로 다음 컬럼
+ */
+function mig_expected_schema_from_sql($sql, $prefix)
+{
     $sql = mig_apply_prefix((string) $sql, $prefix);
 
     $out = [];
@@ -624,9 +798,18 @@ function mig_expected_schema($schemaFile, $prefix)
         $body  = $m[2];
         $cols  = [];
         $idx   = [];
+        $uniq  = [];
+        $coll  = [];
+        $nocaseNext = false;
         foreach (explode("\n", $body) as $rawLine) {
             $line = trim($rawLine);
-            if ($line === '' || substr($line, 0, 2) === '--') {
+            if ($line === '') {
+                continue;
+            }
+            if (substr($line, 0, 2) === '--') {
+                if (preg_match('/^--\s*@sqlite-collate:\s*nocase\s*$/i', $line) === 1) {
+                    $nocaseNext = true;
+                }
                 continue;
             }
             // 따옴표 문자열(COMMENT '…', DEFAULT '…')을 먼저 지운다. 괄호·백틱이 들어 있을 수 있다.
@@ -635,11 +818,13 @@ function mig_expected_schema($schemaFile, $prefix)
 
             $g = [];
             if (preg_match('/^PRIMARY\s+KEY\s*\(([^)]*)\)/i', $line, $g) === 1) {
-                $idx['PRIMARY'] = mig_norm_cols($g[1]);
+                $idx['PRIMARY']  = mig_norm_cols($g[1]);
+                $uniq['PRIMARY'] = true;
                 continue;
             }
-            if (preg_match('/^(?:UNIQUE\s+)?KEY\s+`([^`]+)`\s*\(([^)]*)\)/i', $line, $g) === 1) {
-                $idx[$g[1]] = mig_norm_cols($g[2]);
+            if (preg_match('/^(UNIQUE\s+)?KEY\s+`([^`]+)`\s*\(([^)]*)\)/i', $line, $g) === 1) {
+                $idx[$g[2]]  = mig_norm_cols($g[3]);
+                $uniq[$g[2]] = trim($g[1]) !== '';
                 continue;
             }
             if (preg_match('/^`([^`]+)`\s+([A-Za-z]+)(?:\(([0-9]+)(?:,[0-9]+)?\))?(.*)$/', $line, $g) === 1) {
@@ -649,9 +834,13 @@ function mig_expected_schema($schemaFile, $prefix)
                     'len'  => ($g[3] === '' ? null : (int) $g[3]),
                     'null' => (strpos($rest, 'NOT NULL') === false),
                 ];
+                if ($nocaseNext) {
+                    $coll[$g[1]] = 'nocase';
+                }
+                $nocaseNext = false;
             }
         }
-        $out[$table] = ['columns' => $cols, 'indexes' => $idx];
+        $out[$table] = ['columns' => $cols, 'indexes' => $idx, 'unique' => $uniq, 'collate' => $coll];
     }
     return $out;
 }
@@ -675,6 +864,9 @@ function mig_norm_cols($s)
 /** 살아 있는 DB → 같은 형태 */
 function mig_live_schema(PDO $pdo, $prefix)
 {
+    if (mig_is_sqlite($pdo)) {
+        return mig_live_schema_sqlite($pdo, $prefix);
+    }
     $out = [];
     $st  = $pdo->prepare('SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, IS_NULLABLE'
         . ' FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE ?'
@@ -715,7 +907,106 @@ function mig_live_schema(PDO $pdo, $prefix)
 }
 
 /**
+ * 살아 있는 **SQLite** DB → mig_live_schema() 와 같은 형태 (설계 C-4 겹 2).
+ *
+ * information_schema 가 없으므로 `sqlite_master` 와 PRAGMA table_info · index_list · index_xinfo
+ * (테이블 값 함수 형태)로 읽는다. 타입은 저장 친화도(`integer`/`text`), 길이는 번역기가 남긴
+ * `CHECK(length("c") <= n)` 를 **테이블 SQL 텍스트에서** 긁는다(pragma 에 안 보인다).
+ * 표마다 `strict => true` 를 붙인다 — mig_schema_diff() 가 그것을 보고 SQLite 전용 대조
+ * (친화도 · 길이 제약 누락 · UNIQUE 여부 · NOCASE)를 켠다. MySQL 쪽 대조는 그대로다.
+ *
+ * 테이블 이름 필터는 `LIKE` 를 쓰지 않고 **접두 문자열 비교**로 한다 — 이스케이프 규칙이
+ * 저장소마다 다른 자리를 하나 덜 만든다(B 담당의 `ESCAPE '!'` 정정과 섞이지 않게).
+ *
+ * @param bool $exactTable true 면 $prefix 를 **테이블 이름 그대로**로 본다(한 표만 읽기)
+ */
+function mig_live_schema_sqlite(PDO $pdo, $prefix, $exactTable = false)
+{
+    $out = [];
+    if ($exactTable) {
+        $st = $pdo->prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name = ?");
+        $st->execute([(string) $prefix]);
+    } else {
+        $st = $pdo->prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'"
+            . " AND substr(name, 1, ?) = ? AND name <> 'sqlite_sequence' ORDER BY name");
+        $st->execute([strlen((string) $prefix), (string) $prefix]);
+    }
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $tr) {
+        $t   = (string) $tr['name'];
+        $sql = (string) $tr['sql'];
+        // 컬럼 정의 줄 — 번역기는 한 줄에 컬럼 하나를 쓴다. ADD COLUMN 으로 붙은 컬럼은
+        // SQLite 가 같은 SQL 텍스트 끝에 `, "c" …` 로 이어 붙이므로 줄머리가 아닐 수 있다 → 따로 잡는다.
+        $defs = [];
+        $dm   = [];
+        preg_match_all('/(?:^|,)\s*"([A-Za-z0-9_]+)"\s+(INTEGER|TEXT)\b([^,\n]*(?:\([^)]*\)[^,\n]*)*)/m', $sql, $dm, PREG_SET_ORDER);
+        foreach ($dm as $d) {
+            $defs[$d[1]] = $d[3];
+        }
+        $cols = [];
+        $coll = [];
+        $pk   = [];
+        $ci   = $pdo->prepare('SELECT name, type, "notnull", pk FROM pragma_table_info(?) ORDER BY cid');
+        $ci->execute([$t]);
+        foreach ($ci->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            $name = (string) $c['name'];
+            $rest = isset($defs[$name]) ? $defs[$name] : '';
+            $len  = null;
+            $lm   = [];
+            if (preg_match('/CHECK\(length\("' . preg_quote($name, '/') . '"\) <= ([0-9]+)\)/', $rest, $lm) === 1) {
+                $len = (int) $lm[1];
+            }
+            $cols[$name] = [
+                'type' => strtolower((string) $c['type']),
+                'len'  => $len,
+                'null' => ((int) $c['notnull'] === 0),
+            ];
+            if (stripos($rest, 'COLLATE NOCASE') !== false) {
+                $coll[$name] = 'nocase';
+            }
+            if ((int) $c['pk'] > 0) {
+                $pk[(int) $c['pk']] = $name;
+            }
+        }
+        $idx  = [];
+        $uniq = [];
+        $icol = [];
+        if ($pk !== []) {
+            ksort($pk);
+            $idx['PRIMARY']  = implode(',', $pk);
+            $uniq['PRIMARY'] = true;
+        }
+        $il = $pdo->prepare('SELECT name, "unique", origin FROM pragma_index_list(?)');
+        $il->execute([$t]);
+        foreach ($il->fetchAll(PDO::FETCH_ASSOC) as $ix) {
+            if ((string) $ix['origin'] === 'pk') {
+                continue;   // 문자열 PK 의 자동 인덱스 — PRIMARY 로 이미 셌다
+            }
+            $xi = $pdo->prepare('SELECT name, coll FROM pragma_index_xinfo(?) WHERE "key" = 1 ORDER BY seqno');
+            $xi->execute([(string) $ix['name']]);
+            $names = [];
+            $colls = [];
+            foreach ($xi->fetchAll(PDO::FETCH_ASSOC) as $x) {
+                $names[] = (string) $x['name'];
+                $colls[] = strtoupper((string) $x['coll']);
+            }
+            $idx[(string) $ix['name']]  = implode(',', $names);
+            $uniq[(string) $ix['name']] = ((int) $ix['unique'] === 1);
+            $icol[(string) $ix['name']] = implode(',', $colls);
+        }
+        $out[$t] = ['columns' => $cols, 'indexes' => $idx, 'unique' => $uniq,
+                    'collate' => $coll, 'index_coll' => $icol, 'strict' => true];
+    }
+    return $out;
+}
+
+/**
  * 기대 스키마 ↔ 실제 스키마 차이.
+ *
+ * v1.8.0: 살아 있는 쪽 표에 `strict` 가 있으면(SQLite) 대조를 넷 더 켠다 — MySQL 경로는 그대로다.
+ *   ① 타입은 **친화도로** 비교한다(varchar→text 등. 매핑은 core/ddl.php 한 곳)
+ *   ② 문자열 길이 제약이 **없으면** 차이다(MySQL 쪽은 「둘 다 있을 때만 비교」였다 — SQLite 에서
+ *      그 규칙이면 번역기가 CHECK 를 빠뜨려도 조용하다)
+ *   ③ UNIQUE 여부 ④ `NOCASE`(컬럼과 인덱스 양쪽)
  * @return array 사람이 읽는 차이 목록. 비어 있으면 두 경로가 같은 형태에 도달한 것이다
  */
 function mig_schema_diff(array $expected, array $live)
@@ -726,20 +1017,42 @@ function mig_schema_diff(array $expected, array $live)
             $diff[] = '테이블 없음: ' . $t;
             continue;
         }
+        $strict = !empty($live[$t]['strict']);
         foreach ($e['columns'] as $c => $spec) {
             if (!isset($live[$t]['columns'][$c])) {
                 $diff[] = '컬럼 없음: ' . $t . '.' . $c;
                 continue;
             }
             $l = $live[$t]['columns'][$c];
-            if ($l['type'] !== $spec['type']) {
-                $diff[] = '타입 다름: ' . $t . '.' . $c . ' schema.sql=' . $spec['type'] . ' DB=' . $l['type'];
+            $wantType = $spec['type'];
+            $isText   = false;
+            if ($strict) {
+                try {
+                    $aff = ddl_sqlite_affinity($spec['type']);
+                } catch (Throwable $ex) {
+                    $aff = '?';
+                }
+                $wantType = strtolower($aff);
+                $isText   = ($aff === 'TEXT');
             }
-            if ($spec['len'] !== null && $l['len'] !== null && $spec['len'] !== $l['len']) {
+            if ($l['type'] !== $wantType) {
+                $diff[] = '타입 다름: ' . $t . '.' . $c . ' schema.sql=' . $wantType . ' DB=' . $l['type'];
+            }
+            if ($strict && $isText && $spec['len'] !== null && $l['len'] === null) {
+                $diff[] = '길이 제약 없음: ' . $t . '.' . $c . ' schema.sql=' . $spec['len'] . ' DB=(CHECK 없음)';
+            } elseif ($spec['len'] !== null && $l['len'] !== null && $spec['len'] !== $l['len']) {
                 $diff[] = '길이 다름: ' . $t . '.' . $c . ' schema.sql=' . $spec['len'] . ' DB=' . $l['len'];
             }
             if ($spec['null'] !== $l['null']) {
                 $diff[] = 'NULL 허용 다름: ' . $t . '.' . $c;
+            }
+            if ($strict) {
+                $wantNc = isset($e['collate'][$c]);
+                $liveNc = isset($live[$t]['collate'][$c]);
+                if ($wantNc !== $liveNc) {
+                    $diff[] = '대소문자 비교 다름: ' . $t . '.' . $c . ' schema.sql=' . ($wantNc ? 'nocase' : 'binary')
+                            . ' DB=' . ($liveNc ? 'nocase' : 'binary');
+                }
             }
         }
         foreach ($e['indexes'] as $n => $cols) {
@@ -748,6 +1061,23 @@ function mig_schema_diff(array $expected, array $live)
             } elseif ($live[$t]['indexes'][$n] !== $cols) {
                 $diff[] = '인덱스 컬럼 다름: ' . $t . '.' . $n
                         . ' schema.sql=' . $cols . ' DB=' . $live[$t]['indexes'][$n];
+            } elseif ($strict) {
+                $wantU = !empty($e['unique'][$n]);
+                $liveU = !empty($live[$t]['unique'][$n]);
+                if ($wantU !== $liveU) {
+                    $diff[] = 'UNIQUE 여부 다름: ' . $t . '.' . $n . ' schema.sql=' . ($wantU ? 'unique' : 'non-unique')
+                            . ' DB=' . ($liveU ? 'unique' : 'non-unique');
+                }
+                if ($n !== 'PRIMARY') {
+                    $wantColl = [];
+                    foreach (explode(',', $cols) as $ic) {
+                        $wantColl[] = isset($e['collate'][$ic]) ? 'NOCASE' : 'BINARY';
+                    }
+                    $lc = isset($live[$t]['index_coll'][$n]) ? $live[$t]['index_coll'][$n] : '';
+                    if ($lc !== implode(',', $wantColl)) {
+                        $diff[] = '인덱스 대소문자 비교 다름: ' . $t . '.' . $n . ' schema.sql=' . implode(',', $wantColl) . ' DB=' . $lc;
+                    }
+                }
             }
         }
         foreach ($live[$t]['columns'] as $c => $_) {
@@ -767,4 +1097,71 @@ function mig_schema_diff(array $expected, array $live)
         }
     }
     return $diff;
+}
+
+// =====================================================================
+// 🔴 번역 동등성 검사기 — 설계 C-4 겹 1 (DB 불필요. 릴리스 전에 개발자 PC 에서 무조건 돈다)
+//
+// 「정본이 하나(schema.sql) + 번역기」 결정의 유일한 약점은 **번역기가 조용히 틀리는 것**이다.
+// 이 함수가 그것을 시끄럽게 만든다:
+//   ① 메모리 SQLite 에 번역 DDL 을 **실제로 실행**한다(파싱되는가)
+//   ② 그 DB 를 mig_live_schema() 로 읽어 schema.sql 기대값과 **양방향** 대조한다(strict:
+//      친화도 · NULL · 길이 CHECK 누락 · UNIQUE 여부 · NOCASE — 컬럼과 인덱스 양쪽)
+//   ③ 인덱스 이름이 **DB 전역에서** 유일한가(A-4 — SQLite 의 인덱스 이름공간은 테이블별이 아니다.
+//      `CREATE INDEX IF NOT EXISTS` 는 다른 표의 같은 이름을 보고 **조용히 건너뛴다**)
+//   ④ 처리한 표가 0개면 그 자체가 실패다(규약 7 — 검사기가 「0건」을 낼 수 없는 상태인지 먼저 본다)
+// 겹 2(`migrate.php verify`)는 살아 있는 DB 가 있어야 돈다. 이것을 대신할 수 없다.
+//
+// @return array ['errors' => [사람용 문자열…], 'tables' => n, 'indexes' => n, 'columns' => n]
+//         errors 가 비어 있어야 통과다.
+// =====================================================================
+function mig_sqlite_translation_check($schemaSql, $prefix = 'app_ulogin_')
+{
+    $errs = [];
+    $res  = ['errors' => [], 'tables' => 0, 'indexes' => 0, 'columns' => 0];
+    if (!extension_loaded('pdo_sqlite')) {
+        $res['errors'][] = 'pdo_sqlite 확장이 없어 검사할 수 없다(통과가 아니다)';
+        return $res;
+    }
+    $sql    = mig_apply_prefix((string) $schemaSql, $prefix);
+    $blocks = ddl_extract_creates($sql);
+    if ($blocks === []) {
+        $res['errors'][] = 'CREATE TABLE 을 0개 찾았다 — 검사 대상이 없으면 통과가 아니다';
+        return $res;
+    }
+    $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $seenIdx = [];
+    foreach ($blocks as $b) {
+        $name = '?';
+        try {
+            $p    = ddl_parse_create($b);
+            $name = $p['table'];
+            foreach ($p['indexes'] as $ix) {
+                if (isset($seenIdx[$ix['name']])) {
+                    $errs[] = '인덱스 이름이 DB 전역에서 겹친다: ' . $ix['name'] . ' (' . $seenIdx[$ix['name']] . ', ' . $name . ')';
+                }
+                $seenIdx[$ix['name']] = $name;
+            }
+            $r = ddl_sqlite_create($b);
+            $pdo->exec($r['table']);
+            foreach ($r['indexes'] as $ix) {
+                $pdo->exec($ix);
+            }
+            $res['tables']++;
+            $res['indexes'] += count($r['indexes']);
+            $res['columns'] += count($p['columns']);
+        } catch (Throwable $e) {
+            $errs[] = '번역/실행 실패: ' . $name . ' — ' . $e->getMessage();
+        }
+    }
+    $expected = mig_expected_schema_from_sql((string) $schemaSql, $prefix);
+    if (count($expected) !== count($blocks)) {
+        $errs[] = '기대 스키마 표 수(' . count($expected) . ')와 CREATE 덩어리 수(' . count($blocks) . ')가 다르다';
+    }
+    $live = mig_live_schema_sqlite($pdo, $prefix);
+    foreach (mig_schema_diff($expected, $live) as $d) {
+        $errs[] = $d;
+    }
+    $res['errors'] = $errs;
+    return $res;
 }

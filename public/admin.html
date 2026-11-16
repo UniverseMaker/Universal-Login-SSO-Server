@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-rui-font data-ulogin-sysnav>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,22 +15,53 @@
      무시할 수 있다(HTTP 헤더만 신뢰). 주 방어는 public/.htaccess 의 no-store 이며,
      이 meta 를 캐시 무효화의 주 수단으로 믿으면 안 된다. -->
 <meta http-equiv="Cache-Control" content="no-store">
-<link rel="stylesheet" href="assets/style.css?v=1.6.0">
+<!-- 공용 테마 (research-ui G14) — v1.8.3 / 리더 판정 D-327
+     공용 파일 셋(rui-theme.js · rui-tokens.css · rui.css)은 research-ui 원본을 **바이트 그대로** 복사했다.
+     ulogin 전용 보정은 따로 둔다:
+       · rui-ulogin-pre.js — rui-theme.js 보다 **먼저**. `?rui=` 인계가 SSO 쿼리·일회용 토큰을 지우지 않게
+       · rui-layer.css     — rui.css 를 cascade layer 로 불러 style.css 와의 클래스 충돌(D-236)을 푼다
+       · ulogin-theme.css  — 화면 모양 보정(로그인 좌우 분할 · 카드 · 공통 테마 2 · Pretendard 파일)
+       · admin-shell.js    — 왼쪽 메뉴·위쪽 띠(메뉴 형태 전부)
+       · theme-ui.js       — 화면 설정(RUI.picker, 인라인 style 을 CSSOM 으로 옮긴다) · 밝기 · 버전 뱃지
+
+     rui-theme.js 를 **스타일시트보다 먼저, head 에서** 부른다. <html> 에 data-rui-* 를 세우므로
+     첫 그리기부터 색이 맞는다(GUIDE "새 앱에 쓰기").
+
+     <html data-rui-font>: RUI.font() 의 jsdelivr 주입을 끈다(CSP style-src·font-src 'self').
+     글꼴은 assets/PretendardVariable.woff2 를 직접 둔다(GUIDELINE 3장 — 외부 글꼴을 막는 서버).
+     **CSP 를 넓히지 않는다** — 그것이 이 화면들의 방어다. -->
+<script src="assets/rui-ulogin-pre.js?v=1.10.0"></script>
+<script src="assets/rui-theme.js?v=1.10.0"></script>
+<link rel="stylesheet" href="assets/rui-tokens.css?v=1.10.0">
+<link rel="stylesheet" href="assets/rui-layer.css?v=1.10.0">
+<link rel="stylesheet" href="assets/style.css?v=1.10.0">
+<link rel="stylesheet" href="assets/ulogin-theme.css?v=1.10.0">
+<script src="assets/theme-ui.js?v=1.10.0" defer></script>
+<script src="assets/admin-shell.js?v=1.10.0" defer></script>
 </head>
-<body>
-<div class="page">
+<body class="ul-admin-body">
+<!-- v1.8.3 — research-ui 대시보드와 같은 틀(research-ui G14): 왼쪽 메뉴 + 위쪽 띠.
+     틀의 모양은 공용 rui.css(층으로 불러온다 — assets/rui-layer.css), 본문은 style.css 가 그린다.
+     메뉴는 assets/admin-shell.js 가 #tabbar 의 탭 버튼을 읽어 그린다(탭 구성·권한은 아래 스크립트 그대로).
+     메뉴 형태(왼쪽·위쪽 × 한 줄·두 줄 × 묶음)·공통 테마·팔레트·밝기는 화면 설정(RUI.picker)에서 바뀐다. -->
+<div class="rui ul-admin" data-ul-shell>
+ <div class="shell">
+  <aside class="side" aria-label="관리 메뉴">
+    <div class="side-head"><span class="logo" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM7 15a2 2 0 0 1 4 0M9 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM14 9h4M14 13h4"/></svg></span><span class="side-title">통합로그인</span><span class="ver" data-ul-ver title="현재 버전" hidden></span></div>
+    <nav class="nav" aria-label="관리 메뉴"></nav>
+    <div class="side-links" id="ul-side-links"></div>
+    <div class="side-me">
+      <span class="avatar" id="ul-avatar" aria-hidden="true"></span>
+      <div><b id="who"></b><small>관리자 콘솔</small></div>
+      <button type="button" class="icon-btn" data-appearance aria-label="화면 설정" title="화면 설정"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+      <button type="button" class="icon-btn" id="btn-logout" aria-label="로그아웃" title="로그아웃"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"/></svg></button>
+    </div>
+  </aside>
+  <div class="main" id="main">
+    <div class="mobile-bar"><button type="button" class="icon-btn" data-nav aria-label="메뉴 열기" title="메뉴 열기"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><span class="side-title">통합로그인</span><span class="bar-sp"></span><span data-ul-sys-mobile></span></div>
+    <div class="main-bar"><span data-ul-side-btn></span><span class="bar-title" id="ul-bar-title"></span><span class="bar-sp"></span><div class="bar-acts" id="ul-bar-acts"></div></div>
 
-  <header class="site-header">
-    <a class="brand" href="index.html">ulogin</a>
-    <span class="spacer"></span>
-    <span class="who" id="who"></span>
-    <nav class="row">
-      <a class="btn btn-ghost btn-sm" href="mypage.html">마이페이지</a>
-      <button type="button" class="btn btn-secondary btn-sm" id="btn-logout">로그아웃</button>
-    </nav>
-  </header>
-
-  <main class="container wide">
+  <main class="ul-view">
 
     <!-- 부팅: GET /api/me → role_rank 확인 -->
     <div id="boot" role="status" aria-live="polite"></div>
@@ -59,6 +90,22 @@
             <button type="button" class="btn btn-ghost btn-sm" id="d-reload">새로 고침</button>
           </div>
           <div class="card-body" id="d-host"></div>
+        </div>
+
+        <!-- ================================================================
+             서버 상태 — GET /api/health  (v1.7.0 · QA Q17-3)
+             backend 가 `checks[].db_port_pinned` 를 넣고 "반드시 보라"고 했는데
+             **그 값을 읽는 화면이 하나도 없었다**(D-172 소비자 0개). 여기가 그 자리다.
+             통계와 카드를 나눈 이유: 둘 중 하나가 실패해도 나머지는 보여야 한다.
+             =============================================================== -->
+        <div class="card">
+          <div class="card-head">
+            <h2>서버 상태</h2>
+            <span class="spacer"></span>
+            <span class="text-sm text-muted" id="h-status"></span>
+            <button type="button" class="btn btn-ghost btn-sm" id="h-reload">새로 고침</button>
+          </div>
+          <div class="card-body" id="h-host"></div>
         </div>
       </section>
 
@@ -164,6 +211,43 @@
       </section>
 
       <!-- ================================================================
+           계정 연결 (v1.8.4 — 설계 92 F절 · D-324 · D-328)
+
+           각 시스템이 보내온 로컬 계정을 ulogin 계정에 잇는다(이관·붙이기·해제·무시).
+           읽기 = admin, 쓰기(미리보기·확정·해제·파일 가져오기·설정 링크) = superadmin.
+           화면 전부를 assets/admin-links.js 가 그린다. 이 칸은 그 뿌리 하나뿐이다.
+           admin 미만은 prunePanels() 가 이 <section> 을 노드째 지운다(D-36).
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="links" hidden>
+        <div id="al-root"></div>
+      </section>
+
+      <!-- ================================================================
+           플랫폼 (v1.9.0 — 설계 116 §8)
+           전역 설정 · 운영 로그 · 감사 기록 · 테이블 · 사용량 · 접근 권한.
+           화면 전부를 assets/admin-platform.js 가 그린다. 이 칸은 뿌리뿐이다.
+           읽기 admin · 쓰기 superadmin. admin 미만은 prunePanels() 가 노드째 지운다(D-36).
+           =============================================================== -->
+      <section class="tab-panel" data-tab-panel="pconfig" hidden>
+        <div id="pf-pconfig-root"></div>
+      </section>
+      <section class="tab-panel" data-tab-panel="plogs" hidden>
+        <div id="pf-plogs-root"></div>
+      </section>
+      <section class="tab-panel" data-tab-panel="paudit" hidden>
+        <div id="pf-paudit-root"></div>
+      </section>
+      <section class="tab-panel" data-tab-panel="ptables" hidden>
+        <div id="pf-ptables-root"></div>
+      </section>
+      <section class="tab-panel" data-tab-panel="pusage" hidden>
+        <div id="pf-pusage-root"></div>
+      </section>
+      <section class="tab-panel" data-tab-panel="access" hidden>
+        <div id="pf-access-root"></div>
+      </section>
+
+      <!-- ================================================================
            서비스
            =============================================================== -->
       <section class="tab-panel" data-tab-panel="services" hidden>
@@ -226,7 +310,7 @@
                 값을 정말로 비우려면 <strong>“값을 빈 문자열로 비우기”</strong>를 체크하세요.
                 목록의 값은 <strong>등급 설정과 무관하게 항상</strong> <span class="masked">****</span> 로 표시됩니다(리더 판정 D-32).
                 평문은 최고관리자의 <strong>“값 보기”</strong> 에서만 확인할 수 있고 그 조회는 감사 로그에 기록됩니다.
-                <span class="masked">****</span> 문자열을 그대로 저장하지 마세요.
+                <span class="masked">****</span> 문자열을 그대로 저장하면 안 됩니다.
               </div>
             </div>
             <div id="sc-host"></div>
@@ -251,7 +335,7 @@
             <div class="alert alert-info" role="note">
               <div class="alert-body">
                 <strong class="alert-title">무엇을 찾는가</strong>
-                이름이 <strong>민감</strong>해 보이는데(키 · 시크릿 · 토큰 · 비밀번호 · 자격증명)
+                이름이 <strong>민감</strong>해 보이는데(키, 시크릿, 토큰, 비밀번호, 자격증명)
                 <strong>최소 등급 게이트가 하나도 걸려 있지 않은</strong> 시크릿을 모든 서비스에서 찾습니다.
                 게이트가 없으면 <strong>그 서비스에 가입한 모든 사용자</strong>가 이 값을 받아 갑니다.
                 <br>
@@ -261,23 +345,23 @@
                 (<code>basic</code> 은 신규 가입자에게 박히는 값입니다).
                 <br>
                 <strong>이 표의 판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과입니다.</strong>
-                실제 차단은 생성·수정 시점에 서버가 합니다 — 서버에 조회용 판정 엔드포인트가 없어
+                실제 차단은 생성·수정 시점에 서버가 합니다. 서버에 조회용 판정 엔드포인트가 없어
                 이 화면이 직접 계산합니다. 사본이 서버와 어긋나면 이 표가 틀립니다.
                 <strong>서버와 다르게 보이면 서버가 정답입니다.</strong>
                 <br>
-                <strong>이 점검이 보지 않는 것 — 시크릿 한 건의 최소 등급만 봅니다.</strong>
+                <strong>이 점검이 보지 않는 것: 시크릿 한 건의 최소 등급만 봅니다.</strong>
                 서비스의 <code>default_account_level</code> 이 그 게이트를 가입 시점에
                 <strong>자동으로 열어 주는 조합</strong>(예: 최소 계정등급 <code>vip</code> +
                 같은 서비스의 기본 계정등급 <code>vip</code>)은 <strong>여기서 잡히지 않습니다.</strong>
                 게이트가 걸린 것처럼 보이지만 그 서비스 가입자 전원이 통과합니다.
-                설정 번들 <code>import</code> 경로만 그 조합을 거절합니다 —
+                설정 번들 <code>import</code> 경로만 그 조합을 거절합니다.
                 이 콘솔의 “수정”으로 만든 조합은 거절되지 않습니다.
                 <strong>서비스 탭에서 기본 계정등급을 함께 확인하세요.</strong>
                 <br>
                 <strong>이 화면은 아무것도 바꾸지 않습니다.</strong> 목록을 보고 사람이 판단해 “수정”으로 게이트를 거세요.
                 운영 중인 서비스의 등급을 일괄로 올리면 정상 연동 앱이 갑자기 막힙니다.
                 <br>
-                <strong>의도적으로 공개한 값도 여기 나옵니다 — 다만 따로 묶어 보여 줍니다.</strong>
+                <strong>의도적으로 공개한 값도 여기 나옵니다. 다만 따로 묶어 보여 줍니다.</strong>
                 생성·수정 시 <code>allow_public=true</code> 로 확인하고 통과시킨 행은
                 목록 응답의 <code>allow_public</code> 표식으로 구분되므로,
                 결과가 <strong>“확인이 필요한 행”</strong>과 <strong>“공개를 승인한 행”</strong> 두 묶음으로 나뉩니다.
@@ -293,7 +377,7 @@
                 이 콘솔에는 스키마 적용 상태를 보여 주는 화면이 없습니다.
                 <code>server/migrate.php</code> 의 상태 화면에서 확인하세요(설치 안내서 8-2절).
                 적용 전까지는 승인 여부를
-                <strong>로그 → 관리자 조작 로그</strong>의 <code>secret.create</code> · <code>secret.update</code> 기록으로 봐야 합니다.
+                <strong>로그 > 관리자 조작 로그</strong>의 <code>secret.create</code> · <code>secret.update</code> 기록으로 봐야 합니다.
               </div>
             </div>
             <div id="gs-host"></div>
@@ -312,6 +396,7 @@
 
             <!-- 로그인 로그 -->
             <div class="tab-panel" data-tab-panel="loglogin" hidden>
+              <p class="text-sm text-muted">IP·기기·없는 아이디는 최고관리자가 아니면 일부만 보입니다. 가려진 값은 화면에서 복원할 수 없습니다.</p>
               <form class="toolbar" id="ll-filter" novalidate>
                 <div class="field grow">
                   <label for="ll-q">아이디 검색</label>
@@ -322,11 +407,32 @@
                   <select id="ll-result" name="result">
                     <option value="">전체</option>
                     <option value="success">성공</option>
+                    <!-- v1.7.0 — 무재인증 SSO. 쿠키 세션만으로 발급된 code 가 교환되면
+                         exchange.php 가 'success' 대신 이 값을 남긴다(설계 §A-6).
+                         동의 화면을 두지 않기로 한 근거 ④가 "무음 발급을 구분해 기록한다"였다 —
+                         이 선택지가 그 근거를 실제로 성립시키는 자리다. 빼면 무음 발급이
+                         콘솔에서 걸러지지 않는다.
+
+                         서버 화이트리스트는 backend 가 같은 라운드에 넣었다 —
+                         `tests/tier1_static/t_40_data_contract.php` 가
+                         `api/admin/logs.php` 의 `$results` 와 `schema.sql` 의
+                         `result` COMMENT 를 대조하는데 그 두 항목에서 불일치를
+                         내지 않는다(확인함). 이 선택지는 그래서 실제로 걸러진다. -->
+                    <option value="success_silent">성공 · 무음(재인증 없음)</option>
+                    <!-- v1.7.0 보안 M17-3 — **발급은 됐으나 교환되지 않은** 무음 인가.
+                         `success_silent` 는 exchange 가 일어나야 남는다. 그래서 제3자가
+                         피해자 브라우저를 무음 경로로 몰아넣고 **서비스가 state 불일치로
+                         거절하면 로그에 0행**이었다 — 공격 시도가 가장 잘 보여야 할
+                         경우에 아무것도 안 남는 상태였다. 이 값이 그 구멍을 메운다.
+                         색은 중립이다(아래 LOGIN_RESULT_TONE 주석 참조). -->
+                    <option value="issued_silent">발급 · 무음(교환 안 됨)</option>
                     <option value="fail_credential">실패 · 자격증명</option>
                     <option value="fail_locked">실패 · 락아웃</option>
                     <option value="fail_status">실패 · 계정 상태</option>
                     <option value="fail_ratelimit">실패 · 레이트리밋</option>
                     <option value="fail_service_blocked">실패 · 서비스 이용 제한</option>
+                    <!-- v1.9.0 — 시스템별 접근 제한(access_rule·access_grant)에 걸린 경우. 설계 116 §7 -->
+                    <option value="fail_service_access">실패 · 시스템 접근 권한 없음</option>
                     <option value="fail_client_auth">실패 · 클라이언트 인증</option>
                     <!-- 옵션 문구는 LOGIN_RESULT_LABELS 와 글자 단위로 같아야 한다.
                          값 집합은 server/api/admin/logs.php 의 $results 배열이 정본이다. -->
@@ -402,6 +508,36 @@
                     <option value="secret.delete"></option>
                     <option value="secret.reveal"></option>
                     <option value="setting.update"></option>
+                    <!-- v1.8.6 Q-4(D-347) — 서비스 id 바꾸기(106)·계정 연결(v1.8.4). 값은 서버가 남기는 조작 이름 그대로 -->
+                    <option value="service.rename">서비스 ID 바꾸기</option>
+                    <option value="service.rename_revert">서비스 ID 되돌리기</option>
+                    <option value="service.alias_end">옛 서비스 ID 받기 종료</option>
+                    <option value="account_link.create">계정 연결 · 새 계정 만들어 연결</option>
+                    <option value="account_link.link">계정 연결 · 기존 계정에 연결</option>
+                    <option value="account_link.unlink">계정 연결 · 연결 해제</option>
+                    <option value="account_link.ignore">계정 연결 · 무시</option>
+                    <option value="account_link.unignore">계정 연결 · 무시 취소</option>
+                    <option value="account_link.cancel">계정 연결 · 작업 취소</option>
+                    <option value="account_link.setup_link">계정 연결 · 설정 링크 재발급</option>
+                    <option value="account_link.sync_request">계정 연결 · 다시 가져오기 요청</option>
+                    <option value="account_link.import">계정 연결 · 파일 가져오기</option>
+                    <!-- v1.9.0 플랫폼(설계 116 §8) — 서버 log_admin() 이 남기는 조작 이름 그대로 -->
+                    <option value="plat.config.draft_save">전역 설정 · 초안 저장</option>
+                    <option value="plat.config.draft_delete">전역 설정 · 초안 삭제</option>
+                    <option value="plat.config.publish">전역 설정 · 게시</option>
+                    <option value="plat.config.rollback">전역 설정 · 되돌리기</option>
+                    <option value="plat.table.upsert">테이블 · 컬렉션 저장</option>
+                    <option value="plat.table.drop">테이블 · 컬렉션 삭제</option>
+                    <option value="plat.table.reindex">테이블 · 색인 다시 만들기</option>
+                    <option value="plat.table.doc_set">테이블 · 문서 수정</option>
+                    <option value="plat.table.doc_delete">테이블 · 문서 삭제</option>
+                    <option value="plat.logs.purge">운영 로그 · 지금 정리</option>
+                    <option value="plat.retention.update">운영 로그 · 보존 기간</option>
+                    <option value="plat.audit.export">감사 기록 · 내보내기</option>
+                    <option value="access.rule.update">접근 권한 · 규칙</option>
+                    <option value="access.grant.update">접근 권한 · 회원 허용</option>
+                    <option value="features.registry.update">기능 권한 · 등록부</option>
+                    <option value="features.user.update">기능 권한 · 회원 지정</option>
                   </datalist>
                 </div>
                 <div class="field">
@@ -412,6 +548,13 @@
                     <option value="service">서비스</option>
                     <option value="secret">시크릿</option>
                     <option value="setting">설정</option>
+                    <option value="link_item">계정 연결 항목</option>
+                    <option value="link_job">계정 연결 작업</option>
+                    <option value="rc">전역 설정</option>
+                    <option value="collection">컬렉션</option>
+                    <option value="doc">문서</option>
+                    <option value="plat_logs">운영 로그</option>
+                    <option value="audit">감사 기록</option>
                   </select>
                 </div>
                 <div class="field">
@@ -460,7 +603,7 @@
                   시크릿이 실제로 나가지 않은 요청(빈 payload)은 아예 기록되지 않으므로,
                   줄이 없다는 것은 “호출이 없었다”가 아니라 <strong>“시크릿이 나가지 않았다”</strong>는 뜻입니다.
                   <br>
-                  <strong>최초 IP 와 최근 IP 가 다른 줄</strong>은 같은 세션이 여러 IP 에서 쓰였다는 뜻입니다 —
+                  <strong>최초 IP와 최근 IP가 다른 줄</strong>은 같은 세션이 여러 IP에서 쓰였다는 뜻입니다.
                   토큰 탈취의 신호일 수 있으니 먼저 보세요.
                 </div>
               </div>
@@ -608,12 +751,12 @@
                 <div class="field">
                   <label for="bi-conflict">충돌 정책 (on_conflict)</label>
                   <select id="bi-conflict" name="on_conflict">
-                    <option value="merge">merge — 번들에 있는 필드만 갱신 (기본)</option>
-                    <option value="skip">skip — 기존 행은 그대로 두고 새 것만 추가</option>
-                    <option value="fail">fail — 기존 행과 겹치면 아무것도 적용하지 않음</option>
+                    <option value="merge">merge: 번들에 있는 필드만 갱신 (기본)</option>
+                    <option value="skip">skip: 기존 행은 그대로 두고 새 것만 추가</option>
+                    <option value="fail">fail: 기존 행과 겹치면 아무것도 적용하지 않음</option>
                   </select>
                   <span class="field-error"></span>
-                  <span class="hint">요청의 이 값이 번들 안의 on_conflict 를 이깁니다.</span>
+                  <span class="hint">요청의 이 값이 번들 안의 on_conflict를 이깁니다.</span>
                 </div>
                 <div class="field">
                   <label for="bi-reason">적용 사유 (선택)</label>
@@ -637,16 +780,20 @@
       </section>
 
     </div><!-- /#app -->
+
+    <footer class="site-footer">ulogin · 통합로그인서비스</footer>
   </main>
+  </div><!-- /.main -->
+ </div><!-- /.shell -->
+</div><!-- /.rui -->
 
-  <footer class="site-footer">ulogin · 범용 로그인 서비스</footer>
-</div>
-
-<script src="assets/api.js?v=1.6.0"></script>
-<script src="assets/ui.js?v=1.6.0"></script>
+<script src="assets/api.js?v=1.10.0"></script>
+<script src="assets/ui.js?v=1.10.0"></script>
+<script src="assets/admin-links.js?v=1.10.0"></script>
+<script src="assets/admin-platform.js?v=1.10.0"></script>
 <script>
 /* ============================================================================
- * admin.html — 관리자 콘솔 (탭: 대시보드 / 회원 / 서비스 / 시크릿 / 로그 / 설정)
+ * admin.html — 관리자 콘솔 (탭: 대시보드 / 회원 / 계정 연결 / 서비스 / 시크릿 / 로그 / 설정)
  *
  * 구속 조건 (판정 번호 D-nn 의 내용은 CHANGELOG.md 가 설명한다)
  *   리더 판정 — 수정 라운드 1
@@ -747,6 +894,16 @@
     /* 메인 탭 */
     dash: RANK.role.manager,
     users: RANK.role.manager,
+    /* v1.8.4 계정 연결. `account_links.php`(조회) 는 require_global_role($ctx, CAN_MAP['account_link.view'])
+       = admin. `account_link_ops.php` 는 action=sync_request 만 admin 이고 나머지(plan · commit ·
+       cancel · setup_link · import)는 CAN_MAP['account_link.manage'] = superadmin 이다.
+       admin 에게는 탭을 보이고 쓰기 버튼만 비활성으로 둔다(재수집 요청은 쓸 수 있다). */
+    links: RANK.role.admin,
+    linksWrite: RANK.role.superadmin,
+    /* v1.9.0 플랫폼 — server/api/admin/platform_*.php · service_access.php 는 진입이
+       require_global_role($ctx, 'admin'), 쓰기 분기가 require_global_role($ctx, 'superadmin') 이다. */
+    platform: RANK.role.admin,
+    platformWrite: RANK.role.superadmin,
     services: RANK.role.admin,
     secrets: RANK.role.admin,
     logs: RANK.role.manager,          // 로그 탭 자체는 로그인 로그(manager)로 진입 가능
@@ -792,6 +949,18 @@
    */
   var LOGIN_RESULT_LABELS = {
     success: '성공',
+    /* v1.7.0 — 무재인증(무음) SSO 로 발급된 code 가 교환된 경우다(설계 §A-6).
+       사람이 비밀번호를 다시 넣지 않았다는 뜻이지 **실패가 아니다.** 'success' 와
+       한 줄로 합치지 않는 이유: 「누가 언제 내 계정으로 어느 시스템에 들어갔나」에
+       답할 수 있어야 동의 화면을 생략한 근거가 성립한다. 그 구분이 여기에 있다. */
+    success_silent: '성공 · 무음(재인증 없음)',
+    /* v1.7.0 보안 M17-3 — 무음 code 가 **발급된** 시점에 남는다.
+       `success_silent`(교환 성공)와 **짝이 아니라 선행 사건**이다:
+         발급 → (교환되면) `success_silent` 가 **따로** 한 줄 더 남는다.
+       즉 정상 흐름에서는 두 줄이 쌍으로 보이고, **`issued_silent` 만 있고
+       `success_silent` 가 없는 줄**이 조사 대상이다 — 서비스가 state 불일치로
+       거절했거나 사용자가 중간에 떠난 것이다. */
+    issued_silent: '발급 · 무음(교환 안 됨)',
     fail_credential: '실패 · 자격증명',
     fail_locked: '실패 · 락아웃',
     fail_status: '실패 · 계정 상태',
@@ -799,6 +968,8 @@
     /* D-46 — D-31(차단 회원 로그인 거부). 계정은 정상이고 그 서비스만 막힌 경우다.
        `fail_status`(계정 자체가 정지/휴면/탈퇴)와 원인이 다르므로 문구를 분리한다. */
     fail_service_blocked: '실패 · 서비스 이용 제한',
+    /* v1.9.0 — 시스템별 접근 제한(access_rule · access_grant)에 걸렸다. 회원 차단(blocked)과 원인이 다르다. */
+    fail_service_access: '실패 · 시스템 접근 권한 없음',
     /* v1.4.0 — SSO 코드 교환(`api/auth/exchange.php`)에서 연동 앱이 보낸
        `service_secret` 이 틀렸을 때 남는다. **회원의 비밀번호 실패가 아니다** —
        사람이 아니라 연동 앱(클라이언트) 쪽 자격증명 문제다. 그래서
@@ -827,6 +998,19 @@
    */
   var LOGIN_RESULT_TONE = {
     success: 'success',
+    /* 무음도 성공이다. 이 줄이 없으면 아래 폴백이 `indexOf('fail') === 0` 으로
+       판정해 null(무채색)이 되어 성공 줄과 색이 갈린다. */
+    success_silent: 'success',
+    /* `issued_silent` 는 **성공도 실패도 아니다** — 「발급됐으나 교환 안 됨」이다.
+       `'success'`(초록)로 두면 **완료된 로그인처럼 보인다** — 실제로는 그 code 로
+       아무도 들어오지 않았다.
+       `'danger'`(빨강)로 두면 **정상적인 중도 이탈까지 경보가 된다** — 사용자가
+       탭을 닫기만 해도 이 줄이 남고, 운영자는 곧 전부 무시하게 된다.
+       그래서 **중립(null)** 이다. 표에서는 색 없는 평문으로 그려지고, 판단은
+       「같은 시각에 `success_silent` 가 뒤따랐는가」로 한다(위 라벨 주석).
+       null 을 **명시적으로** 적는 이유: 아래 폴백이 `indexOf('fail')` 로 판정하는데
+       이 값은 `fail` 로 시작하지 않아 우연히 null 이 된다. 우연에 기대지 않는다. */
+    issued_silent: null,
     logout: null,
     fail_refresh_revoked: null
   };
@@ -844,9 +1028,27 @@
    * 처음 보는 운영자가 두 값을 헷갈리지 않게 여기서 설명한다.
    */
   var LOGIN_RESULT_TILE_SUB = {
+    success_silent: '이미 로그인된 브라우저 세션으로 다른 시스템에 들어간 횟수 · 비밀번호를 다시 묻지 않았습니다',
+    issued_silent: '무음 코드가 발급된 횟수 · 성공·무음 수보다 크게 많으면 발급만 되고 쓰이지 않는 것이니 조사하세요',
     fail_migrate_auth: '스키마 갱신 화면(migrate.php)의 관리자 인증 실패',
-    fail_refresh_reuse: '탈취 신호 · 0 이 아니면 조사하세요 — 전 세션이 회수됐습니다',
+    fail_refresh_reuse: '탈취 신호 · 0이 아니면 조사하세요(전 세션이 회수됐습니다)',
     fail_refresh_revoked: '탈취 신호가 아닙니다 · 정상 회수 뒤의 갱신 시도'
+  };
+
+  /* 요약 줄 묶음(v1.9.3). 순서가 곧 표시 순서. bad=true 인 묶음은 값이 1 이상일 때만 빨강.
+     fail_refresh_revoked 는 이름만 fail 인 정상 경로라 보안 신호 묶음에 두되 빨강으로 칠하지 않는다. */
+  var LOGIN_SUMMARY_GROUPS = [
+    { title: '성공', keys: ['success', 'success_silent', 'issued_silent', 'logout'], bad: false },
+    { title: '실패', keys: ['fail_credential', 'fail_locked', 'fail_status', 'fail_ratelimit',
+      'fail_service_blocked', 'fail_service_access', 'fail_client_auth', 'fail_migrate_auth'], bad: true },
+    { title: '보안 신호', keys: ['fail_refresh_reuse', 'fail_refresh_revoked'], bad: true }
+  ];
+  var LOGIN_SUMMARY_SHORT = {
+    success: '성공', success_silent: '성공 · 무음', issued_silent: '발급 · 무음', logout: '로그아웃',
+    fail_credential: '자격증명', fail_locked: '락아웃', fail_status: '계정 상태', fail_ratelimit: '레이트리밋',
+    fail_service_blocked: '서비스 이용 제한', fail_service_access: '시스템 접근 권한',
+    fail_client_auth: '클라이언트 인증', fail_migrate_auth: '스키마 갱신 화면 인증',
+    fail_refresh_reuse: '회수된 토큰 재사용', fail_refresh_revoked: '회수된 세션 갱신 시도'
   };
 
   /**
@@ -1154,11 +1356,18 @@
   var TABS = [
     { key: 'dash', label: '대시보드', minRank: MIN_RANK.dash },
     { key: 'users', label: '회원', minRank: MIN_RANK.users },
+    { key: 'links', label: '계정 연결', minRank: MIN_RANK.links },
     { key: 'services', label: '서비스', minRank: MIN_RANK.services },
     { key: 'secrets', label: '시크릿', minRank: MIN_RANK.secrets },
     { key: 'logs', label: '로그', minRank: MIN_RANK.logs },
     { key: 'settings', label: '설정', minRank: MIN_RANK.settings },
-    { key: 'bundle', label: '설정 번들', minRank: MIN_RANK.bundle }
+    { key: 'bundle', label: '설정 번들', minRank: MIN_RANK.bundle },
+    { key: 'pconfig', label: '전역 설정', minRank: MIN_RANK.platform },
+    { key: 'plogs', label: '운영 로그', minRank: MIN_RANK.platform },
+    { key: 'paudit', label: '감사 기록', minRank: MIN_RANK.platform },
+    { key: 'ptables', label: '테이블', minRank: MIN_RANK.platform },
+    { key: 'pusage', label: '사용량', minRank: MIN_RANK.platform },
+    { key: 'access', label: '접근 권한', minRank: MIN_RANK.platform }
   ];
 
   /** 내 랭크로 볼 수 있는 탭만. tabs() 에 이 목록만 넘기면 버튼 자체가 생기지 않는다. */
@@ -1193,13 +1402,53 @@
   function onTab(key, panel, isFirstLoad) {
     if (!isFirstLoad) { return; }        // 재진입 시 재조회하지 않는다
     state.loaded[key] = true;
-    if (key === 'dash') { loadStats(); return; }
+    if (key === 'dash') { loadStats(); loadHealth(); return; }
     if (key === 'users') { loadUsers(); return; }
+    if (key === 'links') { initLinksTab(); return; }
     if (key === 'services') { loadServices(); return; }
     if (key === 'secrets') { initSecretsTab(); return; }
     if (key === 'logs') { initLogsTab(); return; }
     if (key === 'settings') { loadSettings(); return; }
     if (key === 'bundle') { initBundleTab(); return; }
+    if (PLATFORM_TABS.indexOf(key) >= 0) { initPlatformTab(key); return; }
+  }
+
+  /* v1.9.0 플랫폼 6탭. 화면은 assets/admin-platform.js 가 그린다. canWrite 는 표시용이다. */
+  var PLATFORM_TABS = ['pconfig', 'plogs', 'paudit', 'ptables', 'pusage', 'access'];
+  function platformCtx() {
+    return { me: state.me, canWrite: allowed(MIN_RANK.platformWrite), showError: showError };
+  }
+  function initPlatformTab(key) {
+    var root = $('#pf-' + key + '-root');
+    if (!root) { return; }
+    if (!window.UloginAdminPlatform) {
+      root.appendChild(alertNode('assets/admin-platform.js를 불러오지 못했습니다. 새로 고침해 보세요.', 'danger', '화면을 열 수 없습니다'));
+      return;
+    }
+    window.UloginAdminPlatform.init(key, root, platformCtx());
+  }
+
+  /**
+   * v1.8.4 계정 연결 탭. 화면은 assets/admin-links.js 가 그린다.
+   * 여기서 넘기는 것은 권한 판정 결과와 이 파일의 1회성 평문 헬퍼 둘뿐이다.
+   * canManage 는 **표시용**이다 — 쓰기 API 전부가 서버에서 superadmin 을 다시 판정한다.
+   */
+  function initLinksTab() {
+    var root = $('#al-root');
+    if (!root) { return; }
+    if (!window.UloginAdminLinks) {
+      root.appendChild(alertNode('assets/admin-links.js를 불러오지 못했습니다. 새로 고침해 보세요.',
+        'danger', '계정 연결 화면을 열 수 없습니다'));
+      return;
+    }
+    window.UloginAdminLinks.init({
+      root: root,
+      me: state.me,
+      canManage: allowed(MIN_RANK.linksWrite),
+      copyBox: copyBox,
+      showOnceModal: showOnceModal,
+      showError: showError
+    });
   }
 
   /* ======================================================================
@@ -1229,40 +1478,37 @@
     clear($('#d-generated'));
     $('#d-generated').appendChild(text('기준 ' + fmtDate(d.generated_at)));
 
-    host.appendChild(el('h3', null, '회원'));
-    host.appendChild(el('div', { class: 'stat-grid' }, [
-      statNode('전체 회원', fmtNum(u.total), null, 'primary'),
-      statNode('활성', fmtNum(u.active), null, 'success'),
-      statNode('대기', fmtNum(u.pending)),
-      statNode('정지', fmtNum(u.suspended), null, 'danger'),
-      statNode('휴면', fmtNum(u.dormant), null, 'warn'),
-      statNode('탈퇴', fmtNum(u.withdrawn)),
-      statNode('오늘 신규', fmtNum(u.new_today), 'UTC 자정 기준'),
-      statNode('7일 신규', fmtNum(u.new_7d)),
-      statNode('30일 신규', fmtNum(u.new_30d))
+    /* v1.9.3 — 카드를 낱개로 깔지 않고 섹션마다 한 패널의 지표 줄로 묶는다. 색은 의미가 있을 때만(실패 ≥ 1). */
+    host.appendChild(statStrip('회원', 'UTC 자정 기준', [
+      { label: '전체 회원', value: fmtNum(u.total) },
+      { label: '활성', value: fmtNum(u.active) },
+      { label: '대기', value: fmtNum(u.pending) },
+      { label: '정지', value: fmtNum(u.suspended) },
+      { label: '휴면', value: fmtNum(u.dormant) },
+      { label: '탈퇴', value: fmtNum(u.withdrawn) },
+      { label: '오늘 신규', value: fmtNum(u.new_today) },
+      { label: '7일 신규', value: fmtNum(u.new_7d) },
+      { label: '30일 신규', value: fmtNum(u.new_30d) }
     ]));
 
-    host.appendChild(el('h3', null, '로그인'));
-    host.appendChild(el('div', { class: 'stat-grid' }, [
-      statNode('오늘 로그(전체)', fmtNum(lg.today), 'UTC 자정 기준'),
-      statNode('7일 성공', fmtNum(lg.success_7d), null, 'success'),
-      statNode('7일 실패', fmtNum(lg.fail_7d), null, 'danger'),
-      statNode('7일 순 사용자', fmtNum(lg.unique_users_7d))
+    host.appendChild(statStrip('로그인', 'UTC 자정 기준', [
+      { label: '오늘 로그(전체)', value: fmtNum(lg.today) },
+      { label: '7일 성공', value: fmtNum(lg.success_7d) },
+      { label: '7일 실패', value: fmtNum(lg.fail_7d), bad: true },
+      { label: '7일 순 사용자', value: fmtNum(lg.unique_users_7d) }
     ]));
 
-    host.appendChild(el('h3', null, '포인트'));
-    host.appendChild(el('div', { class: 'stat-grid' }, [
-      statNode('총 잔액', fmtNum(pt.total_balance), null, 'primary'),
-      statNode('7일 적립', fmtNum(pt.earned_7d), null, 'success'),
-      statNode('7일 사용', fmtNum(pt.spent_7d), null, 'warn')
+    host.appendChild(statStrip('포인트', null, [
+      { label: '총 잔액', value: fmtNum(pt.total_balance) },
+      { label: '7일 적립', value: fmtNum(pt.earned_7d) },
+      { label: '7일 사용', value: fmtNum(pt.spent_7d) }
     ]));
 
-    host.appendChild(el('h3', null, '서비스 · 세션'));
-    host.appendChild(el('div', { class: 'stat-grid' }, [
-      statNode('서비스', fmtNum(sv.total)),
-      statNode('활성 서비스', fmtNum(sv.active), null, 'success'),
-      statNode('비활성 서비스', fmtNum(sv.disabled)),
-      statNode('유효 세션', fmtNum(ss.active), null, 'primary')
+    host.appendChild(statStrip('서비스 · 세션', null, [
+      { label: '서비스', value: fmtNum(sv.total) },
+      { label: '활성 서비스', value: fmtNum(sv.active) },
+      { label: '비활성 서비스', value: fmtNum(sv.disabled) },
+      { label: '유효 세션', value: fmtNum(ss.active) }
     ]));
 
     host.appendChild(el('h3', null, '등급 분포'));
@@ -1279,13 +1525,177 @@
         el('div', { class: 'card-head' }, el('h4', null, '결제등급')),
         el('div', { class: 'card-body' }, [
           distNode('billing_tier', d.by_billing_tier),
-          el('p', { class: 'hint' }, '만료된 결제등급은 free 로 강등해서 집계됩니다.')
+          el('p', { class: 'hint' }, '만료된 결제등급은 free로 강등해서 집계됩니다.')
         ])
       ])
     ]));
   }
 
   $('#d-reload').addEventListener('click', loadStats);
+
+  /* ======================================================================
+   * 4-b. 서버 상태 — GET /api/health   (v1.7.0 · QA Q17-3)
+   *
+   * 응답 키(admin 이상): status, checks, php, db, schema, storage, installer,
+   *                      config, counts, time
+   * 여기서 읽는 것은 **`status` 와 `checks[]` 둘뿐**이다. 나머지 7개는
+   * 운영 문서의 `curl` 절차가 본다 — 콘솔에 전부 늘어놓으면 정작 봐야 할
+   * 한 줄이 묻힌다(GUIDELINE 8장 — 숫자만 늘어놓지 않는다).
+   *
+   * `checks[]` 원소: { key, ok: true|false|null, note: null|string }
+   *   `ok === null` 은 **판단하지 않음**이며 status 계산에 넣지 않는다.
+   *   `ok === false` 하나만 있어도 서버가 `status` 를 `degraded` 로 내린다(계약 §10-1).
+   *
+   * ── `db_port_pinned` 만 원소 모양이 다르다 (v1.7.0 2차 · D-287 · QA Q17-9) ──
+   *   { key:"db_port_pinned", ok:true, pinned:true|false, note }
+   *   1차 판은 고정 여부를 `ok` 로 실었다. 그래서 **공용 호스팅 단독 배포
+   *   (포트를 안 적는 것이 정상)에서 `status` 가 늘 `degraded`** 였고 머리줄이
+   *   늘 「일부 점검 실패」였다 — 진짜 장애가 나도 평상시와 구분되지 않았다.
+   *   이제 `ok` 는 미고정만으로 false 가 되지 않고 **고정 여부는 `pinned`** 로 온다.
+   *   **이 화면은 이 항목에서 `ok` 가 아니라 `pinned` 를 읽는다.** `ok` 를 계속
+   *   읽으면 조합 경보가 영원히 꺼진다(`ok` 가 false 가 될 일이 없어졌다).
+   *
+   * ── 이 화면이 존재하는 이유 (D-172) ──────────────────────────────────
+   * backend 가 `db_port_pinned` 를 넣고 「반드시 보라」고 적었는데 **그 값을
+   * 읽는 화면이 하나도 없었다.** 생산자만 있고 소비자가 0개인 상태였다.
+   *
+   * ── 가장 중요한 판정: `db` = ok 인데 `db_port_pinned` = false ────────
+   * **DB 에는 붙었는데 어느 DB 인지 고정되지 않은 상태**다. 이 PC 에는
+   * 사용자의 살아 있는 3306 인스턴스가 있다.
+   * 그런데 `db_port_pinned=false` **자체는 공용 호스팅 단독 배포에서 정상**이다
+   * (인스턴스가 하나뿐이다). 그래서 **그것만으로 빨갛게 칠하지 않는다** —
+   * 멀쩡한 배포를 빨갛게 만들면 이 화면이 통째로 무시된다(backend 12-6 의 판단).
+   * **두 값의 조합일 때만** 눈에 띄게 한다.
+   * ==================================================================== */
+
+  /** `checks[].key` → 사람이 읽는 이름. 모르는 키는 원문을 그대로 보여준다. */
+  var HEALTH_CHECK_LABELS = {
+    php_version: 'PHP 버전',
+    db: 'DB 접속',
+    db_port_pinned: 'DB 포트 고정',
+    schema: '스키마 리비전',
+    storage: 'storage 쓰기',
+    installer_removed: '설치기 제거',
+    secret_enc_key: '시크릿 암호화 키',
+    debug_off: 'DEBUG 꺼짐',
+    cookie_secure: '쿠키 Secure',
+    proxy_config: '프록시 설정',
+    /* v1.7.0 보안 M17-2 · QA Q17-10. false 면 `TRUST_PROXY` 가 꺼져 있는데
+       루프백 peer 가 `X-Forwarded-For`·`CF-Connecting-IP` 를 달고 온다 —
+       프록시(터널) 뒤인데 신뢰하지 않아 **모든 사용자가 한 IP 버킷**에 묶일 수 있다.
+       이것은 실제 오설정이라 `false` 를 빨간 「실패」로 두는 것이 맞다. */
+    proxy_trust_sane: '프록시 신뢰 설정'
+  };
+
+  var HEALTH_STATUS_LABELS = {
+    ok: '정상',
+    degraded: '일부 점검 실패',
+    unavailable: 'DB 미접속'
+  };
+
+  function loadHealth() {
+    var host = $('#h-host');
+    showLoading(host, '서버 상태를 확인하는 중…');
+    apiGet('/api/health')
+      .then(function (d) { renderHealth(d); })
+      .catch(function (err) {
+        clear($('#h-status'));
+        showError(host, err, '서버 상태를 불러올 수 없습니다');
+      });
+  }
+
+  function renderHealth(d) {
+    var host = $('#h-host');
+    clear(host);
+
+    var checks = (d && d.checks) || [];
+
+    /* 키로 바로 찾기. `checks[]` 는 순서가 고정이지만 **순서에 기대지 않는다** —
+       backend 가 항목을 하나 끼워 넣으면 인덱스 접근은 조용히 다른 값을 읽는다. */
+    var byKey = {};
+    for (var i = 0; i < checks.length; i++) {
+      if (checks[i] && checks[i].key) { byKey[checks[i].key] = checks[i]; }
+    }
+
+    /* ── 머리줄: 전체 상태 ── */
+    var st = d && d.status ? String(d.status) : '';
+    clear($('#h-status'));
+    $('#h-status').appendChild(text(
+      (HEALTH_STATUS_LABELS[st] || nz(st)) + (d && d.time ? ' · ' + fmtDate(d.time) : '')
+    ));
+
+    /* ── 조합 경보: db=ok 인데 pinned=false ──
+       이 한 줄이 이 카드의 존재 이유다. 다른 어떤 조합에서도 띄우지 않는다.
+       `cPin.ok` 가 아니라 **`cPin.pinned`** 를 본다(위 머리 주석 — D-287). */
+    var cDb = byKey.db;
+    var cPin = byKey.db_port_pinned;
+    if (cDb && cDb.ok === true && cPin && cPin.pinned === false) {
+      /* v1.7.0 2차 · 리더 판정 — **info 톤이다. 경고색을 쓰지 않는다.**
+         이 조합이 위험한 것은 **같은 호스트에 다른 MySQL 서버가 있을 때뿐**이다
+         (이 개발 PC 의 사용자 3306 처럼). 공용 호스팅에서는 이 조합이 **평상시**다 —
+         DB 에 붙어 있고 포트를 적지 않는 것이 정상 설정이다. 화면은 둘을 구분할
+         근거가 없다. 경고색이면 정상 배포마다 노란 배너가 뜨고 곧 무시된다
+         (Q17-9 와 같은 구조). 그래서 문구가 **언제 문제인지**를 말한다. */
+      host.appendChild(alertNode(
+        'MySQL을 쓰고 같은 PC(서버)에 다른 DB 서버가 함께 떠 있다면 server/config.php의 ' +
+        'DB_PORT로 포트를 고정하세요. 고정하지 않으면 의도한 DB가 아니라 다른 서버에 ' +
+        '붙을 수 있습니다. 공용 호스팅처럼 DB 서버가 하나뿐이라면 그대로 두어도 됩니다.',
+        'info',
+        'DB 포트가 설정에 고정돼 있지 않습니다'
+      ));
+    }
+
+    if (checks.length === 0) {
+      host.appendChild(emptyNode(
+        '점검 항목이 없습니다',
+        '관리자 권한으로 보고 있는지 확인해 주세요. 관리자가 아니면 상태 한 줄만 응답합니다.'
+      ));
+      return;
+    }
+
+    /* ── 점검 항목 표 ──
+       `ok` 를 색만으로 나타내지 않는다 — 글자(정상/실패/미판정)를 함께 쓴다
+       (GUIDELINE 7장 · auth-ui-builder 접근성 규약). */
+    var rows = [];
+    for (var j = 0; j < checks.length; j++) {
+      var c = checks[j] || {};
+      var key = c.key ? String(c.key) : '';
+      var label = HEALTH_CHECK_LABELS[key] || nz(key);
+
+      var mark, cls;
+      if (c.ok === true) { mark = '정상'; cls = 'text-success'; }
+      else if (c.ok === false) { mark = '실패'; cls = 'text-danger'; }
+      else { mark = '미판정'; cls = 'text-muted'; }
+
+      /* `db_port_pinned` 행은 `ok` 가 아니라 **`pinned`** 로 그린다(D-287).
+         - `ok` 가 false 이면(점검 자체가 실패) 위의 일반 규칙 그대로 「실패」다
+         - `pinned=false` 는 **단독으로는 실패가 아니다.** 조합 경보가 맡는다.
+           여기서 빨갛게 칠하면 멀쩡한 공용 호스팅 배포가 빨개진다
+         - `pinned` 가 불리언이 아니면 서버가 그 필드를 보내지 않은 것이다.
+           `ok` 로 대신 판정하지 않는다 — 두 뜻을 섞으면 1차 결함이 돌아온다.
+           「알 수 없음」으로 **보이게** 남긴다(조용히 「정상」으로 두지 않는다) */
+      if (key === 'db_port_pinned' && c.ok !== false) {
+        if (c.pinned === true) { mark = '고정됨'; cls = 'text-success'; }
+        else if (c.pinned === false) { mark = '고정 안 됨'; cls = 'text-muted'; }
+        else { mark = '알 수 없음(pinned 없음)'; cls = 'text-muted'; }
+      }
+
+      rows.push(el('tr', null, [
+        el('td', { class: 'nowrap' }, label),
+        el('td', { class: ['nowrap', cls] }, mark),
+        /* `nz()` 는 이 화면의 헬퍼다(`dash()` 는 mypage.html 쪽 이름이라 여기 없다). */
+        el('td', null, nz(c.note))
+      ]));
+    }
+
+    /* `tableNode(headers)` 는 요소가 아니라 `{wrap, table, tbody}` 를 돌려준다.
+       `host.appendChild(tableNode(...))` 로 쓰면 TypeError 다. */
+    var ht = tableNode(['항목', '결과', '설명']);
+    for (var k = 0; k < rows.length; k++) { ht.tbody.appendChild(rows[k]); }
+    host.appendChild(ht.wrap);
+  }
+
+  $('#h-reload').addEventListener('click', loadHealth);
 
   /* ======================================================================
    * 5. 회원 탭 — GET /api/admin/users
@@ -1578,6 +1988,15 @@
       host.appendChild(ot.wrap);
     }
 
+    /* --- 시스템별 허용 (v1.9.0 — GET /api/admin/service_access?uuid, admin 이상. 서버 판정값 그대로) --- */
+    if (allowed(MIN_RANK.platform) && window.UloginAdminPlatform) {
+      host.appendChild(el('h4', null, '시스템별 허용'));
+      var accHost = el('div');
+      host.appendChild(accHost);
+      window.UloginAdminPlatform.setContext(platformCtx());
+      window.UloginAdminPlatform.userAccess(accHost, u.uuid);
+    }
+
     /* --- 조작 영역 (D-36) ------------------------------------------------
        수정 폼 · 포인트 조정 · 계정 조작은 전부 admin 이상 엔드포인트다
        (user_detail.php:252 PUT / user_points.php:101 / user_status.php:176 /
@@ -1587,8 +2006,8 @@
     if (!canWriteUsers()) {
       host.appendChild(el('h4', null, '계정 조작'));
       host.appendChild(alertNode(
-        '이 화면은 읽기 전용입니다. 회원 정보 수정 · 포인트 조정 · 정지 · 복구 · 비밀번호 초기화 · '
-        + '세션 종료 · 하드 삭제는 관리자(admin) 이상 권한이 필요합니다.',
+        '이 화면은 읽기 전용입니다. 회원 정보 수정, 포인트 조정, 정지, 복구, 비밀번호 초기화, '
+        + '세션 종료, 하드 삭제는 관리자(admin) 이상 권한이 필요합니다.',
         'info', '읽기 전용 (' + labelOf('role', state.me ? state.me.role : null) + ')'
       ));
       renderUserDetailHistory(host, d);
@@ -1618,7 +2037,7 @@
     /* 서버는 자기 자신의 세션 종료를 허용하지만, 지시(자기방어 UI)에 따라 콘솔에서는 막는다. */
     var revokeReason = null;
     if (state.me && u.uuid === state.me.uuid) {
-      revokeReason = '자신의 세션은 마이페이지 → 세션 탭에서 종료하세요.';
+      revokeReason = '자신의 세션은 마이페이지 > 세션 탭에서 종료하세요.';
     } else if ((u.role_rank | 0) >= myRoleRank()) {
       revokeReason = '자신과 같거나 높은 권한의 계정은 세션을 종료할 수 없습니다.';
     } else if (!u.session_count) {
@@ -1633,6 +2052,7 @@
       actionButton('복구', 'btn-secondary', restoreReason, function () { openStatusAction(host, u, uuid, 'restore'); }),
       actionButton('비밀번호 초기화', 'btn-secondary', resetReason, function () { openStatusAction(host, u, uuid, 'reset-password'); }),
       actionButton('세션 전체 종료', 'btn-secondary', revokeReason, function () { openRevokeSessions(host, u, uuid); }),
+      actionButton('비상 확인값 폐기', 'btn-secondary', isSuperadmin() ? null : '최고관리자만 할 수 있습니다.', function () { openEmergencyRevoke(host, u, uuid); }),
       actionButton('하드 삭제', 'btn-danger', deleteReason, function (ev) { openHardDelete(ev.target, u, uuid); })
     ]));
     host.appendChild(el('p', { class: 'hint' },
@@ -1869,7 +2289,7 @@
     var inMemo = textInput(idMemo, 'memo', '', { maxlength: '255' });
 
     form.appendChild(el('div', { class: 'grid-2' }, [
-      fieldNode('증감(delta)', inDelta, '부호 포함. 0 은 허용되지 않습니다. 현재 잔액 ' + fmtNum(u.points)),
+      fieldNode('증감(delta)', inDelta, '부호를 포함합니다. 0은 허용되지 않습니다. 현재 잔액 ' + fmtNum(u.points)),
       fieldNode('사유(reason)', inReason, '비우면 admin_adjust'),
       fieldNode('메모(memo)', inMemo, '감사 로그와 포인트 원장에 남습니다')
     ]));
@@ -1884,7 +2304,7 @@
       var raw = inDelta.value.trim();
       var delta = parseInt(raw, 10);
       if (raw === '' || isNaN(delta) || delta === 0) {
-        formErrors(form, { field: 'delta', message: '0 이 아닌 정수를 입력해 주세요.' });
+        formErrors(form, { field: 'delta', message: '0이 아닌 정수를 입력해 주세요.' });
         return;
       }
       var body = { delta: delta };
@@ -1935,7 +2355,7 @@
     var inUser = textInput(uid('sa-user'), 'new_username', '', { maxlength: '50', spellcheck: 'false' });
     var inEmail = textInput(uid('sa-email'), 'new_email', '', { type: 'email', maxlength: '190', spellcheck: 'false' });
     var chkMail = checkNode(uid('sa-mail'), 'send_email', '임시 비밀번호를 회원 이메일로 발송', false,
-      '발송에 성공하면 응답의 temp_password 가 마스킹됩니다(그때는 화면에 표시되지 않습니다)');
+      '발송에 성공하면 응답의 temp_password가 마스킹됩니다(그때는 화면에 표시되지 않습니다)');
 
     modal({
       title: titles[action],
@@ -2022,6 +2442,28 @@
     });
   }
 
+  /* --- 비상 확인값 폐기 (POST /api/admin/emergency) - v1.9.1 ----------- */
+
+  function openEmergencyRevoke(host, u, uuid) {
+    modal({
+      title: '비상 확인값 폐기',
+      danger: true,
+      confirmText: '폐기',
+      body: function (b) {
+        b.appendChild(alertNode(
+          '이 회원의 비상 로그인 확인값을 모든 시스템에서 폐기합니다. 다음 로그인 때 새로 발급됩니다.',
+          'warn', u.username
+        ));
+      },
+      onConfirm: function () {
+        return apiPost('/api/admin/emergency', { uuid: uuid });
+      }
+    }).then(function (res) {
+      if (!res) { return; }
+      toast('비상 확인값 ' + fmtNum(res.revoked) + '건을 폐기했습니다.', 'success');
+    });
+  }
+
   /* --- 하드 삭제 (DELETE user_detail?uuid=&confirm=) ------------------ */
 
   function openHardDelete(originNode, u, uuid) {
@@ -2053,7 +2495,7 @@
       alertModal('삭제 완료', '세션 ' + fmtNum(p.sessions) + ' · 서비스가입 ' + fmtNum(p.user_services)
         + ' · 동의 ' + fmtNum(p.user_consents) + ' · 인증코드 ' + fmtNum(p.auth_codes)
         + ' · 비번재설정 ' + fmtNum(p.password_resets) + ' · 이메일인증 ' + fmtNum(p.email_verifications)
-        + ' 건 삭제 / 로그인로그 ' + fmtNum(a.login_logs) + '건 익명화 · 포인트원장 '
+        + ' 건 삭제 · 계정 연결 ' + fmtNum(p.account_links) + '건 해제 / 로그인로그 ' + fmtNum(a.login_logs) + '건 익명화 · 포인트원장 '
         + fmtNum(a.point_logs) + '건 · 관리자로그 ' + fmtNum(a.admin_logs) + '건 보존');
       closeHostModal(originNode);
       loadUsers();
@@ -2123,7 +2565,8 @@
         el('td', { class: 'mono nowrap' }, s.service_id),
         el('td', null, nz(s.service_name)),
         el('td', null, SERVICE_STATUS_LABELS[s.status] || nz(s.status)),
-        el('td', null, boolText(s.is_confidential)),
+        /* D-288 — confidential 이 꺼진 서비스는 무음 로그인이 안 된다. 목록에서도 보이게 한다. */
+        el('td', null, s.is_confidential ? boolText(s.is_confidential) : boolText(s.is_confidential) + ' · 무음 로그인 불가'),
         el('td', null, s.has_secret ? '설정됨' : '없음'),
         el('td', null, boolText(s.auto_join)),
         el('td', null, boolText(s.allow_register)),
@@ -2172,7 +2615,7 @@
     var isCreate = (mode === 'create');
 
     var inId = textInput(uid('sf-id'), 'service_id', s.service_id, { maxlength: '64', spellcheck: 'false' });
-    if (!isCreate) { inId.readOnly = true; inId.title = '서비스 ID 는 변경할 수 없습니다.'; }
+    if (!isCreate) { inId.readOnly = true; inId.title = '서비스 ID는 변경할 수 없습니다.'; }
     var inName = textInput(uid('sf-name'), 'service_name', s.service_name, { maxlength: '100' });
     var inDesc = textInput(uid('sf-desc'), 'description', s.description, { maxlength: '255' });
     var selStatus = selectNode(uid('sf-status'), 'status', [
@@ -2208,8 +2651,22 @@
       isCreate ? true : !!s.auto_join);
     var chkReg = checkNode(uid('sf-reg'), 'allow_register', '이 서비스에서 회원가입 허용',
       isCreate ? true : !!s.allow_register);
+    /* v1.9.1 - 비상 로그인 확인값(emergency/1). 허용이 꺼지면 이미 나간 값도 폐기된다. */
+    var chkEmg = checkNode(uid('sf-emg'), 'emergency_allow', '비상 로그인 허용',
+      isCreate ? true : (s.emergency_allow !== false),
+      '통합로그인이 멈췄을 때 이 시스템에만 로그인하는 확인값을 보낸다. 끄면 보낸 값도 폐기');
+    var inEmgDays = el('input', {
+      type: 'number', id: uid('sf-emgd'), name: 'emergency_days', min: '1', max: '365',
+      value: String(s.emergency_days === undefined ? 30 : s.emergency_days)
+    });
+    /* v1.7.0 2차 · 리더 판정 D-288 — 로그인 화면은 `is_confidential=0` 서비스의
+       무음 거절(403)에 **배너를 띄우지 않는다**(정상 상태를 경보로 만들지 않는다).
+       대신 운영자가 알아야 할 사실을 여기 **정적으로** 둔다. */
     var chkConf = checkNode(uid('sf-conf'), 'is_confidential', 'confidential 서비스 (코드 교환 시 서비스 시크릿 필요)',
-      !!s.is_confidential);
+      !!s.is_confidential,
+      '끄면 이 서비스는 무음 로그인(이미 로그인된 사용자의 재인증 없는 SSO)을 쓸 수 없습니다. '
+      + '사용자는 이 서비스로 들어올 때마다 비밀번호를 다시 입력합니다. '
+      + '서비스 시크릿 없이 교환되는 code를 무음으로 내주지 않기 위한 제한입니다.');
     var inSecret = textInput(uid('sf-secret'), 'service_secret', '', { maxlength: '255', spellcheck: 'false' });
     var chkRegen = checkNode(uid('sf-regen'), 'regenerate_secret', '서비스 시크릿을 서버에서 새로 생성', false);
     var inReason = textInput(uid('sf-reason'), 'reason', '', { maxlength: '255' });
@@ -2240,12 +2697,14 @@
         form.appendChild(fieldNode(
           [text('payload_fields '), el('span', { class: 'badge', 'aria-hidden': 'true' }, '준비 중')],
           taPayload,
-          'v1.0.0에서는 적용되지 않습니다. 이 값은 payload 의 사용자 필드를 실제로 제한하지 않으며,'
+          'v1.0.0에서는 적용되지 않습니다. 이 값은 payload의 사용자 필드를 실제로 제한하지 않으며,'
           + ' 서비스는 이 값과 무관하게 기본 필드셋을 받습니다. 그래서 콘솔에서는 입력을 막아 둡니다'
           + ' — 저장해 두면 다음 버전에서 필터링이 켜질 때 예상하지 못한 값이 갑자기 효력을 갖습니다.'
           + ' 사용자 필드 제한은 다음 버전에 구현될 예정입니다.'));
         form.appendChild(chkAuto.wrap);
         form.appendChild(chkReg.wrap);
+        form.appendChild(chkEmg.wrap);
+        form.appendChild(fieldNode('비상 확인값 유효 일수', inEmgDays, '1 ~ 365, 기본 30'));
         form.appendChild(chkConf.wrap);
         if (!isCreate) { form.appendChild(chkRegen.wrap); }
         form.appendChild(fieldNode('서비스 시크릿', inSecret,
@@ -2283,6 +2742,8 @@
           body.allowed_origins = origins;
           body.auto_join = !!chkAuto.input.checked;
           body.allow_register = !!chkReg.input.checked;
+          body.emergency_allow = !!chkEmg.input.checked;
+          body.emergency_days = parseInt(inEmgDays.value, 10);
           body.is_confidential = !!chkConf.input.checked;
           if (inSecret.value.trim() !== '') { body.service_secret = inSecret.value.trim(); }
           if (inReason.value.trim() !== '') { body.reason = inReason.value.trim(); }
@@ -2302,6 +2763,8 @@
         /* payload_fields 는 diff 대상에서 제외한다 (F-7). 위 주석 참조. */
         if (!!chkAuto.input.checked !== !!s.auto_join) { body.auto_join = !!chkAuto.input.checked; }
         if (!!chkReg.input.checked !== !!s.allow_register) { body.allow_register = !!chkReg.input.checked; }
+        if (!!chkEmg.input.checked !== (s.emergency_allow !== false)) { body.emergency_allow = !!chkEmg.input.checked; }
+        if (parseInt(inEmgDays.value, 10) !== Number(s.emergency_days === undefined ? 30 : s.emergency_days)) { body.emergency_days = parseInt(inEmgDays.value, 10); }
         if (!!chkConf.input.checked !== !!s.is_confidential) { body.is_confidential = !!chkConf.input.checked; }
         if (chkRegen.input.checked) { body.regenerate_secret = true; }
         if (inSecret.value.trim() !== '') { body.service_secret = inSecret.value.trim(); }
@@ -2336,7 +2799,7 @@
       danger: true,
       confirmText: '영구 삭제',
       confirmPhrase: s.service_id,
-      confirmPhraseLabel: '되돌릴 수 없습니다. 계속하려면 서비스 ID 를 그대로 입력하세요: ',
+      confirmPhraseLabel: '되돌릴 수 없습니다. 계속하려면 서비스 ID를 그대로 입력하세요: ',
       body: function (b) {
         b.appendChild(alertNode(
           '시크릿 ' + fmtNum(s.secret_count) + '개와 가입 정보 ' + fmtNum(s.user_count)
@@ -2357,7 +2820,7 @@
       var p = res.purged || {};
       toast('삭제했습니다: ' + res.service_id + ' (시크릿 ' + fmtNum(p.service_secrets)
         + ' · 가입 ' + fmtNum(p.user_services) + ' · 세션 ' + fmtNum(p.sessions)
-        + ' · 코드 ' + fmtNum(p.auth_codes) + ')', 'success');
+        + ' · 코드 ' + fmtNum(p.auth_codes) + ' · 외부 계정 ' + fmtNum(p.ext_accounts) + ')', 'success');
       loadServices();
       state.serviceOptions = [];
       if (state.secrets.service_id === res.service_id) { state.secrets.service_id = ''; }
@@ -2759,12 +3222,12 @@
       statNode('점검한 시크릿', fmtNum(report.secrets), null),
       statNode('확인이 필요한 행', fmtNum(needReview.length),
         needReview.length > 0
-          ? '게이트도 없고 공개 승인 표식도 없습니다 — 사람이 확인하세요'
+          ? '게이트도 없고 공개 승인 표식도 없습니다. 사람이 확인하세요'
           : '게이트 없이 열려 있으면서 승인되지 않은 행이 없습니다',
         needReview.length > 0 ? 'danger' : 'success'),
       statNode('공개를 승인한 행', fmtNum(approved.length),
         approved.length > 0
-          ? 'allow_public=true 로 승인된 행 · 게이트는 없습니다'
+          ? 'allow_public=true로 승인된 행 · 게이트는 없습니다'
           : '승인 표식이 붙은 행이 없습니다',
         approved.length > 0 ? 'warn' : null)
     ]));
@@ -2772,7 +3235,7 @@
     if (unknown > 0) {
       host.appendChild(alertNode(
         fmtNum(unknown) + '개 행의 응답에 allow_public 표식이 없어 승인 여부를 확인할 수 없었습니다. '
-        + '위쪽 묶음에 함께 넣었습니다 — 승인 여부는 관리자 조작 로그로 확인하세요.',
+        + '위쪽 묶음에 함께 넣었습니다. 승인 여부는 관리자 조작 로그로 확인하세요.',
         'warn', '승인 여부를 알 수 없는 행이 있습니다'));
     }
 
@@ -2789,9 +3252,9 @@
     if (report.findings.length === 0) {
       host.appendChild(emptyNode(
         '게이트 없는 민감 시크릿을 찾지 못했습니다.',
-        '판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과입니다 — 사본이 서버와 어긋나면 '
+        '판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과입니다. 사본이 서버와 어긋나면 '
         + '이 “없음”도 틀릴 수 있습니다. 실제 차단은 생성·수정 시점에 서버가 합니다. '
-        + '또한 이 점검은 시크릿 한 건의 최소 등급만 봅니다 — 서비스의 default_account_level 이 '
+        + '또한 이 점검은 시크릿 한 건의 최소 등급만 봅니다. 서비스의 default_account_level이 '
         + '게이트를 자동으로 열어 주는 조합은 “없음”에 포함되지 않습니다.'));
       return;
     }
@@ -2830,7 +3293,7 @@
         if (flag === true) {
           flagCell = el('td', { class: 'text-warn nowrap' }, '승인됨 (allow_public)');
         } else if (flag === false) {
-          flagCell = el('td', { class: 'text-danger nowrap' }, '없음 — 미승인');
+          flagCell = el('td', { class: 'text-danger nowrap' }, '없음(미승인)');
         } else {
           flagCell = el('td', { class: 'text-muted nowrap' }, '응답에 표식 없음');
         }
@@ -2846,7 +3309,7 @@
           el('td', null, x.min_role ? labelOf('role', x.min_role) : '없음'),
           el('td', null, SECRET_STATUS_LABELS[x.status] || nz(x.status)),
           el('td', { class: (live && !serviceOff) ? 'text-danger' : 'text-muted' },
-            (live && !serviceOff) ? '예 — 가입자 전원에게' : '아니오 (다시 켜면 나간다)'),
+            (live && !serviceOff) ? '예(가입자 전원에게)' : '아니오 (다시 켜면 나간다)'),
           el('td', { class: 'actions' }, openBtn)
         ]));
       });
@@ -2871,20 +3334,20 @@
     if (approved.length > 0) {
       host.appendChild(el('h4', null, '공개를 승인한 행 ' + fmtNum(approved.length) + '건'));
       host.appendChild(el('p', { class: 'hint' },
-        '운영자가 allow_public=true 로 확인하고 통과시킨 행입니다. 조치가 필요하지 않습니다 — '
+        '운영자가 allow_public=true로 확인하고 통과시킨 행입니다. 조치가 필요하지 않습니다. '
         + '다만 게이트가 없으므로 그 서비스 가입자 전원에게 전달됩니다. 승인이 아직 유효한 판단인지만 확인하세요.'));
       host.appendChild(gateScanTable(approved));
     }
 
     host.appendChild(el('p', { class: 'hint' },
-      '각 축의 기본값 이하로 건 게이트는 게이트로 세지 않습니다 — 계정등급 basic(과 guest) · '
+      '각 축의 기본값 이하로 건 게이트는 게이트로 세지 않습니다: 계정등급 basic(과 guest) · '
       + '결제등급 free · 역할 user. 전원이 이미 그 값을 갖고 있어 통과 조건이 “제한 없음”과 같습니다. '
-      + '이 판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과이며, 실제 차단은 서버가 합니다 — '
+      + '이 판정은 브라우저가 서버 규칙을 사본으로 다시 적용한 결과이며, 실제 차단은 서버가 합니다. '
       + '서버와 다르게 보이면 서버가 정답입니다. '
-      + '이 점검은 시크릿 한 건의 최소 등급만 봅니다 — 서비스의 default_account_level 이 '
+      + '이 점검은 시크릿 한 건의 최소 등급만 봅니다. 서비스의 default_account_level이 '
       + '그 게이트를 가입 시점에 자동으로 열어 주는 조합은 여기서 잡히지 않습니다(서비스 탭에서 함께 확인하세요). '
       + '공개 승인 표식은 목록 응답의 allow_public 값이며, 마이그레이션 0002 미적용 설치본에서는 '
-      + '전부 “없음 — 미승인” 으로 보입니다(안전한 쪽의 오차입니다).'));
+      + '전부 “없음(미승인)”으로 보입니다(안전한 쪽의 오차입니다).'));
   }
 
   function openSecretForm(mode, s) {
@@ -3135,13 +3598,26 @@
     /* summary — 값이 0인 키도 전부 온다. 그래서 라벨이 없는 값이 있으면
        이 탭을 열 때마다 영문 원시 키가 타일 제목으로 나온다(조건 없이 재현된다). */
     var sm = d.summary || {};
-    var tiles = Object.keys(sm).map(function (k) {
-      return statNode(LOGIN_RESULT_LABELS[k] || k, fmtNum(sm[k]),
-        LOGIN_RESULT_TILE_SUB[k] || null, loginResultTone(k));
-    });
     var sumHost = $('#ll-summary');
     clear(sumHost);
-    if (tiles.length) { sumHost.appendChild(el('div', { class: 'stat-grid' }, tiles)); }
+    LOGIN_SUMMARY_GROUPS.forEach(function (g) {
+      var cells = [];
+      g.keys.forEach(function (k) {
+        if (!Object.prototype.hasOwnProperty.call(sm, k)) { return; }
+        cells.push({
+          label: LOGIN_SUMMARY_SHORT[k] || LOGIN_RESULT_LABELS[k] || k,
+          value: fmtNum(sm[k]), tip: LOGIN_RESULT_TILE_SUB[k] || null, bad: g.bad && k !== 'fail_refresh_revoked'
+        });
+      });
+      if (cells.length) { sumHost.appendChild(statStrip(g.title, null, cells)); }
+    });
+    /* 서버가 새 결과값을 추가해도 타일이 사라지지 않게 — 묶음에 없는 키는 「기타」로 모은다. */
+    var known = {};
+    LOGIN_SUMMARY_GROUPS.forEach(function (g) { g.keys.forEach(function (k) { known[k] = 1; }); });
+    var rest = Object.keys(sm).filter(function (k) { return !known[k]; }).map(function (k) {
+      return { label: LOGIN_RESULT_LABELS[k] || k, value: fmtNum(sm[k]), tip: LOGIN_RESULT_TILE_SUB[k] || null };
+    });
+    if (rest.length) { sumHost.appendChild(statStrip('기타', null, rest)); }
 
     if (!d.items || d.items.length === 0) {
       host.appendChild(emptyNode('조건에 맞는 로그가 없습니다.'));
@@ -3361,12 +3837,12 @@
       var wholeIp = Number(sm.ip_changed_rows) || 0;
       tiles = [
         statNode('버킷 줄 수 (조건 전체)', fmtNum(d.total || 0),
-          '접근 횟수가 아니다 · 아래 “전체 N건”도 이 값이다'),
+          '접근 횟수가 아닙니다 · 아래 “전체 N건”도 이 값입니다'),
         statNode('전달 횟수 합계 (조건 전체)', fmtNum(Number(sm.hits) || 0),
-          '서버가 조건 전체를 집계한 값 · 페이지를 넘겨도 바뀌지 않는다'
+          '서버가 조건 전체를 집계한 값입니다 · 페이지를 넘겨도 바뀌지 않습니다'
           + ' · 이 페이지 ' + fmtNum(items.length) + '줄의 소계는 ' + fmtNum(pageHits)),
-        statNode('IP 가 바뀐 줄 (조건 전체)', fmtNum(wholeIp),
-          '같은 세션이 여러 IP 에서 쓰였다 · 탈취 신호일 수 있다'
+        statNode('IP가 바뀐 줄 (조건 전체)', fmtNum(wholeIp),
+          '같은 세션이 여러 IP에서 쓰였습니다 · 탈취 신호일 수 있습니다'
           + ' · 이 페이지의 소계는 ' + fmtNum(pageIpChanged),
           wholeIp > 0 ? 'danger' : null)
       ];
@@ -3379,11 +3855,11 @@
         'warn', '집계를 받지 못했습니다'));
       tiles = [
         statNode('버킷 줄 수 (조건 전체)', fmtNum(d.total || 0),
-          '접근 횟수가 아니다 · 아래 “전체 N건”도 이 값이다'),
+          '접근 횟수가 아닙니다 · 아래 “전체 N건”도 이 값입니다'),
         statNode('전달 횟수 소계 (이 페이지)', fmtNum(pageHits),
-          '현재 페이지 ' + fmtNum(items.length) + '줄만 합산 · 조건 전체 합계가 아니다', 'warn'),
-        statNode('IP 가 바뀐 줄 (이 페이지)', fmtNum(pageIpChanged),
-          '현재 페이지만 센 값 · 조건 전체가 아니다',
+          '현재 페이지 ' + fmtNum(items.length) + '줄만 합산합니다 · 조건 전체 합계가 아닙니다', 'warn'),
+        statNode('IP가 바뀐 줄 (이 페이지)', fmtNum(pageIpChanged),
+          '현재 페이지만 센 값입니다 · 조건 전체가 아닙니다',
           pageIpChanged > 0 ? 'danger' : 'warn')
       ];
     }
@@ -3498,8 +3974,8 @@
         settingInputs[it.skey] = { input: ni, vtype: 'int' };
       } else if (it.skey === 'mail_driver') {
         var sd = selectNode(id, it.skey, [
-          { v: 'log', label: 'log (storage/mail 에 파일로 저장)' },
-          { v: 'mail', label: 'mail (PHP mail() 로 발송)' }
+          { v: 'log', label: 'log (storage/mail에 파일로 저장)' },
+          { v: 'mail', label: 'mail (PHP mail()로 발송)' }
         ], it.svalue);
         node = fieldNode(it.label + ' (' + it.skey + ')', sd,
           'v1.0.0 기본값은 log · 최근 수정 ' + fmtDate(it.updated_at));
@@ -3707,13 +4183,13 @@
   function bundleParseInput() {
     var raw = String($('#bi-text').value);
     if (raw.trim() === '') {
-      return { ok: false, message: '번들 JSON 을 붙여넣거나 파일을 선택해 주세요.' };
+      return { ok: false, message: '번들 JSON을 붙여넣거나 파일을 선택해 주세요.' };
     }
     var parsed;
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
-      return { ok: false, message: 'JSON 을 해석할 수 없습니다: ' + (e && e.message ? e.message : '파싱 오류') };
+      return { ok: false, message: 'JSON을 해석할 수 없습니다: ' + (e && e.message ? e.message : '파싱 오류') };
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return { ok: false, message: '번들은 JSON 객체여야 합니다. 배열이나 값 하나를 보낼 수 없습니다.' };
@@ -3736,8 +4212,8 @@
     if (meta && meta.error_count && meta.error_count !== errors.length) {
       lines.push('# 서버가 센 오류: ' + meta.error_count + '건 (표시 상한으로 잘렸습니다)');
     }
-    lines.push('# path 는 JSON Pointer(RFC 6901) 입니다. 번들 루트 기준으로 그 자리를 고치세요.');
-    lines.push('# got 이 "***" 인 것은 시크릿 값 자리입니다. 서버가 값을 보내지 않습니다.');
+    lines.push('# path는 JSON Pointer(RFC 6901) 입니다. 번들 루트 기준으로 그 자리를 고치세요.');
+    lines.push('# got이 "***" 인 것은 시크릿 값 자리입니다. 서버가 값을 보내지 않습니다.');
     lines.push('');
     errors.forEach(function (e, i) {
       lines.push((i + 1) + ') path: ' + nz(e.path));
@@ -3769,7 +4245,7 @@
           confirmText: '닫기',
           body: function (b) {
             var ta = el('textarea', { rows: 16, class: 'mono', readonly: true, spellcheck: 'false' }, payload);
-            b.appendChild(el('p', { class: 'hint' }, '전체를 선택해 복사한 뒤 AI 에게 그대로 주면 됩니다.'));
+            b.appendChild(el('p', { class: 'hint' }, '전체를 선택해 복사한 뒤 AI에게 그대로 주면 됩니다.'));
             b.appendChild(ta);
             try { ta.focus(); ta.select(); } catch (e) { /* noop */ }
           }
@@ -3827,9 +4303,9 @@
     });
 
     host.appendChild(alertNode(
-      '오류를 한 번에 전부 돌려줍니다. 「오류 복사」로 목록을 통째로 복사해 AI 에게 주면 '
-      + 'path 자리를 expected 에 맞게 고칠 수 있습니다. '
-      + '시크릿 값 자리의 got 은 항상 "***" 입니다 — 서버는 값을 응답에 싣지 않습니다.',
+      '오류를 한 번에 전부 돌려줍니다. 「오류 복사」로 목록 전체를 복사해 AI에게 주면 '
+      + 'path 자리를 expected에 맞게 고칠 수 있습니다. '
+      + '시크릿 값 자리의 got은 항상 "***"입니다. 서버는 값을 응답에 싣지 않습니다.',
       'danger', '번들을 적용하지 않았습니다'
     ));
     host.appendChild(head);
@@ -3859,7 +4335,7 @@
       host.appendChild(alertBoxNode('', tone, title, ul));
     }
     block(loud, 'danger', '반드시 확인할 경고 ' + loud.length + '건');
-    block(rest, 'warn', '경고 ' + rest.length + '건 — 적용을 막지는 않습니다');
+    block(rest, 'warn', '경고 ' + rest.length + '건(적용을 막지는 않습니다)');
   }
 
   /**
@@ -3887,7 +4363,7 @@
       ]));
     });
     host.appendChild(alertBoxNode(nz(env.note), 'warn',
-      '다른 설치본의 번들일 수 있습니다 — 불일치 ' + mism.length + '건', [
+      '다른 설치본의 번들일 수 있습니다: 불일치 ' + mism.length + '건', [
         t.wrap,
         el('p', { class: 'text-sm' },
           '거절하지 않습니다. 의도한 이식이면 그대로 적용해도 됩니다. '
@@ -3906,7 +4382,7 @@
     });
     host.appendChild(alertBoxNode(
       done
-        ? '아래 시크릿은 값이 비어 있습니다. 값을 넣고 status 를 active 로 바꾸기 전까지 payload 에 나가지 않습니다.'
+        ? '아래 시크릿은 값이 비어 있습니다. 값을 넣고 status를 active로 바꾸기 전까지 payload에 나가지 않습니다.'
         : '아래 시크릿은 값이 비어 있어 그대로 두면 값 없이 만들어집니다.',
       'warn', '손으로 값을 채워야 하는 시크릿 ' + pending.length + '건', ul
     ));
@@ -3924,7 +4400,7 @@
       statNode('시크릿 생성', fmtNum(c.secrets_create), null, 'success'),
       statNode('시크릿 갱신', fmtNum(c.secrets_update),
         '변경 없음 ' + fmtNum(c.secrets_unchanged) + ' · 건너뜀 ' + fmtNum(c.secrets_skipped)),
-      statNode('삭제', fmtNum(c.deletes), 'import 는 삭제하지 않습니다')
+      statNode('삭제', fmtNum(c.deletes), 'import는 삭제하지 않습니다')
     ]);
   }
 
@@ -3937,15 +4413,15 @@
     var safe = (plan.deletes_possible === false) && (Number(c.deletes) === 0);
     if (safe) {
       return alertNode(
-        'import 는 INSERT 와 UPDATE 만 합니다. 번들에 없는 서비스·시크릿·설정은 그대로 남습니다. '
-        + '은퇴는 삭제가 아니라 status 를 disabled 로 바꾸는 것입니다.',
+        'import는 INSERT와 UPDATE만 합니다. 번들에 없는 서비스·시크릿·설정은 그대로 남습니다. '
+        + '은퇴는 삭제가 아니라 status를 disabled로 바꾸는 것입니다.',
         'success', '삭제되는 것 없음 (deletes 0)'
       );
     }
     return alertNode(
       '이 서버가 삭제 가능성을 보고했습니다 (deletes_possible=' + String(plan.deletes_possible)
       + ' · counts.deletes=' + String(c.deletes) + '). '
-      + '설계상 두 값은 항상 false 와 0 입니다. 적용하지 말고 담당자에게 알리십시오.',
+      + '설계상 두 값은 항상 false와 0입니다. 적용을 멈추고 담당자에게 알리십시오.',
       'danger', '예상하지 못한 삭제 계획입니다'
     );
   }
@@ -4120,8 +4596,8 @@
     host.appendChild(alertNode(
       '이 파일에는 시크릿 값이 들어 있지 않습니다. 다른 설치본에 그대로 넣으면 서비스·시크릿의 '
       + '껍데기는 만들어지지만 값이 비어 있어 연동 앱에는 "키가 없다" 로 보입니다. '
-      + '값은 import JSON 에 직접 적거나 적용한 뒤 시크릿 화면에서 손으로 채웁니다.',
-      'warn', '값이 빠져 있습니다 — 모르고 넣으면 조용히 동작하지 않습니다'
+      + '값은 import JSON에 직접 적거나 적용한 뒤 시크릿 화면에서 손으로 채웁니다.',
+      'warn', '값이 빠져 있습니다. 모르고 넣으면 조용히 동작하지 않습니다'
     ));
 
     host.appendChild(el('div', { class: 'stat-grid' }, [
@@ -4134,7 +4610,7 @@
 
     var envConst = (b.environment && b.environment.constants) ? b.environment.constants : null;
     if (envConst) {
-      host.appendChild(el('h3', null, '이 설치본 (import 는 이 블록을 적용하지 않습니다)'));
+      host.appendChild(el('h3', null, '이 설치본 (import는 이 블록을 적용하지 않습니다)'));
       host.appendChild(kvNode([
         ['BASE_URL', el('code', { class: 'mono' }, nz(envConst.BASE_URL))],
         ['DB_PREFIX', el('code', { class: 'mono' }, nz(envConst.DB_PREFIX))],
@@ -4142,7 +4618,7 @@
       ]));
       host.appendChild(el('p', { class: 'hint' },
         '가져오기는 이 세 값을 현재 설치본과 대조해 다르면 경고합니다. '
-        + '값을 바꾸려면 server/config.php 를 직접 편집하거나 재설치해야 합니다.'));
+        + '값을 바꾸려면 server/config.php를 직접 편집하거나 재설치해야 합니다.'));
     }
 
     renderBundleExcluded(host, b.excluded);
@@ -4223,7 +4699,7 @@
           /* 서버가 200 인데 valid 가 true 가 아니면 계약이 어긋난 것이다.
              통과한 것처럼 넘어가지 않는다. */
           out.appendChild(alertNode(
-            '서버가 200 을 주면서 valid 를 true 로 주지 않았습니다. 담당자에게 알리십시오.',
+            '서버가 200을 주면서 valid를 true로 주지 않았습니다. 담당자에게 알리십시오.',
             'danger', '예상하지 못한 응답'));
           return;
         }
@@ -4240,7 +4716,7 @@
               + ' · ' + fmtNum(d.checked.bundle_bytes) + ' B')
           : null;
         out.appendChild(alertBoxNode(
-          '형식과 값 범위를 통과했습니다. 이 단계는 DB 를 읽지 않습니다 — '
+          '형식과 값 범위를 통과했습니다. 이 단계는 DB를 읽지 않습니다. '
           + '기존 행과의 상호 의존(is_confidential 인데 서비스 시크릿이 없는 경우 등)은 '
           + '2단계 계획 보기에서 최종 판정합니다.',
           'success', '검증 통과', summary));
@@ -4297,7 +4773,7 @@
             ]));
           });
           $('#bi-errors').appendChild(alertBoxNode(nz(ed.hint), 'warn',
-            '기존 설정과 충돌 ' + fmtNum(ed.conflict_count) + '건 — 적용하지 않았습니다', t.wrap));
+            '기존 설정과 충돌 ' + fmtNum(ed.conflict_count) + '건으로 적용하지 않았습니다', t.wrap));
           toast(errorMessage(err), 'warn');
           return;
         }
@@ -4323,7 +4799,7 @@
 
     confirmModal('설정 번들을 적용합니다',
       '방금 확인한 계획 그대로 적용합니다. 되돌리는 기능은 없습니다. '
-      + 'import 는 어떤 행도 삭제하지 않지만, 갱신된 값은 원래 값으로 자동으로 돌아가지 않습니다.',
+      + 'import는 어떤 행도 삭제하지 않지만, 갱신된 값은 원래 값으로 자동으로 돌아가지 않습니다.',
       { confirmText: '적용', danger: true })
       .then(function (okToGo) {
         if (!okToGo) { return; }
@@ -4342,7 +4818,7 @@
             clear(out);
             if (d.applied !== true) {
               out.appendChild(alertNode(
-                '서버가 200 을 주면서 applied 를 true 로 주지 않았습니다. '
+                '서버가 200을 주면서 applied를 true로 주지 않았습니다. '
                 + '적용 여부를 서비스·시크릿 화면에서 직접 확인하십시오.',
                 'danger', '예상하지 못한 응답'));
               return;
@@ -4370,11 +4846,11 @@
                  **아무것도 적용되지 않았다.** 서버가 새 계획을 함께 준다. */
               $('#bi-errors').appendChild(alertNode(
                 nz(ed && ed.reason) + ' ' + nz(ed && ed.hint),
-                'warn', '계획이 낡았습니다 — 적용하지 않았습니다'));
+                'warn', '계획이 낡아 적용하지 않았습니다'));
               if (ed && ed.plan) {
                 renderBundlePlan(out, ed.plan, '다시 계산한 계획 (아직 적용되지 않았습니다)');
                 out.appendChild(el('p', { class: 'hint' },
-                  '이 계획은 참고용입니다. 적용하려면 2단계 계획 보기를 다시 눌러 새 plan_hash 를 받으십시오.'));
+                  '이 계획은 참고용입니다. 적용하려면 2단계 계획 보기를 다시 눌러 새 plan_hash를 받으십시오.'));
               }
               toast('다른 변경과 충돌했습니다. 계획을 다시 확인하세요.', 'warn');
               return;
@@ -4394,16 +4870,16 @@
     bundleWired = true;
 
     $('#bx-tradeoff').appendChild(alertNode(
-      'export 는 시크릿 값을 내보내지 않는다. import 는 받는다. '
-      + '이 비대칭은 의도된 것입니다 — 내보낸 파일을 AI 대화창에 붙여넣어도 API 키가 새지 않게 하려는 것입니다. '
-      + '값이 필요하면 import JSON 의 secret_value 에 사람이 직접 적거나, 적용한 뒤 시크릿 화면에서 채웁니다.',
+      'export는 시크릿 값을 내보내지 않습니다. import는 받습니다. '
+      + '이 비대칭은 의도된 것입니다. 내보낸 파일을 AI 대화창에 붙여넣어도 API 키가 새지 않게 하려는 것입니다. '
+      + '값이 필요하면 import JSON의 secret_value에 사람이 직접 적거나, 적용한 뒤 시크릿 화면에서 채웁니다.',
       'info', '이 기능이 지키는 약속'
     ));
 
     $('#bi-notice').appendChild(alertNode(
-      'import 는 어떤 행도 삭제하지 않습니다. INSERT 와 UPDATE 만 합니다. '
-      + 'AI 에게 번들을 만들게 할 때는 secret_value 를 null 로 두게 하고 값은 사람이 채우십시오. '
-      + 'allow_public 은 민감 키의 게이트를 벗기는 필드입니다 — AI 가 넣었다면 지우고 사람에게 물으십시오.',
+      'import는 어떤 행도 삭제하지 않습니다. INSERT와 UPDATE만 합니다. '
+      + 'AI에게 번들을 만들게 할 때는 secret_value를 null로 두게 하고 값은 사람이 채우십시오. '
+      + 'allow_public은 민감 키의 게이트를 벗기는 필드입니다. AI가 넣었다면 지우고 사람에게 물으십시오.',
       'info', '가져오기 전에 읽어 주세요'
     ));
 

@@ -37,9 +37,11 @@ if (!function_exists('url_rule_check')) {
      *                      문자열 "null" 은 file:// 에서 온 요청(Origin: null) 허용용으로 통과
      *
      * @param  string      $reason 실패 사유. 성공이면 건드리지 않는다
+     * @param  bool        $publicClient v1.10.0 D-369 — **is_confidential=0 서비스의 redirect** 에서만 true 를 넘긴다.
+     *                     그때만 RFC 8252 사용자 지정 scheme(예: myapp://auth)을 받는다. 그 밖은 http/https 그대로
      * @return string|null 정규화된 값 / 빈 문자열이면 **건너뛸 항목**(원문이 공백뿐) / null 이면 실패
      */
-    function url_rule_check(string $raw, string $mode, ?string &$reason = null): ?string
+    function url_rule_check(string $raw, string $mode, ?string &$reason = null, bool $publicClient = false): ?string
     {
         $s = trim($raw);
         if ($s === '') {
@@ -62,6 +64,12 @@ if (!function_exists('url_rule_check')) {
             $reason = '프래그먼트(#)를 포함할 수 없습니다.';
             return null;
         }
+        if ($mode === 'redirect' && $publicClient) {
+            $cs = url_custom_scheme_check($s, $reason);
+            if ($cs !== false) {
+                return $cs;                  // 사용자 지정 scheme 항목: 정규화값 또는 null(거절)
+            }
+        }
         $p = parse_url($s);
         if ($p === false || empty($p['scheme']) || empty($p['host'])) {
             $reason = '절대 URL 형식이어야 합니다. (예: https://app.example.com/callback.html)';
@@ -69,7 +77,7 @@ if (!function_exists('url_rule_check')) {
         }
         $scheme = strtolower((string) $p['scheme']);
         if ($scheme !== 'http' && $scheme !== 'https') {
-            $reason = 'http 또는 https 만 허용됩니다.';
+            $reason = 'http 또는 https만 허용됩니다.';
             return null;
         }
         if ($mode === 'origin') {
@@ -82,5 +90,60 @@ if (!function_exists('url_rule_check')) {
                 . (isset($p['port']) ? ':' . (int) $p['port'] : '');
         }
         return $s;
+    }
+}
+
+if (!function_exists('url_custom_scheme_check')) {
+    /**
+     * 공개 클라이언트 복귀 주소의 사용자 지정 scheme 판정 (v1.10.0 D-369).
+     * @return string|null|false  false = 사용자 지정 scheme 항목이 아니다(호출자가 http/https 규칙으로 계속)
+     *                            null  = 사용자 지정 scheme 인데 규칙 위반($reason)
+     *                            string = 정규화값(scheme 소문자, 나머지 원문)
+     */
+    function url_custom_scheme_check(string $s, ?string &$reason = null)
+    {
+        if (preg_match('/^([A-Za-z][A-Za-z0-9+.\-]*):(.*)$/s', $s, $m) !== 1) {
+            return false;
+        }
+        $scheme = strtolower($m[1]);
+        if ($scheme === 'http' || $scheme === 'https') {
+            return false;
+        }
+        // RFC 8252 private-use scheme 으로 쓰지 못하는 이름(D-369). http/https 는 원래 규칙으로 간다
+        $deny = ['javascript', 'data', 'file', 'vbscript', 'blob', 'about', 'ftp', 'ws', 'wss', 'http', 'https'];
+        if (in_array($scheme, $deny, true) || preg_match('/^[a-z][a-z0-9+.\-]{2,63}$/', $scheme) !== 1) {
+            $reason = '이 scheme 은 복귀 주소로 쓸 수 없습니다. (공개 클라이언트의 사용자 지정 scheme 은 영문 소문자 3~64자)';
+            return null;
+        }
+        $rest = $m[2];
+        if (preg_match('/[\x00-\x20\x7F\\\\]/', $rest) === 1) {
+            $reason = '복귀 주소에 공백·제어문자·역슬래시를 넣을 수 없습니다.';
+            return null;
+        }
+        if (strncmp($rest, '//', 2) === 0) {
+            $auth = substr($rest, 2);
+            $slash = strpos($auth, '/');
+            $host = $slash === false ? $auth : substr($auth, 0, $slash);
+            $path = $slash === false ? '' : substr($auth, $slash);
+            if (strpos($host, '@') !== false) {
+                $reason = '복귀 주소에 사용자 정보(user@)를 넣을 수 없습니다.';
+                return null;
+            }
+            if ($host === '') {
+                $reason = '사용자 지정 scheme 복귀 주소에는 host 또는 경로가 있어야 합니다. (예: myapp://auth)';
+                return null;
+            }
+            return $scheme . ':' . $rest;
+        }
+        if (preg_match('/^[0-9]/', $rest) === 1) {
+            // 'localhost:5173/cb' 처럼 scheme 을 빠뜨린 host:port 가 사용자 지정 scheme 으로 읽히는 것을 막는다
+            $reason = '절대 URL 형식이어야 합니다. (예: https://app.example.com/callback.html 또는 myapp://auth)';
+            return null;
+        }
+        if ($rest === '' || $rest === '/') {
+            $reason = '사용자 지정 scheme 복귀 주소에는 host 또는 경로가 있어야 합니다. (예: myapp://auth)';
+            return null;
+        }
+        return $scheme . ':' . $rest;
     }
 }

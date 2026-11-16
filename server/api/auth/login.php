@@ -23,7 +23,7 @@ $loginId  = (string) v_string($in, 'username', 1, 190, true);
 $password = (string) v_string($in, 'password', 1, 200, true);
 $remember = (bool) v_bool($in, 'remember', false, false);
 $devLabel = v_string($in, 'device_label', 1, 80);
-$serviceId = v_string($in, 'service_id', 1, 64);
+$serviceId = v_service_id($in, 'service_id');   // v1.8.6 — 옛 id 는 여기서 새 id 로(설계 104 C-1)
 
 rate_limit_logged('login:user:' . mb_strtolower($loginId, 'UTF-8'), 5, 300, null, $loginId, $serviceId);
 
@@ -41,6 +41,17 @@ if ($user === null) {
     throw new AppError('AUTH_INVALID_CREDENTIALS', 401, ['field' => 'password']);
 }
 
+// 4-b) v1.10.0 비상 계정(설계 127 §6-4) — 미설정('!unset')이면 password_verify **앞에서** 거절한다.
+//      시간 차가 나지 않게 더미 verify 를 한 번 돌리고, 응답은 보통 실패와 같다(미설정 여부를 밖에 알리지 않는다).
+//      실패 횟수는 세지 않는다(잠금은 설정된 계정에만 걸린다).
+$isEmergency = (string) ($user['account_kind'] ?? 'normal') === 'emergency';
+if ($isEmergency && (string) $user['password_hash'] === EMERGENCY_UNSET_HASH) {
+    dummy_password_verify($password);
+    log_login('fail_emergency_unset', (int) $user['id'], $loginId, $serviceId);
+    audit_emergency_event('emergency.login.failure', $user, ['reason' => 'unset']);
+    throw new AppError('AUTH_INVALID_CREDENTIALS', 401, ['field' => 'password']);
+}
+
 // 5) 락아웃 — 비밀번호 검증보다 먼저
 try {
     assert_not_locked($user);
@@ -53,6 +64,9 @@ try {
 if (!password_verify($password, (string) $user['password_hash'])) {
     register_login_failure($user);
     log_login('fail_credential', (int) $user['id'], $loginId, $serviceId);
+    if ($isEmergency) {
+        audit_emergency_event('emergency.login.failure', $user, ['reason' => 'credential']);
+    }
     // 아이디 없음과 비밀번호 틀림을 구분하지 않는다 — 계정 열거 방지
     throw new AppError('AUTH_INVALID_CREDENTIALS', 401, ['field' => 'password']);
 }
@@ -97,6 +111,10 @@ if ($service !== null
     log_login('fail_service_blocked', (int) $user['id'], $loginId, $serviceId);
     throw new AppError('FORBIDDEN', 403, ['message' => '이 서비스 이용이 제한되었습니다.']);
 }
+// 8-c) v1.9.0 서비스 접근 규칙(80 §5-3 집행 5번). 세션·성공 처리 **앞**. 거절 기록은 함수 안에서.
+if ($service !== null) {
+    require_service_access($user, service_access_us_row((int) $user['id'], (string) $service['service_id']), $service, 'login');
+}
 
 // 9) 로그인 성공 처리
 $now = now_utc();
@@ -115,22 +133,39 @@ $user = db_one('SELECT * FROM ' . T_USERS . ' WHERE id = ?', [$user['id']]);
 
 $us     = ensure_user_service((int) $user['id'], $service);
 $grades = effective_grades($user, $us);
+// v1.9.1 - 비밀번호를 직접 인증한 순간: 연결·접근 가능·허용된 서비스마다 비상 확인값 발급(emergency/1 1-1장). 실패해도 로그인은 계속.
+em_issue_for_user($user, $password);
 
 // 10) 세션 — 행은 1건. 같은 session_id 를 쿠키에도 심는다.
+// v1.10.0 비상 계정(§6-2): remember 무시 · 세션 1시간 · refresh 없음(1시간을 넘겨 이어지지 않게)
 $issued = create_session($user, $service, 'token', [
     'device_label' => $devLabel,
-    'with_refresh' => true,
+    'with_refresh' => !$isEmergency,
     'set_cookie'   => true,
-    'cookie_ttl'   => $remember ? (int) REMEMBER_TTL : null,
+    'cookie_ttl'   => ($remember && !$isEmergency) ? (int) REMEMBER_TTL : null,
+    'ttl_cap'      => $isEmergency ? EMERGENCY_SESSION_TTL : 0,
+    // v1.8.6 — 옛 id(별칭)로 들어왔으면 세션에 남겨 이후 응답 echo 에 쓴다(설계 104 C-2)
+    'client_service_id' => $service !== null ? service_id_presented_alias((string) $service['service_id']) : null,
 ]);
 
 // 11) 로깅
 log_login('success', (int) $user['id'], $loginId, $serviceId);
+if ($isEmergency) {
+    audit_emergency_event('emergency.login.success', $user);
+}
 
-// 12) 응답
+// 12) 응답 — v1.8.6: service_id 는 클라이언트가 보낸 값을 되돌린다(설계 104 C-2)
+$userOut = serialize_user($user, $us);
+$sessOut = serialize_session($issued['row'], true);
+service_id_echo($userOut, $issued['row']);
+service_id_echo($sessOut, $issued['row']);
+// v1.9.0 — `features` 는 등록부가 있는 서비스에서만 붙는 **순수 추가** 키다(설계 116 §7, response_extra 경유).
+features_emit($service['service_id'] ?? null, $us, $user);
+// v1.10.0 — `access_level` · `access` 순수 추가(설계 127 §3-1). service_id 없는 로그인에는 붙지 않는다.
+access_emit($service['service_id'] ?? null, $user, $us);
 json_out([
-    'user'               => serialize_user($user, $us),
-    'session'            => serialize_session($issued['row'], true),
+    'user'               => $userOut,
+    'session'            => $sessOut,
     'access_token'       => $issued['access_token'],
     'refresh_token'      => $issued['refresh_token'],
     'token_type'         => 'Bearer',
